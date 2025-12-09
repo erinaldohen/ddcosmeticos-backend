@@ -19,6 +19,10 @@ public class ItemVendaResponseDTO {
     private BigDecimal descontoItem;
     private BigDecimal valorTotalItem;
 
+    // NOVOS CAMPOS PARA CMV
+    private BigDecimal custoUnitario;
+    private BigDecimal custoTotal;
+
     public ItemVendaResponseDTO(ItemVenda item) {
         this.codigoBarras = item.getProduto().getCodigoBarras();
         this.descricaoProduto = item.getProduto().getDescricao();
@@ -26,5 +30,8 @@ public class ItemVendaResponseDTO {
         this.precoUnitario = item.getPrecoUnitario();
         this.descontoItem = item.getDescontoItem();
         this.valorTotalItem = item.getValorTotalItem();
+
+        this.custoUnitario = item.getCustoUnitario();
+        this.custoTotal = item.getCustoTotal();
     }
 }

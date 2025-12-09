@@ -1,14 +1,16 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/service/VendaService.java (CORREÇÃO)
+// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/service/VendaService.java
 
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque; // Nova Importação
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository; // Novo Repositório
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Serviço responsável por toda a lógica de negócio do Módulo de Vendas.
@@ -37,19 +40,37 @@ public class VendaService {
     @Autowired
     private MovimentoEstoqueRepository movimentoEstoqueRepository;
 
+    @Autowired
+    private UsuarioRepository usuarioRepository; // NOVO: Repositório de Usuários
+
+    /**
+     * Registra uma nova venda, processando itens, atualizando estoque e persistindo no banco.
+     *
+     * @param requestDTO O DTO contendo os dados da venda.
+     * @return A entidade Venda persistida.
+     * @throws RuntimeException Se o produto não for encontrado, o estoque for insuficiente ou o operador não existir.
+     */
     @Transactional
     public Venda registrarVenda(VendaRequestDTO requestDTO) {
 
+        // 1. Auditoria: Simula o usuário logado (Operador de Caixa)
+        Optional<Usuario> operador = usuarioRepository.findByMatricula("CAIXA01");
+
+        if (operador.isEmpty()) {
+            throw new RuntimeException("Usuário de auditoria CAIXA01 não encontrado. Verifique a inicialização do banco.");
+        }
+
         Venda novaVenda = new Venda();
+        // Atribui o operador de caixa à venda
+        novaVenda.setOperador(operador.get());
+
         List<ItemVenda> itensVenda = new ArrayList<>();
         BigDecimal valorTotalBruto = BigDecimal.ZERO;
-        // NOVO: Acumulador de descontos por item
         BigDecimal totalDescontoItem = BigDecimal.ZERO;
 
-        // 1. Processar Itens e Atualizar Estoque
+        // 2. Processar Itens e Atualizar Estoque
         for (var itemDTO : requestDTO.getItens()) {
 
-            // Busca o produto pelo código de barras
             Produto produto = produtoRepository.findByCodigoBarras(itemDTO.getCodigoBarras());
             if (produto == null) {
                 throw new RuntimeException("Produto não encontrado com EAN: " + itemDTO.getCodigoBarras());
@@ -57,8 +78,7 @@ public class VendaService {
 
             // Validação de Estoque (CRÍTICO)
             if (produto.getQuantidadeEmEstoque().compareTo(itemDTO.getQuantidade()) < 0) {
-                throw new RuntimeException("Estoque insuficiente para o produto: " + produto.getDescricao()
-                        + ". Estoque atual: " + produto.getQuantidadeEmEstoque());
+                throw new RuntimeException("Estoque insuficiente para o produto: " + produto.getDescricao());
             }
 
             // Cálculo do item
@@ -70,7 +90,7 @@ public class VendaService {
 
             // Acumulação
             valorTotalBruto = valorTotalBruto.add(totalItemBruto);
-            totalDescontoItem = totalDescontoItem.add(descontoItem); // ACUMULA O DESCONTO DO ITEM
+            totalDescontoItem = totalDescontoItem.add(descontoItem);
 
             // Cria o ItemVenda
             ItemVenda itemVenda = new ItemVenda();
@@ -83,18 +103,18 @@ public class VendaService {
 
             itensVenda.add(itemVenda);
 
-            // 2. Atualizar o Estoque (Decremento)
+            // 3. Atualizar o Estoque (Decremento)
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(itemDTO.getQuantidade()));
             produtoRepository.save(produto);
         }
 
-        // 3. Cálculo Final da Venda
+        // 4. Cálculo Final da Venda
         novaVenda.setItens(itensVenda);
         novaVenda.setValorTotal(valorTotalBruto.setScale(SCALE, ROUNDING_MODE));
 
-        // Obtém o Desconto Global
+        // Obtém o Desconto Global e o soma aos descontos por item
         BigDecimal descontoGlobal = requestDTO.getDesconto().setScale(SCALE, ROUNDING_MODE);
-        novaVenda.setDesconto(descontoGlobal); // Mantém no BD apenas o desconto global
+        novaVenda.setDesconto(descontoGlobal);
 
         // Desconto total = Descontos por Item + Desconto Global
         BigDecimal descontoTotalVenda = totalDescontoItem.add(descontoGlobal);
@@ -105,12 +125,12 @@ public class VendaService {
         if (valorLiquido.compareTo(BigDecimal.ZERO) < 0) {
             throw new RuntimeException("Erro de cálculo: Valor líquido da venda não pode ser negativo.");
         }
-        novaVenda.setValorLiquido(valorLiquido); // NOVO: R$ 20.00 - R$ 1.50 = R$ 18.50
+        novaVenda.setValorLiquido(valorLiquido);
 
-        // 4. Persistência
+        // 5. Persistência da Venda
         Venda vendaPersistida = vendaRepository.save(novaVenda);
 
-        // 5. Auditoria Final (Usa o ID da Venda Persistida)
+        // 6. Auditoria Final (Registro de Movimento de Estoque)
         for (ItemVenda item : vendaPersistida.getItens()) {
             MovimentoEstoque movimento = new MovimentoEstoque();
             movimento.setProduto(item.getProduto());
@@ -130,7 +150,6 @@ public class VendaService {
      * @return A entidade Venda, se encontrada.
      */
     public Venda buscarPorId(Long id) {
-        // Usa o .get() pois esperamos que a venda exista após o registro (ou lança 404 no Controller)
         return vendaRepository.findById(id).orElse(null);
     }
 }

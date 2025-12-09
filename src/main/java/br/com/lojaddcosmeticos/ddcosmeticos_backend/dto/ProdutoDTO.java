@@ -1,3 +1,5 @@
+// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/dto/ProdutoDTO.java (CORREÇÃO)
+
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
@@ -16,6 +18,10 @@ public class ProdutoDTO {
     private Boolean movimentaEstoque;
     private String ncm;
 
+    // NOVOS CAMPOS ADICIONADOS PARA AUDITORIA E PMP
+    private BigDecimal precoCustoInicial;
+    private BigDecimal precoMedioPonderado;
+
     // Construtor para mapear de Entidade (Produto) para DTO
     public ProdutoDTO(Produto produto) {
         this.id = produto.getId();
@@ -23,8 +29,12 @@ public class ProdutoDTO {
         this.descricao = produto.getDescricao();
         this.precoVendaVarejo = produto.getPrecoVendaVarejo();
         this.quantidadeEmEstoque = produto.getQuantidadeEmEstoque();
-        // Os campos 'unidade' e 'movimentaEstoque' serão adicionados à entidade Produto
-        // e populados na importação se necessário. Por enquanto, valores fictícios:
+
+        // Novos campos
+        this.precoCustoInicial = produto.getPrecoCustoInicial();
+        this.precoMedioPonderado = produto.getPrecoMedioPonderado();
+
+        // Campos auxiliares que estavam no DTO
         this.unidade = "UN";
         this.movimentaEstoque = true;
         this.ncm = produto.getNcm();

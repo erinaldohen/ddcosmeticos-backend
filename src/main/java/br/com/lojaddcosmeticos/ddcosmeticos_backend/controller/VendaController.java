@@ -3,6 +3,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaCompletaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
@@ -58,6 +59,25 @@ public class VendaController {
             // Captura erros de negócio (Estoque Insuficiente, Produto Não Encontrado, Erro Fiscal)
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
         }
+    }
+
+    /**
+     * Endpoint para consultar uma venda completa pelo seu ID.
+     * @param id O ID da venda.
+     * @return DTO com todos os detalhes da venda e seus itens.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<?> buscarVendaPorId(@PathVariable Long id) {
+        Venda venda = vendaService.buscarPorId(id);
+
+        if (venda == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Mapeia a entidade Venda para o DTO de resposta completa
+        VendaCompletaResponseDTO responseDTO = new VendaCompletaResponseDTO(venda);
+
+        return ResponseEntity.ok(responseDTO);
     }
 
     /**

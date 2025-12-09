@@ -35,28 +35,21 @@ public class VendaService {
     private ProdutoRepository produtoRepository;
 
     @Autowired
-    private MovimentoEstoqueRepository movimentoEstoqueRepository; // Novo Repositório Injetado
+    private MovimentoEstoqueRepository movimentoEstoqueRepository;
 
-    /**
-     * Registra uma nova venda, processando itens, atualizando estoque e persistindo no banco.
-     *
-     * @param requestDTO O DTO contendo os dados da venda.
-     * @return A entidade Venda persistida.
-     * @throws RuntimeException Se o produto não for encontrado ou o estoque for insuficiente.
-     */
     @Transactional
     public Venda registrarVenda(VendaRequestDTO requestDTO) {
 
         Venda novaVenda = new Venda();
         List<ItemVenda> itensVenda = new ArrayList<>();
         BigDecimal valorTotalBruto = BigDecimal.ZERO;
+        // NOVO: Acumulador de descontos por item
+        BigDecimal totalDescontoItem = BigDecimal.ZERO;
 
-        // 1. Pré-persistência da Venda (necessário para ter o ID de Referência)
-        // O JPA salvará a venda no final da transação, mas o objeto 'novaVenda' já existe.
-
-        // 2. Processar Itens e Atualizar Estoque
+        // 1. Processar Itens e Atualizar Estoque
         for (var itemDTO : requestDTO.getItens()) {
 
+            // Busca o produto pelo código de barras
             Produto produto = produtoRepository.findByCodigoBarras(itemDTO.getCodigoBarras());
             if (produto == null) {
                 throw new RuntimeException("Produto não encontrado com EAN: " + itemDTO.getCodigoBarras());
@@ -64,53 +57,57 @@ public class VendaService {
 
             // Validação de Estoque (CRÍTICO)
             if (produto.getQuantidadeEmEstoque().compareTo(itemDTO.getQuantidade()) < 0) {
-                throw new RuntimeException("Estoque insuficiente para o produto: " + produto.getDescricao());
+                throw new RuntimeException("Estoque insuficiente para o produto: " + produto.getDescricao()
+                        + ". Estoque atual: " + produto.getQuantidadeEmEstoque());
             }
 
-            // Cálculo e Criação do ItemVenda (Lógica Mantida)
-            BigDecimal totalItemBruto = itemDTO.getPrecoUnitario().multiply(itemDTO.getQuantidade());
-            BigDecimal valorTotalItem = totalItemBruto.subtract(itemDTO.getDescontoItem()).setScale(SCALE, ROUNDING_MODE);
+            // Cálculo do item
+            BigDecimal precoUnitario = itemDTO.getPrecoUnitario().setScale(SCALE, ROUNDING_MODE);
+            BigDecimal descontoItem = itemDTO.getDescontoItem().setScale(SCALE, ROUNDING_MODE);
 
+            BigDecimal totalItemBruto = precoUnitario.multiply(itemDTO.getQuantidade());
+            BigDecimal valorTotalItem = totalItemBruto.subtract(descontoItem).setScale(SCALE, ROUNDING_MODE);
+
+            // Acumulação
             valorTotalBruto = valorTotalBruto.add(totalItemBruto);
+            totalDescontoItem = totalDescontoItem.add(descontoItem); // ACUMULA O DESCONTO DO ITEM
 
+            // Cria o ItemVenda
             ItemVenda itemVenda = new ItemVenda();
             itemVenda.setVenda(novaVenda);
             itemVenda.setProduto(produto);
             itemVenda.setQuantidade(itemDTO.getQuantidade());
-            itemVenda.setPrecoUnitario(itemDTO.getPrecoUnitario().setScale(SCALE, ROUNDING_MODE));
-            itemVenda.setDescontoItem(itemDTO.getDescontoItem().setScale(SCALE, ROUNDING_MODE));
+            itemVenda.setPrecoUnitario(precoUnitario);
+            itemVenda.setDescontoItem(descontoItem);
             itemVenda.setValorTotalItem(valorTotalItem);
 
             itensVenda.add(itemVenda);
 
-            // 3. Atualizar o Estoque (Decremento e Auditoria)
-
-            // A. Decremento de Estoque
+            // 2. Atualizar o Estoque (Decremento)
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(itemDTO.getQuantidade()));
-            produtoRepository.save(produto); // Persiste a mudança no estoque
-
-            // B. Registro de Movimento (AUDITORIA)
-            MovimentoEstoque movimento = new MovimentoEstoque();
-            movimento.setProduto(produto);
-            // Saída é um valor negativo
-            movimento.setQuantidadeMovimentada(itemDTO.getQuantidade().negate());
-            movimento.setTipoMovimento("VENDA_PDV");
-            // O ID de Referência será o ID da Venda (persistido após o save da Venda)
-            // É necessário salvar a Venda primeiro para ter o ID
-
-            // Por causa do @Transactional, podemos salvar o movimento agora e setar a referência depois.
-            // Para simplificar, vamos salvar a Venda primeiro, obter o ID, e depois salvar o Movimento.
-
-            // REMOVIDO: O save do Movimento será feito após o save da Venda.
+            produtoRepository.save(produto);
         }
 
-        // 4. Salvar a Venda (para obter o ID)
+        // 3. Cálculo Final da Venda
         novaVenda.setItens(itensVenda);
         novaVenda.setValorTotal(valorTotalBruto.setScale(SCALE, ROUNDING_MODE));
-        novaVenda.setDesconto(requestDTO.getDesconto().setScale(SCALE, ROUNDING_MODE));
-        BigDecimal valorLiquido = valorTotalBruto.subtract(requestDTO.getDesconto()).setScale(SCALE, ROUNDING_MODE);
-        novaVenda.setValorLiquido(valorLiquido);
 
+        // Obtém o Desconto Global
+        BigDecimal descontoGlobal = requestDTO.getDesconto().setScale(SCALE, ROUNDING_MODE);
+        novaVenda.setDesconto(descontoGlobal); // Mantém no BD apenas o desconto global
+
+        // Desconto total = Descontos por Item + Desconto Global
+        BigDecimal descontoTotalVenda = totalDescontoItem.add(descontoGlobal);
+
+        // CÁLCULO CORRETO DO VALOR LÍQUIDO: Total Bruto - Desconto Total
+        BigDecimal valorLiquido = valorTotalBruto.subtract(descontoTotalVenda).setScale(SCALE, ROUNDING_MODE);
+
+        if (valorLiquido.compareTo(BigDecimal.ZERO) < 0) {
+            throw new RuntimeException("Erro de cálculo: Valor líquido da venda não pode ser negativo.");
+        }
+        novaVenda.setValorLiquido(valorLiquido); // NOVO: R$ 20.00 - R$ 1.50 = R$ 18.50
+
+        // 4. Persistência
         Venda vendaPersistida = vendaRepository.save(novaVenda);
 
         // 5. Auditoria Final (Usa o ID da Venda Persistida)
@@ -119,11 +116,21 @@ public class VendaService {
             movimento.setProduto(item.getProduto());
             movimento.setQuantidadeMovimentada(item.getQuantidade().negate());
             movimento.setTipoMovimento("VENDA_PDV");
-            movimento.setIdReferencia(vendaPersistida.getId()); // Referência à venda
+            movimento.setIdReferencia(vendaPersistida.getId());
 
             movimentoEstoqueRepository.save(movimento);
         }
 
         return vendaPersistida;
+    }
+
+    /**
+     * Busca uma venda completa pelo ID.
+     * @param id O ID da venda.
+     * @return A entidade Venda, se encontrada.
+     */
+    public Venda buscarPorId(Long id) {
+        // Usa o .get() pois esperamos que a venda exista após o registro (ou lança 404 no Controller)
+        return vendaRepository.findById(id).orElse(null);
     }
 }

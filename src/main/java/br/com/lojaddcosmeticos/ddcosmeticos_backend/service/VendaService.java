@@ -127,11 +127,15 @@ public class VendaService {
         // 5. Persistência da Venda
         Venda vendaPersistida = vendaRepository.save(novaVenda);
 
-        // 6. Auditoria Final (Registro de Movimento de Estoque)
+        // 6. Auditoria Final (Registro de Movimento de Estoque) - CORRIGIDO
         for (ItemVenda item : vendaPersistida.getItens()) {
             MovimentoEstoque movimento = new MovimentoEstoque();
             movimento.setProduto(item.getProduto());
             movimento.setQuantidadeMovimentada(item.getQuantidade().negate());
+
+            // NOVO: Adiciona o custo total da venda com sinal negativo
+            movimento.setCustoMovimentado(item.getCustoTotal().negate());
+
             movimento.setTipoMovimento("VENDA_PDV");
             movimento.setIdReferencia(vendaPersistida.getId());
 

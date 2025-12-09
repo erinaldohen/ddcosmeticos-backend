@@ -8,8 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Entidade responsável por auditar todas as alterações no estoque de um produto.
- * Cada registro representa uma transação de entrada ou saída.
+ * Entidade de auditoria para rastrear todas as movimentações de estoque.
  */
 @Data
 @Entity
@@ -20,33 +19,34 @@ public class MovimentoEstoque {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /**
-     * Produto afetado pelo movimento de estoque.
-     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
+    @Column(name = "data_movimento", nullable = false)
+    private LocalDateTime dataMovimento = LocalDateTime.now();
+
     /**
-     * Quantidade movimentada (positiva para entrada, negativa para saída).
+     * Quantidade que entrou (positivo) ou saiu (negativo).
      */
     @Column(name = "quantidade_movimentada", precision = 10, scale = 3, nullable = false)
     private BigDecimal quantidadeMovimentada;
 
     /**
-     * Data e hora exata do movimento.
+     * NOVO CAMPO: Custo total (para aquela quantidade).
+     * Positivo para entrada, negativo para saída.
      */
-    @Column(name = "data_movimento", nullable = false)
-    private LocalDateTime dataMovimento = LocalDateTime.now();
+    @Column(name = "custo_movimentado", precision = 10, scale = 4, nullable = false)
+    private BigDecimal custoMovimentado;
 
     /**
-     * Tipo de movimento (Ex: VENDA, ENTRADA_NF, AJUSTE_SAIDA, etc.).
+     * Tipo de movimento (Ex: 'ENTRADA_NF', 'VENDA_PDV', 'AJUSTE').
      */
     @Column(name = "tipo_movimento", length = 50, nullable = false)
     private String tipoMovimento;
 
     /**
-     * ID de referência da transação original (Ex: ID da Venda, ID da NF-e de entrada).
+     * ID da entidade que gerou o movimento (Ex: ID da Venda ou ID da NF).
      */
     @Column(name = "id_referencia")
     private Long idReferencia;

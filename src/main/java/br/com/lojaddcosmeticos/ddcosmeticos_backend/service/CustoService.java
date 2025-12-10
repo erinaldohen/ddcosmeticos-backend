@@ -4,9 +4,11 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EntradaNFRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemEntradaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
@@ -34,6 +36,9 @@ public class CustoService {
     @Autowired
     private UsuarioRepository usuarioRepository;
 
+    @Autowired // NOVO: Injeção do Fornecedor
+    private FornecedorRepository fornecedorRepository;
+
     /**
      * Processa a entrada de uma Nota Fiscal, atualiza estoque e recalcula o PMP para cada item.
      * @param requestDTO Dados da NF de entrada.
@@ -41,13 +46,16 @@ public class CustoService {
     @Transactional
     public void registrarEntradaNF(EntradaNFRequestDTO requestDTO) {
 
-        // 1. Auditoria: Verifica o operador (simplesmente verificamos a existência)
+        // 1. Auditoria e Validação de Fornecedor
         Usuario operador = usuarioRepository.findByMatricula(requestDTO.getMatriculaOperador())
                 .orElseThrow(() -> new RuntimeException("Operador de auditoria não encontrado: " + requestDTO.getMatriculaOperador()));
 
-        // 2. Processamento dos Itens da NF
-        for (ItemEntradaDTO itemDTO : requestDTO.getItens()) {
+        // NOVO: Validação do Fornecedor
+        Fornecedor fornecedor = fornecedorRepository.findByCnpjCpf(requestDTO.getCnpjCpfFornecedor())
+                .orElseThrow(() -> new RuntimeException("Fornecedor não encontrado: " + requestDTO.getCnpjCpfFornecedor()));
 
+        // 2. Processamento dos Itens da NF (Restante do código é o mesmo)
+        for (ItemEntradaDTO itemDTO : requestDTO.getItens()) {
             Produto produto = produtoRepository.findByCodigoBarras(itemDTO.getCodigoBarras());
             if (produto == null) {
                 throw new RuntimeException("Produto não encontrado com EAN: " + itemDTO.getCodigoBarras());

@@ -4,9 +4,11 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional; // Import Obrigatório
+
 @Repository
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
-    // Adicionamos um método de busca por EAN para evitar duplicidade na importação
-    Produto findByCodigoBarras(String codigoBarras);
+    // CORREÇÃO: O retorno DEVE ser Optional<Produto> para que o .orElseThrow() funcione no Service
+    Optional<Produto> findByCodigoBarras(String codigoBarras);
 }

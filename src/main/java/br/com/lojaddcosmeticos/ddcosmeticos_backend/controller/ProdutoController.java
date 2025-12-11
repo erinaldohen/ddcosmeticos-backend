@@ -21,7 +21,7 @@ public class ProdutoController {
         Produto produto = produtoService.buscarPorCodigoBarras(ean);
 
         if (produto == null) {
-            // Retorna 404 se o produto não for encontrado
+            // Agora, o service deve lançar a exceção. Aqui apenas chamamos.
             return ResponseEntity.notFound().build();
         }
 

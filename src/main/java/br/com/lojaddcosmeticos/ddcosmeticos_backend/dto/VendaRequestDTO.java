@@ -20,4 +20,11 @@ public class VendaRequestDTO {
     @NotEmpty(message = "A lista de itens não pode ser vazia.")
     @Valid // Valida cada item dentro da lista
     private List<ItemVendaDTO> itens;
+
+    public VendaRequestDTO(BigDecimal desconto, List<ItemVendaDTO> itens) {
+        this.desconto = desconto;
+        this.itens = itens;
+    }
+
+
 }

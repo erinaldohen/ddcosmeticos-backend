@@ -50,4 +50,15 @@ public class MovimentoEstoque {
      */
     @Column(name = "id_referencia")
     private Long idReferencia;
+
+    public MovimentoEstoque() {
+    }
+
+    public MovimentoEstoque(Produto produto, LocalDateTime dataMovimento, BigDecimal quantidadeMovimentada, String tipoMovimento, BigDecimal custoMovimentado) {
+        this.produto = produto;
+        this.dataMovimento = dataMovimento;
+        this.quantidadeMovimentada = quantidadeMovimentada;
+        this.tipoMovimento = tipoMovimento;
+        this.custoMovimentado = custoMovimentado;
+    }
 }

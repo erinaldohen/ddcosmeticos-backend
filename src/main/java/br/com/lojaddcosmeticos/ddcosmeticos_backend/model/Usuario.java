@@ -31,11 +31,12 @@ public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURAN
     @Column(name = "senha", nullable = false)
     private String senha; // Senha criptografada
 
+    @Enumerated(EnumType.STRING) // Grava o texto "ROLE_CAIXA" no banco
     @Column(name = "perfil", nullable = false)
-    private String perfil; // Ex: ROLE_CAIXA, ROLE_GERENTE
+    private Perfil perfil;
 
     // Construtor para inicialização (usado no Application.java)
-    public Usuario(String nome, String matricula, String senha, String perfil) {
+    public Usuario(String nome, String matricula, String senha, Perfil perfil) {
         this.nome = nome;
         this.matricula = matricula;
         this.senha = senha;
@@ -46,8 +47,8 @@ public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURAN
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Mapeia o perfil (String) para uma GrantedAuthority
-        return List.of(new SimpleGrantedAuthority(perfil));
+        // Pega o nome do Enum (ex: "ROLE_CAIXA")
+        return List.of(new SimpleGrantedAuthority(perfil.name()));
     }
 
     @Override

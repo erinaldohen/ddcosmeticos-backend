@@ -1,14 +1,28 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/repository/ItemVendaRepository.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda; // Importa a Entidade correta
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemAbcDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
-// O Repositório deve ser de ItemVenda (não VendaItem)
 public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
 
-    // Você pode adicionar métodos customizados aqui se necessário
+    /**
+     * Agrupa as vendas por produto e ordena pelo valor total vendido (Decrescente).
+     * O 'new ...ItemAbcDTO' cria o objeto automaticamente a partir do resultado do banco.
+     */
+    @Query("SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemAbcDTO(" +
+            "  p.codigoBarras, " +
+            "  p.descricao, " +
+            "  SUM(i.quantidade), " +
+            "  SUM(i.valorTotalItem) " +
+            ") " +
+            "FROM ItemVenda i JOIN i.produto p " +
+            "GROUP BY p.codigoBarras, p.descricao " +
+            "ORDER BY SUM(i.valorTotalItem) DESC")
+    List<ItemAbcDTO> agruparVendasPorProduto();
 }

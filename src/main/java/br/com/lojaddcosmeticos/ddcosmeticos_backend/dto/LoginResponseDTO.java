@@ -1,14 +1,14 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/dto/LoginResponseDTO.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
-/**
- * DTO para retornar o token JWT e as informações básicas do usuário após o login bem-sucedido.
- */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor // Gera um construtor com TODOS os campos automaticamente
 public class LoginResponseDTO {
+
     private String token;
     private String matricula;
     private String nome;

@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
  * Classe principal da aplicação.
- * Em produção, esta classe deve ser a mais limpa possível.
+ * Em produção, esta clujasse deve ser a mais limpa possível.
  */
 @SpringBootApplication
 public class DdcosmeticosBackendApplication {

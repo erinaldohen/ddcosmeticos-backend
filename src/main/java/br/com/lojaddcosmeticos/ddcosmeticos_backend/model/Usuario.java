@@ -1,5 +1,3 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/model/Usuario.java (REVISÃO DE SEGURANÇA)
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
@@ -16,7 +14,7 @@ import java.util.List;
 @Entity
 @NoArgsConstructor
 @Table(name = "usuario")
-public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURANÇA
+public class Usuario implements UserDetails {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -26,16 +24,18 @@ public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURAN
     private String nome;
 
     @Column(name = "matricula", unique = true, nullable = false)
-    private String matricula; // Usada como Username para login
+    private String matricula;
 
     @Column(name = "senha", nullable = false)
-    private String senha; // Senha criptografada
+    private String senha;
 
-    @Enumerated(EnumType.STRING) // Grava o texto "ROLE_CAIXA" no banco
+    // MELHORIA: Agora usamos o Enum Perfil em vez de String
+    // @Enumerated(EnumType.STRING) instrui o JPA a salvar o texto "ROLE_CAIXA" no banco
+    @Enumerated(EnumType.STRING)
     @Column(name = "perfil", nullable = false)
     private Perfil perfil;
 
-    // Construtor para inicialização (usado no Application.java)
+    // Construtor atualizado para receber o Enum
     public Usuario(String nome, String matricula, String senha, Perfil perfil) {
         this.nome = nome;
         this.matricula = matricula;
@@ -47,7 +47,7 @@ public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURAN
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Pega o nome do Enum (ex: "ROLE_CAIXA")
+        // Converte o Enum para String para o Spring Security entender
         return List.of(new SimpleGrantedAuthority(perfil.name()));
     }
 
@@ -58,7 +58,7 @@ public class Usuario implements UserDetails { // IMPLEMENTA INTERFACE DE SEGURAN
 
     @Override
     public String getUsername() {
-        return this.matricula; // Matricula será o username
+        return this.matricula;
     }
 
     @Override

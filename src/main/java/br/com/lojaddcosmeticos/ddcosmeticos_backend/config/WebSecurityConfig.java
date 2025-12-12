@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -34,16 +35,15 @@ public class WebSecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        // --- ALTERAÇÃO AQUI ---
-                        // Libera TUDO que estiver em /auth (Login E Setup)
-                        // Isso resolve o erro 403 no /setup
-                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        // SEGURANÇA MÁXIMA: Apenas o POST /login é público agora.
+                        // Qualquer tentativa de GET em /auth/... será bloqueada.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
 
-                        // Libera documentação e opções
+                        // Swagger (Se ainda tiver resquícios, liberamos, senão não faz mal)
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // O resto exige login
+                        // Todo o resto exige Token
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)
@@ -53,9 +53,12 @@ public class WebSecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("*")); // Libera geral para teste
+        // Em produção real, restrinja isso para o domínio do seu front-end
+        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        configuration.setAllowCredentials(true);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

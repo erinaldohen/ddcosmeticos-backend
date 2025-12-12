@@ -27,7 +27,7 @@ public class ProdutoDTO {
         this.id = produto.getId();
         this.codigoBarras = produto.getCodigoBarras();
         this.descricao = produto.getDescricao();
-        this.precoVendaVarejo = produto.getPrecoVendaVarejo();
+        this.precoVendaVarejo = produto.getPrecoVenda();
         this.quantidadeEmEstoque = produto.getQuantidadeEmEstoque();
 
         // Novos campos

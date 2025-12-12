@@ -2,11 +2,17 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction; // <--- NOVA ANOTAÇÃO (Hibernate 7)
+
 import java.math.BigDecimal;
 
 @Data
 @Entity
 @Table(name = "produto")
+// Soft Delete no Hibernate 7+:
+@SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
+@SQLRestriction("ativo = true") // <--- Substitui o @Where
 public class Produto {
 
     @Id
@@ -14,40 +20,34 @@ public class Produto {
     private Long id;
 
     @Column(name = "codigo_barras", unique = true, nullable = false)
-    private String codigoBarras; // EAN
+    private String codigoBarras;
 
-    @Column(name = "descricao", nullable = false)
+    @Column(nullable = false)
     private String descricao;
 
     @Column(name = "preco_custo_inicial", precision = 10, scale = 4)
     private BigDecimal precoCustoInicial;
 
     @Column(name = "preco_medio_ponderado", precision = 10, scale = 4)
-    private BigDecimal precoMedioPonderado; // Será o custo principal
+    private BigDecimal precoMedioPonderado; // O Custo Real (PMP)
 
     @Column(name = "preco_venda", precision = 10, scale = 2)
-    private BigDecimal precoVendaVarejo;
+    private BigDecimal precoVenda;
 
-    @Column(name = "quantidade_estoque")
+    @Column(name = "quantidade_estoque", precision = 10, scale = 3)
     private BigDecimal quantidadeEmEstoque;
 
     @Column(name = "estoque_minimo")
     private BigDecimal estoqueMinimo;
 
-    @Column(name = "ncm", length = 8)
-    private String ncm;
-
-    @Column(name = "cest", length = 7)
-    private String cest;
-
-    // Campo para aplicar a regra do Duplo Comprovante
     @Column(name = "possui_nf_entrada", nullable = false)
-    private Boolean possuiNfEntrada = false;
+    private boolean possuiNfEntrada = false; // Define se produto tem origem fiscal
 
-    // O campo 'Origem' do CSV será usado para sugerir o valor de 'possui_nf_entrada'
-    @Column(name = "origem", length = 50)
+    private String ncm;
+    private String cest;
     private String origem;
 
-    // Requisito 4: Lote e Validade serão em tabelas separadas, mas o ID do Produto as conecta
-    // ... outros campos (Marca, Categoria)
+    // Campo novo para Soft Delete
+    @Column(nullable = false)
+    private boolean ativo = true;
 }

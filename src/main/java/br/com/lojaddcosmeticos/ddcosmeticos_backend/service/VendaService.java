@@ -4,13 +4,12 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -20,129 +19,109 @@ import java.util.List;
 @Service
 public class VendaService {
 
-    @Autowired
-    private VendaRepository vendaRepository;
+    @Autowired private VendaRepository vendaRepository;
+    @Autowired private ProdutoRepository produtoRepository;
+    @Autowired private MovimentoEstoqueRepository movimentoEstoqueRepository;
+    @Autowired private UsuarioRepository usuarioRepository;
+    @Autowired private AuditoriaRepository auditoriaRepository;
 
-    @Autowired
-    private ProdutoRepository produtoRepository;
+    // Injetaremos o NfceService depois para a chamada automática, se necessário.
 
-    @Autowired
-    private UsuarioRepository usuarioRepository;
-
-    @Autowired
-    private MovimentoEstoqueRepository movimentoEstoqueRepository;
-
-    // Injeção opcional caso o cascade da Venda não seja suficiente,
-    // mas mantemos aqui para garantir o contexto.
-    @Autowired
-    private ItemVendaRepository itemVendaRepository;
-
-    /**
-     * Registra uma nova venda no sistema.
-     * Realiza a baixa de estoque, cálculo de valores e auditoria.
-     * * @param requestDTO Dados da venda recebidos da API.
-     * @return DTO com os dados da venda registrada.
-     */
     @Transactional
-    public VendaResponseDTO registrarVenda(VendaRequestDTO requestDTO) {
-
-        // 1. Identificar o Operador (Auditoria)
-        // Recupera o usuário logado através do Token JWT validado pelo SecurityFilter
+    public VendaResponseDTO registrarVenda(VendaRequestDTO dadosVenda) {
         String matriculaOperador = SecurityContextHolder.getContext().getAuthentication().getName();
-
         Usuario operador = usuarioRepository.findByMatricula(matriculaOperador)
-                .orElseThrow(() -> new ResourceNotFoundException("Operador não encontrado com a matrícula: " + matriculaOperador));
+                .orElseThrow(() -> new ResourceNotFoundException("Operador não encontrado."));
 
-        // 2. Inicializar a Entidade Venda
         Venda venda = new Venda();
         venda.setOperador(operador);
-        venda.setDataVenda(LocalDateTime.now()); // Corrigido para corresponder a Venda.java
+        venda.setDataVenda(LocalDateTime.now());
+        venda.setDesconto(dadosVenda.getDesconto() != null ? dadosVenda.getDesconto() : BigDecimal.ZERO);
 
-        // Inicializa a lista de itens e variáveis de cálculo
-        List<ItemVenda> itensVenda = new ArrayList<>();
-        BigDecimal valorTotalBruto = BigDecimal.ZERO;
+        // Novo controle de Status
+        // Se houver auditoria de estoque negativo, pode ficar como PENDENTE_ANALISE
+        String statusFiscalInicial = "PRONTA_PARA_EMISSAO";
 
-        // 3. Processamento dos Itens da Venda
-        for (ItemVendaDTO itemDTO : requestDTO.getItens()) {
+        List<ItemVenda> itensParaSalvar = new ArrayList<>();
+        List<String> alertasParaCaixa = new ArrayList<>();
+        BigDecimal somaTotal = BigDecimal.ZERO;
 
-            // Busca o Produto (Lança erro 404 se não existir)
+        for (ItemVendaDTO itemDTO : dadosVenda.getItens()) {
             Produto produto = produtoRepository.findByCodigoBarras(itemDTO.getCodigoBarras())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDTO.getCodigoBarras()));
 
-            // Validação de Estoque (Erro 400 se insuficiente)
-            // Nota: Removemos a checagem de 'movimentaEstoque' pois o campo não existe em Produto.java
-            if (produto.getQuantidadeEmEstoque() == null ||
-                    produto.getQuantidadeEmEstoque().compareTo(itemDTO.getQuantidade()) < 0) {
-                throw new ValidationException("Estoque insuficiente para o produto: " + produto.getDescricao());
+            BigDecimal quantidadeVendida = itemDTO.getQuantidade();
+            BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque();
+            BigDecimal estoqueFuturo = estoqueAtual.subtract(quantidadeVendida);
+
+            // --- REGRA DE NEGÓCIO: Permite Negativo mas Audita ---
+            if (estoqueFuturo.compareTo(BigDecimal.ZERO) < 0) {
+                // 1. Gera Alerta para o Front-end
+                alertasParaCaixa.add("ALERTA: Produto '" + produto.getDescricao() + "' ficou com ESTOQUE NEGATIVO (" + estoqueFuturo + ").");
+
+                // 2. Grava Auditoria Permanente
+                Auditoria auditoria = new Auditoria();
+                auditoria.setTipoEvento("ESTOQUE_NEGATIVO");
+                auditoria.setUsuarioResponsavel(matriculaOperador);
+                auditoria.setEntidadeAfetada("Produto");
+                auditoria.setIdEntidadeAfetada(produto.getId());
+                auditoria.setMensagem("Venda realizada com estoque insuficiente. Estoque Anterior: " + estoqueAtual + ", Venda: " + quantidadeVendida + ", Novo: " + estoqueFuturo);
+                auditoriaRepository.save(auditoria);
+
+                // 3. Define pendência se o produto for fiscal
+                if (produto.isPossuiNfEntrada()) {
+                    statusFiscalInicial = "PENDENTE_ANALISE_GERENTE";
+                    alertasParaCaixa.add("NOTA: A emissão fiscal deste item entrou em análise devido à inconsistência de estoque.");
+                }
             }
 
-            // Cálculos Financeiros do Item
-            BigDecimal valorBrutoItem = itemDTO.getPrecoUnitario().multiply(itemDTO.getQuantidade());
-            BigDecimal valorLiquidoItem = valorBrutoItem.subtract(itemDTO.getDescontoItem());
-
-            // Custo da Mercadoria Vendida (CMV/PMP)
-            BigDecimal custoUnitario = produto.getPrecoMedioPonderado();
-            if (custoUnitario == null) custoUnitario = BigDecimal.ZERO;
-            BigDecimal custoTotalItem = custoUnitario.multiply(itemDTO.getQuantidade());
-
-            // Criação da Entidade ItemVenda
-            ItemVenda itemVenda = new ItemVenda();
-            itemVenda.setVenda(venda); // Vínculo bidirecional
-            itemVenda.setProduto(produto);
-            itemVenda.setQuantidade(itemDTO.getQuantidade());
-            itemVenda.setPrecoUnitario(itemDTO.getPrecoUnitario());
-            itemVenda.setDescontoItem(itemDTO.getDescontoItem());
-            itemVenda.setValorTotalItem(valorLiquidoItem);
-            // Auditoria de Custo (Snapshot do PMP no momento da venda)
-            itemVenda.setCustoUnitario(custoUnitario);
-            itemVenda.setCustoTotal(custoTotalItem);
-
-            itensVenda.add(itemVenda);
-
-            // Atualiza acumuladores
-            valorTotalBruto = valorTotalBruto.add(valorBrutoItem);
-
-            // 4. Baixa de Estoque do Produto
-            produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(itemDTO.getQuantidade()));
+            // Baixa de Estoque (Mesmo ficando negativo)
+            produto.setQuantidadeEmEstoque(estoqueFuturo);
             produtoRepository.save(produto);
+
+            // Monta Item
+            ItemVenda item = new ItemVenda();
+            item.setVenda(venda);
+            item.setProduto(produto);
+            item.setQuantidade(quantidadeVendida);
+            item.setPrecoUnitario(itemDTO.getPrecoUnitario());
+            item.setDescontoItem(itemDTO.getDescontoItem() != null ? itemDTO.getDescontoItem() : BigDecimal.ZERO);
+            item.setCustoUnitario(produto.getPrecoMedioPonderado());
+            item.setCustoTotal(produto.getPrecoMedioPonderado().multiply(quantidadeVendida));
+
+            BigDecimal totalItem = item.getPrecoUnitario().multiply(item.getQuantidade()).subtract(item.getDescontoItem());
+            item.setValorTotalItem(totalItem);
+
+            itensParaSalvar.add(item);
+            somaTotal = somaTotal.add(totalItem);
+
+            // Kardex
+            MovimentoEstoque mov = new MovimentoEstoque();
+            mov.setProduto(produto);
+            mov.setTipoMovimento("SAIDA_VENDA");
+            mov.setQuantidadeMovimentada(quantidadeVendida);
+            mov.setDataMovimento(LocalDateTime.now());
+            mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
+            movimentoEstoqueRepository.save(mov);
         }
 
-        // 5. Fechamento da Venda
-        BigDecimal descontoGlobal = requestDTO.getDesconto();
-        if (descontoGlobal == null) descontoGlobal = BigDecimal.ZERO;
+        venda.setItens(itensParaSalvar);
+        venda.setValorTotal(somaTotal);
+        venda.setValorLiquido(somaTotal.subtract(venda.getDesconto()));
 
-        BigDecimal valorLiquidoFinal = valorTotalBruto.subtract(descontoGlobal);
+        // Precisamos adicionar o campo statusFiscal na Entidade Venda.java se ainda não tiver!
+        // venda.setStatusFiscal(statusFiscalInicial);
 
-        // Validação final de consistência
-        if (valorLiquidoFinal.compareTo(BigDecimal.ZERO) < 0) {
-            throw new ValidationException("O valor total da venda não pode ser negativo.");
-        }
+        vendaRepository.save(venda);
 
-        venda.setValorTotal(valorTotalBruto);
-        venda.setDesconto(descontoGlobal); // Corrigido para corresponder a Venda.java
-        venda.setValorLiquido(valorLiquidoFinal);
-        venda.setItens(itensVenda);
-
-        // 6. Persistência da Venda (Cascade salva os itens)
-        Venda vendaSalva = vendaRepository.save(venda);
-
-        // 7. Registro de Movimentação de Estoque (Pós-Venda)
-        // Fazemos isso aqui para ter acesso ao ID da Venda (vendaSalva.getId())
-        for (ItemVenda item : vendaSalva.getItens()) {
-            MovimentoEstoque movimento = new MovimentoEstoque();
-            movimento.setProduto(item.getProduto());
-            movimento.setDataMovimento(LocalDateTime.now()); // Corrigido para corresponder a MovimentoEstoque.java
-            movimento.setTipoMovimento("VENDA_PDV");
-            movimento.setQuantidadeMovimentada(item.getQuantidade().negate()); // Saída é negativa
-            movimento.setCustoMovimentado(item.getCustoTotal().negate()); // Custo de saída
-
-            // Vincula o movimento ao ID da venda realizada para rastreabilidade
-            movimento.setIdReferencia(vendaSalva.getId()); // Corrigido para usar setIdReferencia (Long)
-
-            movimentoEstoqueRepository.save(movimento);
-        }
-
-        // 8. Retorno do DTO mapeado
-        return new VendaResponseDTO(vendaSalva);
+        return VendaResponseDTO.builder()
+                .idVenda(venda.getId())
+                .dataVenda(venda.getDataVenda())
+                .valorTotal(venda.getValorLiquido())
+                .operador(venda.getOperador().getMatricula())
+                .totalItens(venda.getItens().size())
+                .alertas(alertasParaCaixa) // Envia os alertas para o caixa
+                .statusFiscal(statusFiscalInicial)
+                .build();
     }
 }

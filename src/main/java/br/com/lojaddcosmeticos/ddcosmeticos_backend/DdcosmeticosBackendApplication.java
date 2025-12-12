@@ -1,17 +1,22 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend;
 
+import jakarta.annotation.PostConstruct; // Importante
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-/**
- * Classe principal da aplicação.
- * Em produção, esta clujasse deve ser a mais limpa possível.
- */
+import java.util.TimeZone;
+
 @SpringBootApplication
 public class DdcosmeticosBackendApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(DdcosmeticosBackendApplication.class, args);
-        System.out.println("--- SISTEMA INICIADO COM SUCESSO EM AMBIENTE DE PRODUÇÃO ---");
+    }
+
+    // --- ADICIONE ISTO AQUI ---
+    @PostConstruct
+    public void init() {
+        // Força o sistema a rodar no horário de Brasília/Recife, independente do servidor
+        TimeZone.setDefault(TimeZone.getTimeZone("America/Sao_Paulo"));
     }
 }

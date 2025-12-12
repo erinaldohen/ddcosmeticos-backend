@@ -51,7 +51,7 @@ public class ProdutoService {
                 produto.setPrecoCustoInicial(precoCusto);
                 produto.setPrecoMedioPonderado(precoCusto);
 
-                produto.setPrecoVendaVarejo(new BigDecimal(campos[4].replace(",", ".")));
+                produto.setPrecoVenda(new BigDecimal(campos[4].replace(",", ".")));
                 produto.setQuantidadeEmEstoque(new BigDecimal(campos[13].replace(",", ".")));
                 produto.setNcm(campos[20].trim());
 

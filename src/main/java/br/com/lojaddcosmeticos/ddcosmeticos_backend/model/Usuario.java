@@ -3,6 +3,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction; // <--- NOVA ANOTAÇÃO
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -14,6 +16,9 @@ import java.util.List;
 @Entity
 @NoArgsConstructor
 @Table(name = "usuario")
+// Soft Delete no Hibernate 7+:
+@SQLDelete(sql = "UPDATE usuario SET ativo = false WHERE id = ?")
+@SQLRestriction("ativo = true") // <--- Substitui o @Where
 public class Usuario implements UserDetails {
 
     @Id
@@ -29,13 +34,15 @@ public class Usuario implements UserDetails {
     @Column(name = "senha", nullable = false)
     private String senha;
 
-    // MELHORIA: Agora usamos o Enum Perfil em vez de String
-    // @Enumerated(EnumType.STRING) instrui o JPA a salvar o texto "ROLE_CAIXA" no banco
     @Enumerated(EnumType.STRING)
     @Column(name = "perfil", nullable = false)
     private Perfil perfil;
 
-    // Construtor atualizado para receber o Enum
+    // Campo novo para Soft Delete
+    @Column(nullable = false)
+    private boolean ativo = true;
+
+    // Construtor
     public Usuario(String nome, String matricula, String senha, Perfil perfil) {
         this.nome = nome;
         this.matricula = matricula;
@@ -43,11 +50,10 @@ public class Usuario implements UserDetails {
         this.perfil = perfil;
     }
 
-    // --- Métodos de UserDetails (Spring Security) ---
+    // --- Métodos de UserDetails ---
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Converte o Enum para String para o Spring Security entender
         return List.of(new SimpleGrantedAuthority(perfil.name()));
     }
 
@@ -78,6 +84,6 @@ public class Usuario implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return true;
+        return this.ativo; // O login só funciona se ativo = true
     }
 }

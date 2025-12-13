@@ -1,21 +1,17 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/controller/EstoqueController.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO; // Importe o novo DTO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Controller responsável pelos endpoints do Módulo de Estoque.
- * Atualmente usado para registrar entradas (com recalculo de PMP).
- */
 @RestController
 @RequestMapping("/api/v1/estoque")
 public class EstoqueController {
@@ -23,25 +19,19 @@ public class EstoqueController {
     @Autowired
     private EstoqueService estoqueService;
 
-    /**
-     * Endpoint para registrar a entrada de produtos no estoque (simulação de NF de Compra).
-     * Recalcula o Preço Médio Ponderado (PMP).
-     * @param requestDTO O DTO com os detalhes da entrada.
-     * @return O ProdutoDTO atualizado.
-     */
+    // Endpoint de Compra (Entrada normal com Nota)
     @PostMapping("/entrada")
-    public ResponseEntity<?> registrarEntrada(@Valid @RequestBody EstoqueRequestDTO requestDTO) {
-        try {
-            Produto produtoAtualizado = estoqueService.registrarEntrada(requestDTO);
+    @PreAuthorize("hasRole('GERENTE')")
+    public ResponseEntity<String> registrarEntrada(@RequestBody @Valid EstoqueRequestDTO dados) {
+        estoqueService.registrarEntrada(dados);
+        return ResponseEntity.ok("Entrada de mercadoria registrada com sucesso. PMP atualizado.");
+    }
 
-            // Retorna o DTO do Produto para mostrar o novo PMP e estoque
-            ProdutoDTO responseDTO = new ProdutoDTO(produtoAtualizado);
-
-            return ResponseEntity.status(HttpStatus.OK).body(responseDTO);
-
-        } catch (RuntimeException e) {
-            // Captura erros (ex: Produto Não Encontrado)
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
-        }
+    // Endpoint de Inventário (Ajuste Manual)
+    @PostMapping("/ajuste")
+    @PreAuthorize("hasRole('GERENTE')")
+    public ResponseEntity<String> ajustarEstoque(@RequestBody @Valid AjusteEstoqueDTO dados) {
+        estoqueService.realizarAjusteInventario(dados);
+        return ResponseEntity.ok("Estoque ajustado com sucesso e auditoria registrada.");
     }
 }

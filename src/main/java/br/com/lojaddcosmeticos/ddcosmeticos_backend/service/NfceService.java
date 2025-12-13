@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -142,5 +143,52 @@ public class NfceService {
 
     private String assinaturaSimulada() {
         return Long.toHexString(new Random().nextLong());
+    }
+
+    public String gerarXmlBaixaEstoque(Produto produto, BigDecimal quantidade, String motivo) {
+        try {
+            // Prevenção contra NullPointerException
+            BigDecimal custo = produto.getPrecoCustoInicial() != null ? produto.getPrecoCustoInicial() : BigDecimal.ZERO;
+            BigDecimal pmp = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
+
+            // Cálculo seguro do total
+            BigDecimal valorTotal = quantidade.multiply(pmp);
+
+            StringBuilder xml = new StringBuilder();
+            xml.append("<NFe> <infNFe Id=\"NFe_AJUSTE_" + System.currentTimeMillis() + "\">");
+
+            xml.append("<ide>")
+                    .append("<natOp>BAIXA DE ESTOQUE - PERDA/ROUBO</natOp>")
+                    .append("<mod>55</mod>")
+                    .append("<serie>1</serie>")
+                    .append("<nNF>" + (System.currentTimeMillis() % 10000) + "</nNF>")
+                    .append("<dhEmi>" + java.time.LocalDateTime.now() + "</dhEmi>")
+                    .append("<tpNF>1</tpNF>")
+                    .append("<idDest>1</idDest>")
+                    .append("</ide>");
+
+            xml.append("<emit><CNPJ>00000000000191</CNPJ><xNome>DD COSMETICOS</xNome></emit>");
+            xml.append("<dest><CNPJ>00000000000191</CNPJ><xNome>DD COSMETICOS - BAIXA ESTOQUE</xNome></dest>");
+
+            xml.append("<det nItem=\"1\">")
+                    .append("<prod>")
+                    .append("<cProd>" + produto.getCodigoBarras() + "</cProd>")
+                    .append("<xProd>" + produto.getDescricao() + "</xProd>")
+                    .append("<CFOP>5927</CFOP>")
+                    .append("<qCom>" + quantidade + "</qCom>")
+                    .append("<vUnCom>" + custo + "</vUnCom>")
+                    .append("<vProd>" + valorTotal + "</vProd>")
+                    .append("</prod>")
+                    .append("</det>");
+
+            xml.append("<infAdic><infCpl>Motivo da Baixa: " + motivo + "</infCpl></infAdic>");
+
+            xml.append("</infNFe></NFe>");
+
+            return xml.toString();
+        } catch (Exception e) {
+            e.printStackTrace(); // Imprime o erro no console para sabermos o que foi
+            return "ERRO AO GERAR XML: " + e.getMessage();
+        }
     }
 }

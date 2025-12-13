@@ -1,36 +1,26 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/dto/EstoqueRequestDTO.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import lombok.Data;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import lombok.Data;
 import java.math.BigDecimal;
 
-/**
- * DTO de requisição para registrar a entrada de estoque (simulando uma NF de Compra).
- */
 @Data
 public class EstoqueRequestDTO {
 
-    /**
-     * Código de Barras (EAN) do produto a ser movimentado.
-     */
-    @NotBlank(message = "O código de barras é obrigatório.")
+    @NotBlank(message = "Código de barras obrigatório")
     private String codigoBarras;
 
-    /**
-     * Quantidade de entrada do produto.
-     */
-    @NotNull(message = "A quantidade é obrigatória.")
-    @DecimalMin(value = "0.001", message = "A quantidade deve ser maior que zero.")
+    @NotNull
+    @DecimalMin(value = "0.01", message = "Quantidade deve ser maior que zero")
     private BigDecimal quantidade;
 
-    /**
-     * Custo unitário da compra (Preço de Custo na NF).
-     */
-    @NotNull(message = "O custo unitário é obrigatório.")
-    @DecimalMin(value = "0.00", message = "O custo unitário não pode ser negativo.")
-    private BigDecimal custoUnitario;
+    @NotNull
+    @DecimalMin(value = "0.01", message = "Preço de custo deve ser maior que zero")
+    private BigDecimal precoCusto; // Valor pago ao fornecedor
+
+    private String numeroNotaFiscal; // Opcional, mas recomendado para rastreio
+
+    private String fornecedorCnpj; // Para vincular ao fornecedor (opcional por enquanto)
 }

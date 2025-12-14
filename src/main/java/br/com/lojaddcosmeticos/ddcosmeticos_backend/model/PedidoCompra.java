@@ -37,6 +37,6 @@ public class PedidoCompra {
     private List<ItemPedidoCompra> itens = new ArrayList<>();
 
     public enum StatusPedido {
-        EM_COTACAO, APROVADO, CANCELADO
+        EM_COTACAO, APROVADO, CANCELADO, CONCLUIDO
     }
 }

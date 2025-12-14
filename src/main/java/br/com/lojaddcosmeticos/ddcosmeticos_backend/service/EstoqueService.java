@@ -184,4 +184,50 @@ public class EstoqueService {
         audit.setMensagem("Ajuste Manual: De " + estoqueAntigo + " para " + estoqueNovo + ". Motivo: " + dados.getMotivo());
         auditoriaRepository.save(audit);
     }
+
+    /**
+     * Método Interno: Processa a entrada física de um item vindo de um Pedido de Compra.
+     * NÃO gera financeiro aqui (o PedidoCompraService fará isso de forma agrupada).
+     */
+    @Transactional
+    public void processarEntradaDePedido(Produto produto, BigDecimal quantidade, BigDecimal custoRealUnitario, Fornecedor fornecedor, String numeroNota) {
+
+        // 1. Cálculo do PMP (Custo Médio)
+        BigDecimal qtdAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
+        BigDecimal pmpAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
+
+        BigDecimal valorTotalEstoqueAntigo = qtdAtual.multiply(pmpAtual);
+        BigDecimal valorTotalEntradaReal = quantidade.multiply(custoRealUnitario);
+        BigDecimal qtdFinal = qtdAtual.add(quantidade);
+
+        BigDecimal novoPmp = custoRealUnitario;
+        if (qtdFinal.compareTo(BigDecimal.ZERO) > 0) {
+            novoPmp = (valorTotalEstoqueAntigo.add(valorTotalEntradaReal))
+                    .divide(qtdFinal, 4, RoundingMode.HALF_UP);
+        }
+
+        // 2. Atualização do Produto
+        produto.setQuantidadeEmEstoque(qtdFinal);
+        produto.setPrecoMedioPonderado(novoPmp);
+        produto.setPrecoCustoInicial(custoRealUnitario);
+        produto.setPossuiNfEntrada(true);
+        produtoRepository.save(produto);
+
+        // 3. Kardex
+        MovimentoEstoque mov = new MovimentoEstoque();
+        mov.setProduto(produto);
+        mov.setFornecedor(fornecedor);
+        mov.setTipoMovimento("ENTRADA_PEDIDO");
+        mov.setQuantidadeMovimentada(quantidade);
+        mov.setDataMovimento(LocalDateTime.now());
+        mov.setCustoMovimentado(custoRealUnitario);
+
+        if (numeroNota != null) {
+            try { mov.setIdReferencia(Long.parseLong(numeroNota.replaceAll("\\D",""))); } catch (Exception ignored){}
+        }
+        movimentoEstoqueRepository.save(mov);
+
+        // 4. Inteligência Tributária (Garante classificação)
+        tributacaoService.classificarProduto(produto);
+    }
 }

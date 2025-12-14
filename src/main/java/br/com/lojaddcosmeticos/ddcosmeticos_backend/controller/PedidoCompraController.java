@@ -19,4 +19,14 @@ public class PedidoCompraController {
         PedidoCompra pedido = pedidoService.criarSimulacao(dto);
         return ResponseEntity.ok(pedido);
     }
+
+    @PostMapping("/{id}/receber")
+    public ResponseEntity<Void> receberPedido(
+            @PathVariable Long id,
+            @RequestParam String nf,
+            @RequestParam(required = false) java.time.LocalDate vencimento) {
+
+        pedidoService.receberMercadoria(id, nf, vencimento);
+        return ResponseEntity.ok().build();
+    }
 }

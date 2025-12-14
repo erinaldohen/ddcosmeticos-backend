@@ -2,12 +2,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-@Data
+@Data // O Lombok gera o getTotalVenda() automaticamente por causa deste campo
 @Entity
 @Table(name = "venda")
 public class Venda {
@@ -16,41 +17,30 @@ public class Venda {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "data_venda", nullable = false)
+    @Column(nullable = false)
     private LocalDateTime dataVenda = LocalDateTime.now();
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "operador_id", nullable = false)
+    /**
+     * O campo crucial que estava faltando ou com nome diferente.
+     * O Lombok vai gerar: public BigDecimal getTotalVenda()
+     */
+    @Column(name = "total_venda", nullable = false)
+    private BigDecimal totalVenda;
+
+    private BigDecimal descontoTotal = BigDecimal.ZERO;
+
+    private String formaPagamento; // DINHEIRO, CARTAO, PIX
+
+    private String statusFiscal; // PENDENTE, AUTORIZADO, CONTINGENCIA, CANCELADO
+
+    @Lob // Indica texto grande
+    @Column(columnDefinition = "LONGTEXT") // Garante que cabe o XML inteiro no MySQL
+    private String xmlNfce;
+
+    @ManyToOne
+    @JoinColumn(name = "operador_id")
     private Usuario operador;
-
-    @Column(name = "valor_total", precision = 10, scale = 2, nullable = false)
-    private BigDecimal valorTotal; // Soma bruta dos itens
-
-    @Column(name = "desconto_global", precision = 10, scale = 2, nullable = false)
-    private BigDecimal desconto;
-
-    @Column(name = "valor_liquido", precision = 10, scale = 2, nullable = false)
-    private BigDecimal valorLiquido; // Total - Desconto
 
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ItemVenda> itens = new ArrayList<>();
-
-    /**
-     * Persistência do XML assinado da NFC-e.
-     * Armazena o documento fiscal jurídico para fins de auditoria/fiscalização (5 anos).
-     */
-    @Lob
-    @Column(name = "xml_nfce", columnDefinition = "LONGTEXT")
-    private String xmlNfce;
-
-    /**
-     * NOVO CAMPO: Controla o ciclo de vida fiscal da venda.
-     * Valores possíveis:
-     * - "NAO_EMITIDA" (Venda comum ou sem itens fiscais)
-     * - "PRONTA_PARA_EMISSAO" (Tem itens fiscais, aguardando envio)
-     * - "EMITIDA" (Sucesso na SEFAZ)
-     * - "PENDENTE_ANALISE_GERENTE" (Bloqueada por estoque negativo/auditoria)
-     */
-    @Column(name = "status_fiscal", length = 50)
-    private String statusFiscal = "NAO_EMITIDA";
 }

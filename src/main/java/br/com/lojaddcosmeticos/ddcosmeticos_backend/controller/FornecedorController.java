@@ -25,7 +25,7 @@ public class FornecedorController {
     @PreAuthorize("hasRole('GERENTE')")
     public ResponseEntity<Fornecedor> cadastrarFornecedor(@RequestBody Fornecedor fornecedor) {
         // Verifica se já existe um CNPJ/CPF
-        Optional<Fornecedor> existing = fornecedorRepository.findByCnpjCpf(fornecedor.getCnpjCpf());
+        Optional<Fornecedor> existing = fornecedorRepository.findByCpfOuCnpj(fornecedor.getCpfOuCnpj());
         if (existing.isPresent()) {
             return ResponseEntity.status(HttpStatus.CONFLICT).build(); // 409 Conflict
         }
@@ -41,7 +41,7 @@ public class FornecedorController {
     @GetMapping
     @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')") // Caixa pode precisar consultar
     public ResponseEntity<Fornecedor> buscarFornecedor(@RequestParam String cnpjCpf) {
-        return fornecedorRepository.findByCnpjCpf(cnpjCpf)
+        return fornecedorRepository.findByCpfOuCnpj(cnpjCpf)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

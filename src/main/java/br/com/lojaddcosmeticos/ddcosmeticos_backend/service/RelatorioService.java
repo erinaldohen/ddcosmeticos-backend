@@ -47,21 +47,34 @@ public class RelatorioService {
         BigDecimal cmvTotal = BigDecimal.ZERO;
 
         for (Venda venda : vendasHoje) {
-            fatBruto = fatBruto.add(venda.getValorTotal());
-            descontos = descontos.add(venda.getDesconto());
-            fatLiquido = fatLiquido.add(venda.getValorLiquido());
+            // CORREÇÃO DAS LINHAS 50, 51 e 52
+
+            // 1. Pega os valores seguros (evitando NullPointerException)
+            BigDecimal valorLiquidoVenda = venda.getTotalVenda() != null ? venda.getTotalVenda() : BigDecimal.ZERO;
+            BigDecimal valorDescontoVenda = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
+
+            // 2. Calcula o Bruto (Líquido + Desconto)
+            BigDecimal valorBrutoVenda = valorLiquidoVenda.add(valorDescontoVenda);
+
+            // 3. Acumula nos totais do dia
+            fatBruto = fatBruto.add(valorBrutoVenda);
+            descontos = descontos.add(valorDescontoVenda);
+            fatLiquido = fatLiquido.add(valorLiquidoVenda); // getTotalVenda é o valor final pago
+
             for (ItemVenda item : venda.getItens()) {
                 if (item.getCustoTotal() != null) {
                     cmvTotal = cmvTotal.add(item.getCustoTotal());
                 }
             }
         }
+
         BigDecimal lucro = fatLiquido.subtract(cmvTotal);
         Double margem = 0.0;
         if (fatLiquido.compareTo(BigDecimal.ZERO) > 0) {
             margem = lucro.divide(fatLiquido, 4, RoundingMode.HALF_UP)
                     .multiply(new BigDecimal(100)).doubleValue();
         }
+
         return RelatorioDiarioDTO.builder()
                 .data(LocalDate.now())
                 .quantidadeVendas(vendasHoje.size())
@@ -99,15 +112,13 @@ public class RelatorioService {
 
             item.setPorcentagemDoFaturamento(pctItem.doubleValue());
 
-            // CORREÇÃO: Verifica o acumulado ANTES de somar o atual
-            // Se já tínhamos 0%, e agora vamos para 100%, o '0%' indica que ainda estamos começando a Classe A.
+            // Verifica o acumulado ANTES de somar o atual
             double acumuladoAnterior = acumulado.doubleValue();
 
             acumulado = acumulado.add(pctItem);
             item.setAcumulado(acumulado.doubleValue());
 
             // Regra de Pareto Ajustada:
-            // Se antes desse item nós tínhamos menos de 80%, ele entra na Classe A (mesmo que estoure os 80%).
             if (acumuladoAnterior < 80.0) {
                 item.setClasse("A");
             } else if (acumuladoAnterior < 95.0) {
@@ -147,7 +158,7 @@ public class RelatorioService {
             ItemInventarioDTO item = ItemInventarioDTO.builder()
                     .codigoBarras(p.getCodigoBarras())
                     .descricao(p.getDescricao())
-                    .unidade("UN") // Pode vir do cadastro se tiver campo Unidade
+                    .unidade("UN")
                     .quantidade(qtd)
                     .custoUnitarioPmp(custo)
                     .valorTotalEstoque(totalItem)
@@ -185,15 +196,10 @@ public class RelatorioService {
                 motivo = msg.substring(msg.indexOf(":") + 1, msg.indexOf("]")).trim();
             }
 
-            // Para calcular o valor exato, precisaríamos cruzar com o MovimentoEstoque pelo ID/Data.
-            // Por simplificação, vamos contar as ocorrências aqui.
-            // *Em uma evolução, faremos um JOIN no banco.*
-
             // Acumula contagem
             mapaContagem.put(motivo, mapaContagem.getOrDefault(motivo, 0L) + 1);
 
             // Simulação de valor (para o exemplo funcionar sem query complexa)
-            // Em produção, você pegaria o valor do movimento_estoque associado
             mapaPrejuizo.put(motivo, mapaPrejuizo.getOrDefault(motivo, BigDecimal.ZERO).add(BigDecimal.TEN));
         }
 
@@ -209,5 +215,4 @@ public class RelatorioService {
 
         return resultado;
     }
-
 }

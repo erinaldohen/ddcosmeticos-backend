@@ -52,7 +52,7 @@ public class CustoService {
         Usuario operador = usuarioRepository.findByMatricula(requestDTO.getMatriculaOperador())
                 .orElseThrow(() -> new ResourceNotFoundException("Operador de auditoria não encontrado: " + requestDTO.getMatriculaOperador()));
 
-        Fornecedor fornecedor = fornecedorRepository.findByCnpjCpf(requestDTO.getCnpjCpfFornecedor())
+        Fornecedor fornecedor = fornecedorRepository.findByCpfOuCnpj(requestDTO.getCnpjCpfFornecedor())
                 .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado: " + requestDTO.getCnpjCpfFornecedor()));
 
         // 2. Processamento dos Itens da NF

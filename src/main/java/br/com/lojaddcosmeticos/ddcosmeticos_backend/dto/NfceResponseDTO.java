@@ -1,25 +1,15 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import lombok.Builder;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
-@Builder
+@AllArgsConstructor
+@NoArgsConstructor
 public class NfceResponseDTO {
-
-    private boolean autorizada;
-    private String statusSefaz;
-
-    /**
-     * XML assinado digitalmente (para armazenamento e QR Code)
-     */
-    private String xmlNfce;
-
-    private String numeroNota;
-
-    /**
-     * Número do Protocolo de Autorização da SEFAZ.
-     * Essencial para consultas futuras e validade jurídica.
-     */
-    private String protocolo; // <--- O CAMPO QUE FALTAVA
+    private String xml;
+    private String status;       // "AUTORIZADO", "REJEITADO"
+    private String protocolo;    // Protocolo da SEFAZ
+    private String mensagem;     // Mensagem de sucesso ou erro
 }

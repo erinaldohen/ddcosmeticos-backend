@@ -43,7 +43,12 @@ public class Produto {
     @Column(name = "possui_nf_entrada", nullable = false)
     private boolean possuiNfEntrada = false; // Define se produto tem origem fiscal
 
-    private String ncm;
+    @Column(length = 10)
+    private String ncm; // Ex: 33051000
+
+    @Column(name = "is_monofasico")
+    private boolean isMonofasico; // Se true, avisa o contador para abater PIS/COFINS
+
     private String cest;
     private String origem;
 

@@ -1,5 +1,3 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/dto/VendaCompletaResponseDTO.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
@@ -17,24 +15,32 @@ public class VendaCompletaResponseDTO {
 
     private Long idVenda;
     private LocalDateTime dataVenda;
-    private BigDecimal valorTotal; // Bruto
+    private BigDecimal valorTotal; // Bruto (Soma dos itens sem desconto)
     private BigDecimal descontoTotal;
-    private BigDecimal valorLiquido;
+    private BigDecimal valorLiquido; // Valor Final a Pagar
     private List<ItemVendaResponseDTO> itens;
-
-    // A resposta fiscal seria adicionada aqui em um sistema real, mas
-    // faremos uma consulta separada para simular a busca pelo XML ou chave.
 
     public VendaCompletaResponseDTO(Venda venda) {
         this.idVenda = venda.getId();
         this.dataVenda = venda.getDataVenda();
-        this.valorTotal = venda.getValorTotal();
-        this.descontoTotal = venda.getDesconto();
-        this.valorLiquido = venda.getValorLiquido();
 
-        // Mapeia a lista de itens da entidade para a lista de DTOs
-        this.itens = venda.getItens().stream()
-                .map(ItemVendaResponseDTO::new)
-                .collect(Collectors.toList());
+        // --- CORREÇÃO DAS LINHAS 31, 32 e 33 ---
+
+        // 1. O desconto na entidade chama-se 'descontoTotal'
+        this.descontoTotal = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
+
+        // 2. O valor salvo no banco ('totalVenda') já é o valor LÍQUIDO (com desconto aplicado)
+        this.valorLiquido = venda.getTotalVenda() != null ? venda.getTotalVenda() : BigDecimal.ZERO;
+
+        // 3. O valor BRUTO (Total) nós calculamos revertendo a conta: Líquido + Desconto
+        this.valorTotal = this.valorLiquido.add(this.descontoTotal);
+
+        // Mapeia a lista de itens
+        // Nota: Certifique-se de que ItemVendaResponseDTO tem um construtor que aceita ItemVenda
+        if (venda.getItens() != null) {
+            this.itens = venda.getItens().stream()
+                    .map(ItemVendaResponseDTO::new)
+                    .collect(Collectors.toList());
+        }
     }
 }

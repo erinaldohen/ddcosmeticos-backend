@@ -19,7 +19,9 @@ public class Fornecedor {
     private String nomeFantasia;
 
     @Column(nullable = false, unique = true)
-    private String cnpj;
+    private String cpfOuCnpj; // Renomeado de 'cnpj' para aceitar ambos
+
+    private String tipoPessoa; // "FISICA" ou "JURIDICA"
 
     private String telefone;
     private String email;

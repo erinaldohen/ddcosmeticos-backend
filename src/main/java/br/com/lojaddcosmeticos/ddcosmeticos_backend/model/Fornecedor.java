@@ -18,9 +18,10 @@ public class Fornecedor {
     @Column(name = "nome_fantasia")
     private String nomeFantasia;
 
-    @Column(nullable = false, unique = true)
-    private String cpfOuCnpj; // Renomeado de 'cnpj' para aceitar ambos
-
+    // --- CORREÇÃO AQUI ---
+    // Mapeia o atributo 'cpfOuCnpj' para a coluna exata 'cnpj_cpf' do banco
+    @Column(name = "cnpj_cpf", unique = true, nullable = false)
+    private String cpfOuCnpj;
     private String tipoPessoa; // "FISICA" ou "JURIDICA"
 
     private String telefone;

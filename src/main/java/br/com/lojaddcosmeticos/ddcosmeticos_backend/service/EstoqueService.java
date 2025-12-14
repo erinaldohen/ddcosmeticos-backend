@@ -27,36 +27,35 @@ public class EstoqueService {
     @Autowired private MovimentoEstoqueRepository movimentoEstoqueRepository;
     @Autowired private AuditoriaRepository auditoriaRepository;
     @Autowired private FornecedorRepository fornecedorRepository;
-    @Autowired private NfceService nfceService;          // Para gerar XMLs (Entrada e Baixa)
-    @Autowired private TributacaoService tributacaoService; // Para definir NCM e Monofásico
+    @Autowired private NfceService nfceService;
+    @Autowired private TributacaoService tributacaoService;
+
+    // NOVIDADE: Serviço Financeiro injetado
+    @Autowired private FinanceiroService financeiroService;
 
     /**
-     * MÉTODO 1: REGISTRAR ENTRADA (COMPRA DE MERCADORIA)
-     * --------------------------------------------------
-     * Este é o método principal para alimentar o estoque. Ele lida com a complexidade
-     * de fornecedores informais (CPF) e calcula o custo médio para a contabilidade.
+     * REGISTRAR ENTRADA (COMPRA)
+     * Fluxo: Estoque -> Custo Real -> Fiscal -> Financeiro
      */
     @Transactional
     public void registrarEntrada(EstoqueRequestDTO dados) {
-        // 1. Identificação do Usuário (Quem está fazendo a entrada?)
-        String usuarioLogado = SecurityContextHolder.getContext().getAuthentication().getName();
+        String usuarioLogado = SecurityContextHolder.getContext().getAuthentication() != null
+                ? SecurityContextHolder.getContext().getAuthentication().getName()
+                : "SISTEMA";
 
-        // 2. Busca do Produto
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado. Cadastre-o antes de dar entrada."));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado."));
 
-        // 3. Gestão Inteligente de Fornecedor (CPF ou CNPJ)
-        // Se o fornecedor não existir, cria automaticamente para manter histórico.
+        // 1. Gestão de Fornecedor
         Fornecedor fornecedor = null;
         if (dados.getFornecedorCnpj() != null && !dados.getFornecedorCnpj().isBlank()) {
-            // Remove formatação (pontos, traços) para salvar limpo no banco
             String documentoLimpo = dados.getFornecedorCnpj().replaceAll("\\D", "");
 
-            fornecedor = fornecedorRepository.findByCpfOuCnpj(documentoLimpo) // Note: Ajustar repositório para buscar por CpfOuCnpj se necessário
+            // Busca ou cria fornecedor automaticamente
+            fornecedor = fornecedorRepository.findByCpfOuCnpj(documentoLimpo)
                     .orElseGet(() -> {
                         Fornecedor novo = new Fornecedor();
                         novo.setCpfOuCnpj(documentoLimpo);
-                        // Define se é Pessoa Física (CPF 11 dígitos) ou Jurídica
                         novo.setTipoPessoa(documentoLimpo.length() > 11 ? "JURIDICA" : "FISICA");
                         novo.setRazaoSocial("Fornecedor Auto-Cadastrado (" + documentoLimpo + ")");
                         novo.setAtivo(true);
@@ -64,61 +63,74 @@ public class EstoqueService {
                     });
         }
 
-        // 4. Inteligência Tributária (NCM e Monofásico)
-        // Se o produto não tem classificação, o sistema infere pela descrição agora.
+        // 2. Inteligência Tributária (Preenche NCM/Monofásico se faltar)
         tributacaoService.classificarProduto(produto);
 
-        // 5. Cálculo Contábil: Preço Médio Ponderado (PMP)
-        // Fórmula: ((EstoqueAtual * CustoAtual) + (QtdNova * CustoNovo)) / (EstoqueTotal)
-        BigDecimal qtdAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
-        BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
-
+        // 3. Cálculo Financeiro da Compra
         BigDecimal qtdNova = dados.getQuantidade();
-        BigDecimal custoNovo = dados.getPrecoCusto();
+        BigDecimal custoUnitarioNota = dados.getPrecoCusto(); // Preço que veio no papel
+        BigDecimal impostosExtras = dados.getValorImpostosAdicionais() != null ? dados.getValorImpostosAdicionais() : BigDecimal.ZERO;
 
-        BigDecimal valorTotalEstoqueAntigo = qtdAtual.multiply(custoMedioAtual);
-        BigDecimal valorTotalEntrada = qtdNova.multiply(custoNovo);
+        // Custo Real Unitário (Landing Cost) = (PreçoNota + RateioImpostos)
+        BigDecimal custoRealUnitario = custoUnitarioNota;
+
+        if (qtdNova.compareTo(BigDecimal.ZERO) > 0 && impostosExtras.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal rateioPorUnidade = impostosExtras.divide(qtdNova, 4, RoundingMode.HALF_UP);
+            custoRealUnitario = custoUnitarioNota.add(rateioPorUnidade);
+        }
+
+        // Valor Total do Boleto/Dívida = (Qtd * PreçoNota) + ImpostosExtras
+        BigDecimal valorTotalBoleto = (qtdNova.multiply(custoUnitarioNota)).add(impostosExtras);
+
+        // 4. Integração Financeira (Gera Conta a Pagar)
+        if (fornecedor != null) {
+            financeiroService.lancarDespesaDeCompra(
+                    fornecedor,
+                    valorTotalBoleto,
+                    dados.getNumeroNotaFiscal(),
+                    dados.getDataVencimentoBoleto() // Data escolhida ou +30 dias padrão
+            );
+        }
+
+        // 5. Cálculo do Preço Médio Ponderado (PMP)
+        BigDecimal qtdAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
+        BigDecimal pmpAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
+
+        BigDecimal valorTotalEstoqueAntigo = qtdAtual.multiply(pmpAtual);
+        BigDecimal valorTotalEntradaReal = qtdNova.multiply(custoRealUnitario); // Usa o Custo Real!
         BigDecimal qtdFinal = qtdAtual.add(qtdNova);
 
-        BigDecimal novoPmp = custoNovo; // Default para primeiro lote
+        BigDecimal novoPmp = custoRealUnitario; // Se estoque era 0, assume o novo custo
         if (qtdFinal.compareTo(BigDecimal.ZERO) > 0) {
-            novoPmp = (valorTotalEstoqueAntigo.add(valorTotalEntrada))
+            novoPmp = (valorTotalEstoqueAntigo.add(valorTotalEntradaReal))
                     .divide(qtdFinal, 4, RoundingMode.HALF_UP);
         }
 
         // 6. Atualização do Produto
         produto.setQuantidadeEmEstoque(qtdFinal);
-        produto.setPrecoMedioPonderado(novoPmp);       // Custo Médio (Para Contabilidade)
-        produto.setPrecoCustoInicial(custoNovo);       // Último Custo Pago (Para Precificação)
-        produto.setPossuiNfEntrada(true);              // A partir de agora, é um produto FISCAL
-
+        produto.setPrecoMedioPonderado(novoPmp);
+        produto.setPrecoCustoInicial(custoRealUnitario);
+        produto.setPossuiNfEntrada(true);
         produtoRepository.save(produto);
 
-        // 7. Registro no Kardex (Movimento de Estoque)
+        // 7. Kardex
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
         mov.setFornecedor(fornecedor);
         mov.setTipoMovimento("ENTRADA_COMPRA");
         mov.setQuantidadeMovimentada(qtdNova);
         mov.setDataMovimento(LocalDateTime.now());
-        mov.setCustoMovimentado(custoNovo);
-
-        // Tenta extrair número da nota se fornecido
+        mov.setCustoMovimentado(custoRealUnitario); // Grava o custo real
         if (dados.getNumeroNotaFiscal() != null) {
-            try {
-                String numeroLimpo = dados.getNumeroNotaFiscal().replaceAll("\\D", "");
-                if (!numeroLimpo.isEmpty()) mov.setIdReferencia(Long.parseLong(numeroLimpo));
-            } catch (NumberFormatException ignored) {}
+            try { mov.setIdReferencia(Long.parseLong(dados.getNumeroNotaFiscal().replaceAll("\\D",""))); } catch (Exception ignored){}
         }
         movimentoEstoqueRepository.save(mov);
 
-        // 8. Regularização Fiscal de Entrada (Compra de CPF)
-        // Se comprou de Pessoa Física, o sistema gera a NF-e de Entrada (CFOP 1.102)
-        String infoFiscal = "Entrada Normal (CNPJ)";
+        // 8. Fiscal (Entrada de CPF)
+        String infoFiscal = "";
         if (fornecedor != null && "FISICA".equals(fornecedor.getTipoPessoa())) {
-            String xmlEntrada = nfceService.gerarXmlNotaEntradaPF(produto, qtdNova, fornecedor);
-            infoFiscal = "NOTA DE ENTRADA (CPF) GERADA: " + xmlEntrada;
-            // TODO: Futuramente, enviar esse XML para a SEFAZ
+            nfceService.gerarXmlNotaEntradaPF(produto, qtdNova, fornecedor);
+            infoFiscal = " [NOTA ENTRADA CPF GERADA]";
         }
 
         // 9. Auditoria
@@ -127,22 +139,17 @@ public class EstoqueService {
         audit.setUsuarioResponsavel(usuarioLogado);
         audit.setEntidadeAfetada("Produto: " + produto.getDescricao());
         audit.setIdEntidadeAfetada(produto.getId());
-        audit.setMensagem("Entrada: " + qtdNova + " un. Novo PMP: " + novoPmp + ". " + infoFiscal);
-
+        audit.setMensagem(String.format("Entrada: %s un. Custo Real: %s. Fin: %s. %s",
+                qtdNova, custoRealUnitario, valorTotalBoleto, infoFiscal));
         auditoriaRepository.save(audit);
     }
 
     /**
-     * MÉTODO 2: AJUSTE DE INVENTÁRIO (PERDAS, QUEBRAS, FURTOS)
-     * --------------------------------------------------------
-     * Permite corrigir o estoque manualmente. Se for uma PERDA de um produto
-     * que tem lastro fiscal, o sistema gera a Nota de Baixa (CFOP 5.927) para
-     * estornar o imposto e evitar problemas de sonegação.
+     * AJUSTE DE INVENTÁRIO (PERDAS/SOBRAS)
      */
     @Transactional
     public void realizarAjusteInventario(AjusteEstoqueDTO dados) {
         String usuarioLogado = SecurityContextHolder.getContext().getAuthentication().getName();
-
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado."));
 
@@ -150,50 +157,31 @@ public class EstoqueService {
         BigDecimal estoqueNovo = dados.getNovaQuantidadeReal();
         BigDecimal diferenca = estoqueNovo.subtract(estoqueAntigo);
 
-        if (diferenca.compareTo(BigDecimal.ZERO) == 0) return; // Nada mudou
+        if (diferenca.compareTo(BigDecimal.ZERO) == 0) return;
 
-        // 1. Atualizar Produto
         produto.setQuantidadeEmEstoque(estoqueNovo);
         produtoRepository.save(produto);
 
-        // 2. Classificar o Movimento
         boolean isPerda = diferenca.compareTo(BigDecimal.ZERO) < 0;
-        String tipoMovimento = isPerda ? "AJUSTE_SAIDA_PERDA" : "AJUSTE_ENTRADA_SOBRA";
 
-        // 3. Kardex
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
-        mov.setTipoMovimento(tipoMovimento);
+        mov.setTipoMovimento(isPerda ? "AJUSTE_SAIDA_PERDA" : "AJUSTE_ENTRADA_SOBRA");
         mov.setQuantidadeMovimentada(diferenca.abs());
         mov.setDataMovimento(LocalDateTime.now());
         mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
         movimentoEstoqueRepository.save(mov);
 
-        // 4. Lógica Fiscal de Baixa (Perda de Produto Fiscal)
-        String infoFiscal = "Ajuste Gerencial (Sem impacto fiscal imediato)";
-
-        // REGRA: Se é PERDA e o produto é FISCAL, precisa justificar para a SEFAZ
+        // Baixa Fiscal se for perda de produto com nota
         if (isPerda && produto.isPossuiNfEntrada()) {
-            String xmlBaixa = nfceService.gerarXmlBaixaEstoque(produto, diferenca.abs(), dados.getMotivo());
-            infoFiscal = "XML DE BAIXA (CFOP 5.927) GERADO AUTOMATICAMENTE: " + xmlBaixa;
+            nfceService.gerarXmlBaixaEstoque(produto, diferenca.abs(), dados.getMotivo());
         }
 
-        // 5. Auditoria (Obrigatória com Motivo)
         Auditoria audit = new Auditoria();
         audit.setTipoEvento("INVENTARIO_" + (isPerda ? "PERDA" : "SOBRA"));
         audit.setUsuarioResponsavel(usuarioLogado);
-        audit.setEntidadeAfetada("Produto: " + produto.getDescricao());
-        audit.setIdEntidadeAfetada(produto.getId());
-
-        // Formata mensagem padronizada para relatórios gerenciais
-        String mensagemAudit = String.format("[MOTIVO: %s] Ajuste de %s para %s. %s",
-                dados.getMotivo().toUpperCase(),
-                estoqueAntigo,
-                estoqueNovo,
-                infoFiscal);
-
-        audit.setMensagem(mensagemAudit);
-
+        audit.setEntidadeAfetada(produto.getDescricao());
+        audit.setMensagem("Ajuste Manual: De " + estoqueAntigo + " para " + estoqueNovo + ". Motivo: " + dados.getMotivo());
         auditoriaRepository.save(audit);
     }
 }

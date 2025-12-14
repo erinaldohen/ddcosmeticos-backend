@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import java.math.BigDecimal;
+import java.time.LocalDate; // Importante
 
 @Data
 public class EstoqueRequestDTO {
@@ -13,14 +14,17 @@ public class EstoqueRequestDTO {
     private String codigoBarras;
 
     @NotNull
-    @DecimalMin(value = "0.01", message = "Quantidade deve ser maior que zero")
+    @DecimalMin(value = "0.01")
     private BigDecimal quantidade;
 
     @NotNull
-    @DecimalMin(value = "0.01", message = "Preço de custo deve ser maior que zero")
-    private BigDecimal precoCusto; // Valor pago ao fornecedor
+    @DecimalMin(value = "0.01")
+    private BigDecimal precoCusto;
 
-    private String numeroNotaFiscal; // Opcional, mas recomendado para rastreio
+    // --- CAMPOS NOVOS PARA FINANCEIRO E CUSTO REAL ---
+    private BigDecimal valorImpostosAdicionais; // Frete + ST
+    private LocalDate dataVencimentoBoleto;
 
-    private String fornecedorCnpj; // Para vincular ao fornecedor (opcional por enquanto)
+    private String numeroNotaFiscal;
+    private String fornecedorCnpj;
 }

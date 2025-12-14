@@ -33,4 +33,8 @@ public class MovimentoEstoque {
 
     @Column(name = "id_referencia") // ID da Venda ou Nota
     private Long idReferencia;
+
+    @ManyToOne
+    @JoinColumn(name = "fornecedor_id") // Nova coluna
+    private Fornecedor fornecedor;
 }

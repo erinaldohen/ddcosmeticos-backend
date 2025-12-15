@@ -3,10 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.PedidoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemPedidoCompra;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PedidoCompra;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.PedidoCompraRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -15,6 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Optional;
 
 @Service
 public class PedidoCompraService {
@@ -48,10 +47,8 @@ public class PedidoCompraService {
             item.setPrecoUnitarioTabela(itemDto.getPrecoUnitario());
             item.setMvaAplicada(itemDto.getMva() != null ? itemDto.getMva() : BigDecimal.ZERO);
 
-            // --- INTELIGÊNCIA TRIBUTÁRIA APLICADA ---
             BigDecimal valorTotalItem = itemDto.getPrecoUnitario().multiply(itemDto.getQuantidade());
 
-            // Calcula o imposto baseado nos estados
             BigDecimal impostoItem = calculadoraFiscal.calcularImposto(
                     valorTotalItem,
                     item.getMvaAplicada(),
@@ -61,12 +58,10 @@ public class PedidoCompraService {
 
             item.setValorIcmsSt(impostoItem);
 
-            // Custo Final Unitário = (Preço Total + Imposto) / Quantidade
             BigDecimal custoFinalTotal = valorTotalItem.add(impostoItem);
-            BigDecimal custoUnitarioReal = custoFinalTotal.divide(itemDto.getQuantidade(), 4, java.math.RoundingMode.HALF_UP);
+            BigDecimal custoUnitarioReal = custoFinalTotal.divide(itemDto.getQuantidade(), 4, RoundingMode.HALF_UP);
             item.setCustoFinalUnitario(custoUnitarioReal);
 
-            // Adiciona na lista e soma totais
             pedido.getItens().add(item);
             totalProdutos = totalProdutos.add(valorTotalItem);
             totalImpostos = totalImpostos.add(impostoItem);
@@ -79,9 +74,6 @@ public class PedidoCompraService {
         return pedidoRepository.save(pedido);
     }
 
-    /**
-     * O BOTÃO MÁGICO: Transforma Pedido em Estoque + Dívida.
-     */
     @Transactional
     public void receberMercadoria(Long idPedido, String numeroNotaFiscal, java.time.LocalDate dataVencimento) {
 
@@ -92,44 +84,38 @@ public class PedidoCompraService {
             throw new IllegalStateException("Não é possível receber um pedido cancelado.");
         }
 
-        // Evita duplicidade
         if (pedido.getStatus() == PedidoCompra.StatusPedido.CONCLUIDO) {
             throw new IllegalStateException("Este pedido já foi recebido anteriormente.");
         }
 
-        // 1. Identifica/Cria Fornecedor (baseado no nome do pedido, simplificado)
-        // Em produção, o Pedido deveria ter um vínculo direto com o ID do Fornecedor.
-        // Aqui vamos buscar pelo nome ou criar um placeholder para o exemplo funcionar.
-        Fornecedor fornecedor = fornecedorRepository.findAll().stream()
+        Optional<Fornecedor> fornecedorOpt = fornecedorRepository.findAll().stream()
                 .filter(f -> f.getRazaoSocial().equalsIgnoreCase(pedido.getFornecedorNome()))
-                .findFirst()
-                .orElseGet(() -> {
-                    // Se não achar, usa um genérico (Ideal é vincular ID no DTO de criação)
-                    return fornecedorRepository.findAll().stream().findFirst()
-                            .orElseThrow(() -> new IllegalStateException("Nenhum fornecedor cadastrado no sistema."));
-                });
+                .findFirst();
 
-        // 2. Processa cada item (Entrada no Estoque)
+        Fornecedor fornecedor = fornecedorOpt.orElseGet(() -> fornecedorRepository.findAll().stream().findFirst()
+                .orElseThrow(() -> new IllegalStateException("Cadastre um fornecedor antes de receber o pedido.")));
+
+        // Processa Estoque
         for (ItemPedidoCompra item : pedido.getItens()) {
-            // O custo final unitário já foi calculado na simulação (Preço + ST)
             estoqueService.processarEntradaDePedido(
                     item.getProduto(),
                     item.getQuantidade(),
-                    item.getCustoFinalUnitario(), // Já com imposto rateado
+                    item.getCustoFinalUnitario(),
                     fornecedor,
                     numeroNotaFiscal
             );
         }
 
-        // 3. Gera Financeiro Consolidado (Valor Total do Pedido)
+        // CORREÇÃO: Chama o Financeiro com a Nova Assinatura
         financeiroService.lancarDespesaDeCompra(
                 fornecedor,
-                pedido.getTotalFinal(), // Valor com impostos
+                pedido.getTotalFinal(),
                 numeroNotaFiscal,
-                dataVencimento
+                FormaPagamento.BOLETO,
+                1,
+                dataVencimento // <--- PASSA A DATA QUE VEIO DO CONTROLLER
         );
 
-        // 4. Finaliza o Pedido
         pedido.setStatus(PedidoCompra.StatusPedido.CONCLUIDO);
         pedidoRepository.save(pedido);
     }

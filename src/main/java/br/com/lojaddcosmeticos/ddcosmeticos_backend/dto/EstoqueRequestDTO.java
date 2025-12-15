@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.FormaPagamento;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -27,4 +28,9 @@ public class EstoqueRequestDTO {
 
     private String numeroNotaFiscal;
     private String fornecedorCnpj;
+
+    // --- NOVOS CAMPOS PARA PAGAMENTO ---
+    private FormaPagamento formaPagamento; // PIX, CREDITO, ETC
+    private Integer quantidadeParcelas;    // Ex: 1, 3, 12... (Se nulo, assume 1)
+
 }

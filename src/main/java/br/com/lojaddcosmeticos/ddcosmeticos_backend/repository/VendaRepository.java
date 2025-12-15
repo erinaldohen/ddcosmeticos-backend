@@ -13,15 +13,11 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    List<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
-
-    /**
-     * Busca a Venda, os Itens e os Produtos dos itens em uma única query.
-     * Resolve o erro de LazyInitializationException.
-     */
-    @Query("SELECT v FROM Venda v " +
-            "JOIN FETCH v.itens i " +
-            "JOIN FETCH i.produto p " +
-            "WHERE v.id = :id")
+    // Método para carregar itens (que adicionamos antes)
+    @Query("SELECT v FROM Venda v JOIN FETCH v.itens WHERE v.id = :id")
     Optional<Venda> findByIdWithItens(@Param("id") Long id);
+
+    // --- ADICIONE ESTE MÉTODO ---
+    // O Spring cria automaticamente o SQL: WHERE data_venda BETWEEN ? AND ?
+    List<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
 }

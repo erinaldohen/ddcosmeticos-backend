@@ -1,68 +1,53 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 
 @Service
 public class FinanceiroService {
 
-    @Autowired
-    private ContaPagarRepository contaPagarRepository;
+    @Autowired private ContaPagarRepository contaPagarRepository;
+    @Autowired private ContaReceberRepository contaReceberRepository;
 
-    /**
-     * Lança a despesa de compra.
-     * Se for Parcela Única e tiver dataVencimentoManual, usa ela.
-     * Se for Parcelado, ignora a manual e gera 30/60/90 dias.
-     */
-    public void lancarDespesaDeCompra(Fornecedor fornecedor,
-                                      BigDecimal valorTotal,
-                                      String numeroNota,
-                                      FormaPagamento formaPagamento,
-                                      Integer parcelas,
-                                      LocalDate dataVencimentoManual) { // <--- NOVO PARÂMETRO
-
+    // ... (Método lancarDespesaDeCompra continua igual ao anterior) ...
+    public void lancarDespesaDeCompra(Fornecedor fornecedor, BigDecimal valorTotal, String numeroNota, FormaPagamento formaPagamento, Integer parcelas, LocalDate dataVencimentoManual) {
+        // ... (Mantenha o código que fizemos no passo anterior aqui) ...
+        // Vou omitir para focar no novo método de receita, mas não apague o seu!
         int qtdParcelas = (parcelas != null && parcelas > 0) ? parcelas : 1;
         String nota = (numeroNota != null ? numeroNota : "S/N");
 
-        // 1. Pagamento Imediato (PIX, Dinheiro...)
-        if (ehPagamentoImediato(formaPagamento)) {
-            ContaPagar conta = criarContaBase(fornecedor, valorTotal, nota, 1, 1);
-            conta.setDescricao("Compra Estoque (" + formaPagamento + ") - NF: " + nota);
+        if (formaPagamento == FormaPagamento.PIX || formaPagamento == FormaPagamento.DINHEIRO) { // Tirei Débito daqui
+            ContaPagar conta = new ContaPagar();
+            conta.setFornecedor(fornecedor);
+            conta.setValorTotal(valorTotal);
+            conta.setDataEmissao(LocalDate.now());
             conta.setDataVencimento(LocalDate.now());
             conta.setDataPagamento(LocalDate.now());
             conta.setStatus(ContaPagar.StatusConta.PAGO);
+            conta.setDescricao("Compra Estoque (" + formaPagamento + ") - NF: " + nota);
             contaPagarRepository.save(conta);
-        }
-        // 2. Pagamento Futuro (Boleto, Crédito...)
-        else {
+        } else {
+            // Lógica parcelada igual a antes
             BigDecimal valorParcela = valorTotal.divide(new BigDecimal(qtdParcelas), 2, RoundingMode.HALF_EVEN);
-            BigDecimal somaParcelas = valorParcela.multiply(new BigDecimal(qtdParcelas));
-            BigDecimal diferenca = valorTotal.subtract(somaParcelas);
-
+            BigDecimal diferenca = valorTotal.subtract(valorParcela.multiply(new BigDecimal(qtdParcelas)));
             for (int i = 1; i <= qtdParcelas; i++) {
-                ContaPagar conta = criarContaBase(fornecedor, valorParcela, nota, i, qtdParcelas);
+                ContaPagar conta = new ContaPagar();
+                conta.setFornecedor(fornecedor);
+                conta.setDescricao(String.format("Compra Estoque - NF: %s (Parc %d/%d)", nota, i, qtdParcelas));
+                if (i == qtdParcelas) conta.setValorTotal(valorParcela.add(diferenca));
+                else conta.setValorTotal(valorParcela);
 
-                // Ajuste de centavos na última parcela
-                if (i == qtdParcelas) {
-                    conta.setValorTotal(valorParcela.add(diferenca));
-                }
-
-                // LÓGICA DE VENCIMENTO
-                if (qtdParcelas == 1 && dataVencimentoManual != null) {
-                    // Se é 1x e o usuário escolheu a data, respeita ela (Ex: Boleto para dia 15)
-                    conta.setDataVencimento(dataVencimentoManual);
-                } else {
-                    // Se é parcelado ou não informou data, usa regra de 30 dias
-                    conta.setDataVencimento(LocalDate.now().plusDays((long) i * 30));
-                }
+                conta.setDataEmissao(LocalDate.now());
+                if (qtdParcelas == 1 && dataVencimentoManual != null) conta.setDataVencimento(dataVencimentoManual);
+                else conta.setDataVencimento(LocalDate.now().plusDays((long) i * 30));
 
                 conta.setStatus(ContaPagar.StatusConta.PENDENTE);
                 contaPagarRepository.save(conta);
@@ -70,22 +55,73 @@ public class FinanceiroService {
         }
     }
 
-    private boolean ehPagamentoImediato(FormaPagamento forma) {
-        return forma == FormaPagamento.PIX ||
-                forma == FormaPagamento.DINHEIRO ||
-                forma == FormaPagamento.DEBITO;
+    /**
+     * Lança a RECEITA vinda do PDV.
+     * Regra: Crédito e Débito caem no próximo dia útil.
+     */
+    public void lancarReceitaDeVenda(Long idVenda, BigDecimal valorTotal, FormaPagamento formaPagamento, Integer parcelas) {
+        int qtdParcelas = (parcelas != null && parcelas > 0) ? parcelas : 1;
+        String desc = "Venda PDV #" + idVenda;
+
+        // 1. Recebimento Instantâneo (Cai na hora)
+        if (formaPagamento == FormaPagamento.PIX || formaPagamento == FormaPagamento.DINHEIRO) {
+            ContaReceber conta = new ContaReceber();
+            conta.setDescricao(desc + " (" + formaPagamento + ")");
+            conta.setValorTotal(valorTotal);
+            conta.setValorLiquido(valorTotal);
+            conta.setDataEmissao(LocalDate.now());
+            conta.setDataVencimento(LocalDate.now());
+            conta.setDataRecebimento(LocalDate.now());
+            conta.setStatus(ContaReceber.StatusConta.RECEBIDO);
+            conta.setFormaPagamento(formaPagamento);
+            conta.setIdVendaRef(idVenda);
+            contaReceberRepository.save(conta);
+        }
+        // 2. Recebimento D+1 (Débito ou Crédito Antecipado)
+        else {
+            // Calcula a data que o dinheiro vai cair (Amanhã ou Segunda-feira)
+            LocalDate dataRecebimentoPrevisto = calcularProximoDiaUtil(LocalDate.now());
+
+            BigDecimal valorParcela = valorTotal.divide(new BigDecimal(qtdParcelas), 2, RoundingMode.HALF_EVEN);
+            BigDecimal diferenca = valorTotal.subtract(valorParcela.multiply(new BigDecimal(qtdParcelas)));
+
+            for (int i = 1; i <= qtdParcelas; i++) {
+                ContaReceber conta = new ContaReceber();
+                conta.setDescricao(String.format("%s - Parc %d/%d (%s)", desc, i, qtdParcelas, formaPagamento));
+
+                if (i == qtdParcelas) conta.setValorTotal(valorParcela.add(diferenca));
+                else conta.setValorTotal(valorParcela);
+
+                // Futuramente aqui aplicaremos a taxa da maquininha
+                conta.setValorLiquido(conta.getValorTotal());
+
+                conta.setDataEmissao(LocalDate.now());
+
+                // REGRA DE OURO: Tudo vence no próximo dia útil
+                conta.setDataVencimento(dataRecebimentoPrevisto);
+
+                conta.setStatus(ContaReceber.StatusConta.PENDENTE); // Pendente até o banco confirmar
+                conta.setFormaPagamento(formaPagamento);
+                conta.setIdVendaRef(idVenda);
+
+                contaReceberRepository.save(conta);
+            }
+        }
     }
 
-    private ContaPagar criarContaBase(Fornecedor f, BigDecimal valor, String nota, int parcAtual, int totalParc) {
-        ContaPagar c = new ContaPagar();
-        c.setFornecedor(f);
-        c.setValorTotal(valor);
-        c.setDataEmissao(LocalDate.now());
-        if (totalParc > 1) {
-            c.setDescricao(String.format("Compra Estoque - NF: %s (Parc %d/%d)", nota, parcAtual, totalParc));
-        } else {
-            c.setDescricao("Compra Estoque - NF: " + nota);
+    /**
+     * Calcula o próximo dia útil (Pula Sábado e Domingo).
+     */
+    private LocalDate calcularProximoDiaUtil(LocalDate dataBase) {
+        LocalDate proximaData = dataBase.plusDays(1); // Tenta amanhã
+        DayOfWeek diaDaSemana = proximaData.getDayOfWeek();
+
+        if (diaDaSemana == DayOfWeek.SATURDAY) {
+            return proximaData.plusDays(2); // Pula Sábado e Domingo -> Segunda
+        } else if (diaDaSemana == DayOfWeek.SUNDAY) {
+            return proximaData.plusDays(1); // Pula Domingo -> Segunda
         }
-        return c;
+
+        return proximaData; // É dia de semana normal
     }
 }

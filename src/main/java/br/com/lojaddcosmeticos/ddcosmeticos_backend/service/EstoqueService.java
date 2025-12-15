@@ -24,10 +24,17 @@ public class EstoqueService {
     @Autowired private MovimentoEstoqueRepository movimentoEstoqueRepository;
     @Autowired private AuditoriaRepository auditoriaRepository;
     @Autowired private FornecedorRepository fornecedorRepository;
+
+    // Serviços Integrados
     @Autowired private NfceService nfceService;
     @Autowired private TributacaoService tributacaoService;
     @Autowired private FinanceiroService financeiroService;
+    @Autowired private PrecificacaoService precificacaoService; // NOVO: Inteligência de Preço
 
+    /**
+     * Entrada Avulsa (Nota Fiscal Manual).
+     * Calcula impostos, gera financeiro e atualiza estoque.
+     */
     @Transactional
     public void registrarEntrada(EstoqueRequestDTO dados) {
         String usuarioLogado = SecurityContextHolder.getContext().getAuthentication() != null
@@ -35,9 +42,9 @@ public class EstoqueService {
                 : "SISTEMA";
 
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado."));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + dados.getCodigoBarras()));
 
-        // 1. Gestão de Fornecedor
+        // 1. Gestão de Fornecedor (Busca ou Cria placeholder)
         Fornecedor fornecedor = null;
         if (dados.getFornecedorCnpj() != null && !dados.getFornecedorCnpj().isBlank()) {
             String documentoLimpo = dados.getFornecedorCnpj().replaceAll("\\D", "");
@@ -52,53 +59,56 @@ public class EstoqueService {
                     });
         }
 
-        // 2. Classificação Fiscal
+        // 2. Classificação Fiscal (NCM/CEST)
         tributacaoService.classificarProduto(produto);
 
-        // 3. Cálculos
+        // 3. Cálculos de Custo Real
         BigDecimal qtdNova = dados.getQuantidade();
-        BigDecimal custoUnitarioNota = dados.getPrecoCusto();
+        BigDecimal custoUnitarioNota = dados.getPrecoCusto(); // Valor na Nota
         BigDecimal impostosExtras = dados.getValorImpostosAdicionais() != null ? dados.getValorImpostosAdicionais() : BigDecimal.ZERO;
 
+        // Custo Unitário Real = (Custo Nota * Qtd + Frete/Impostos) / Qtd
         BigDecimal custoRealUnitario = custoUnitarioNota;
         if (qtdNova.compareTo(BigDecimal.ZERO) > 0 && impostosExtras.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal rateioPorUnidade = impostosExtras.divide(qtdNova, 4, RoundingMode.HALF_UP);
             custoRealUnitario = custoUnitarioNota.add(rateioPorUnidade);
         }
 
-        BigDecimal valorTotalBoleto = (qtdNova.multiply(custoUnitarioNota)).add(impostosExtras);
+        BigDecimal valorTotalEntrada = (qtdNova.multiply(custoUnitarioNota)).add(impostosExtras);
 
-        // 4. Integração Financeira (CORRIGIDA AQUI)
+        // 4. Integração Financeira (Gera Contas a Pagar)
         if (fornecedor != null) {
-            // Define padrões caso venha nulo do DTO
             FormaPagamento forma = dados.getFormaPagamento() != null ? dados.getFormaPagamento() : FormaPagamento.BOLETO;
             Integer parcelas = dados.getQuantidadeParcelas() != null ? dados.getQuantidadeParcelas() : 1;
 
             financeiroService.lancarDespesaDeCompra(
                     fornecedor,
-                    valorTotalBoleto,
+                    valorTotalEntrada,
                     dados.getNumeroNotaFiscal(),
                     forma,
                     parcelas,
-                    dados.getDataVencimentoBoleto() // <--- PASSA A DATA DO DTO
+                    dados.getDataVencimentoBoleto() // Passa a data manual se existir
             );
         }
 
-        // 5. Atualização PMP e Estoque
+        // 5. Atualização de Estoque e PMP (Lógica centralizada)
         processarEntradaDePedido(produto, qtdNova, custoRealUnitario, fornecedor, dados.getNumeroNotaFiscal());
 
-        // 6. Auditoria (Log extra se necessário)
+        // 6. Auditoria / Fiscal (Log extra para PF se necessário)
         if (fornecedor != null && "FISICA".equals(fornecedor.getTipoPessoa())) {
             nfceService.gerarXmlNotaEntradaPF(produto, qtdNova, fornecedor);
         }
     }
 
     /**
-     * Método auxiliar usado tanto pela Entrada Avulsa quanto pelo Recebimento de Pedido.
+     * Método Interno: Processa a entrada física de um item.
+     * Usado tanto pela Entrada Avulsa quanto pelo Recebimento de Pedido de Compra.
+     * Atualiza Quantidade, PMP e verifica Precificação.
      */
     @Transactional
     public void processarEntradaDePedido(Produto produto, BigDecimal quantidade, BigDecimal custoRealUnitario, Fornecedor fornecedor, String numeroNota) {
 
+        // 1. Cálculo do PMP (Preço Médio Ponderado)
         BigDecimal qtdAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
         BigDecimal pmpAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
 
@@ -112,12 +122,14 @@ public class EstoqueService {
                     .divide(qtdFinal, 4, RoundingMode.HALF_UP);
         }
 
+        // 2. Atualização do Produto
         produto.setQuantidadeEmEstoque(qtdFinal);
         produto.setPrecoMedioPonderado(novoPmp);
-        produto.setPrecoCustoInicial(custoRealUnitario);
+        produto.setPrecoCustoInicial(custoRealUnitario); // Atualiza o último custo de entrada
         produto.setPossuiNfEntrada(true);
         produtoRepository.save(produto);
 
+        // 3. Kardex (Histórico de Movimentação)
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
         mov.setFornecedor(fornecedor);
@@ -125,14 +137,23 @@ public class EstoqueService {
         mov.setQuantidadeMovimentada(quantidade);
         mov.setDataMovimento(LocalDateTime.now());
         mov.setCustoMovimentado(custoRealUnitario);
+
         if (numeroNota != null) {
             try { mov.setIdReferencia(Long.parseLong(numeroNota.replaceAll("\\D",""))); } catch (Exception ignored){}
         }
         movimentoEstoqueRepository.save(mov);
 
+        // 4. Classificação (Garante integridade)
         tributacaoService.classificarProduto(produto);
+
+        // 5. Inteligência de Preço (NOVO)
+        // Analisa se o novo custo exige reajuste do preço de venda
+        precificacaoService.analisarImpactoCusto(produto, custoRealUnitario);
     }
 
+    /**
+     * Ajuste Manual de Inventário (Perdas, Quebras, Sobras).
+     */
     @Transactional
     public void realizarAjusteInventario(AjusteEstoqueDTO dados) {
         String usuarioLogado = SecurityContextHolder.getContext().getAuthentication() != null
@@ -147,11 +168,13 @@ public class EstoqueService {
 
         if (diferenca.compareTo(BigDecimal.ZERO) == 0) return;
 
+        // Atualiza Estoque
         produto.setQuantidadeEmEstoque(estoqueNovo);
         produtoRepository.save(produto);
 
         boolean isPerda = diferenca.compareTo(BigDecimal.ZERO) < 0;
 
+        // Registra Movimento
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
         mov.setTipoMovimento(isPerda ? "AJUSTE_SAIDA_PERDA" : "AJUSTE_ENTRADA_SOBRA");
@@ -160,10 +183,12 @@ public class EstoqueService {
         mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
         movimentoEstoqueRepository.save(mov);
 
+        // Fiscal: Se for Perda, deve emitir nota de baixa de estoque (CFOP 5927)
         if (isPerda && produto.isPossuiNfEntrada()) {
             nfceService.gerarXmlBaixaEstoque(produto, diferenca.abs(), dados.getMotivo());
         }
 
+        // Auditoria
         Auditoria audit = new Auditoria();
         audit.setTipoEvento("INVENTARIO_" + (isPerda ? "PERDA" : "SOBRA"));
         audit.setUsuarioResponsavel(usuarioLogado);

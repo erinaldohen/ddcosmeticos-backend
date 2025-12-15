@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -20,4 +21,10 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // --- ADICIONE ESTE MÉTODO ---
     // O Spring cria automaticamente o SQL: WHERE data_venda BETWEEN ? AND ?
     List<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
+
+    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    BigDecimal somarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    Long contarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

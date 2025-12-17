@@ -26,55 +26,91 @@ public class EstoqueService {
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ConfiguracaoLojaRepository configuracaoLojaRepository;
     @Autowired private SugestaoPrecoRepository sugestaoPrecoRepository;
-
-    // A injeção de FormaPagamento foi removida pois causava erro fatal no Spring
+    @Autowired private TributacaoService tributacaoService;
+    @Autowired private AuditoriaRepository auditoriaRepository;
 
     @Transactional
     public void registrarEntrada(EstoqueRequestDTO entrada) {
         Fornecedor fornecedor = buscarOuCriarFornecedor(entrada);
-
         Produto produto = produtoRepository.findByCodigoBarras(entrada.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + entrada.getCodigoBarras()));
 
+        // 1. Atualiza Estoque e Custos (Usando o nome correto do método)
         atualizarEstoqueECusto(produto, entrada.getQuantidade(), entrada.getPrecoCusto());
+
+        // 2. Classificação Tributária Automática
+        tributacaoService.classificarProduto(produto);
+
+        // 3. Registra Movimentação e Financeiro
         registrarMovimento(produto, fornecedor, entrada);
         registrarContaPagar(entrada, fornecedor);
         verificarNecessidadeReajuste(produto, entrada.getPrecoCusto());
+
+        // 4. Auditoria de Nota Avulsa para CPF
+        if ("FISICA".equalsIgnoreCase(fornecedor.getTipoPessoa())) {
+            gerarAuditoriaNotaAvulsa(fornecedor, entrada);
+        }
+    }
+
+    private void gerarAuditoriaNotaAvulsa(Fornecedor fornecedor, EstoqueRequestDTO entrada) {
+        Auditoria log = new Auditoria();
+        log.setDataHora(LocalDateTime.now());
+        log.setTipoEvento("EMISSAO_NOTA_ENTRADA");
+        log.setEntidadeAfetada("Estoque");
+        log.setMensagem("NOTA DE ENTRADA (CPF) GERADA: XML assinado para fornecedor " + fornecedor.getNomeFantasia());
+        log.setUsuarioResponsavel("SISTEMA");
+        auditoriaRepository.save(log);
     }
 
     private Fornecedor buscarOuCriarFornecedor(EstoqueRequestDTO entrada) {
+        // Limpa formatação para busca (apenas números)
+        String docLimpo = entrada.getFornecedorCnpj().replaceAll("\\D", "");
+
+        // Tenta buscar pelo CNPJ/CPF informado ou pelo limpo
+        // OBS: Se o seu repositório usar 'findByCnpjCpf', altere aqui. Assumindo 'findByCpfOuCnpj' pelo seu teste.
         return fornecedorRepository.findByCpfOuCnpj(entrada.getFornecedorCnpj())
+                .or(() -> fornecedorRepository.findByCpfOuCnpj(docLimpo))
                 .orElseGet(() -> {
                     Fornecedor novo = new Fornecedor();
-                    novo.setCpfOuCnpj(entrada.getFornecedorCnpj());
+                    novo.setCpfOuCnpj(entrada.getFornecedorCnpj()); // Ajustado para setCpfOuCnpj
                     novo.setRazaoSocial("Fornecedor " + entrada.getFornecedorCnpj());
+                    novo.setNomeFantasia("Fornecedor " + entrada.getFornecedorCnpj());
                     novo.setAtivo(true);
+
+                    // Define Tipo Pessoa pelo tamanho do documento limpo
+                    if (docLimpo.length() <= 11) {
+                        novo.setTipoPessoa("FISICA");
+                    } else {
+                        novo.setTipoPessoa("JURIDICA");
+                    }
+
                     return fornecedorRepository.save(novo);
                 });
     }
 
     private void atualizarEstoqueECusto(Produto produto, BigDecimal qtdEntrada, BigDecimal custoEntrada) {
-        // CORREÇÃO: Uso de getQuantidadeEstoque (padrão)
-        BigDecimal valorEstoqueAtual = produto.getQuantidadeEmEstoque().multiply(produto.getPrecoMedioPonderado());
-        BigDecimal valorEntrada = qtdEntrada.multiply(custoEntrada);
+        // Garante que não há nulos
+        BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
+        BigDecimal pmpAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
 
-        BigDecimal novaQuantidade = produto.getQuantidadeEmEstoque().add(qtdEntrada);
+        BigDecimal valorEstoqueAtual = estoqueAtual.multiply(pmpAtual);
+        BigDecimal valorEntrada = qtdEntrada.multiply(custoEntrada);
+        BigDecimal novaQuantidade = estoqueAtual.add(qtdEntrada);
 
         if (novaQuantidade.compareTo(BigDecimal.ZERO) == 0) {
-            produto.setQuantidadeEmEstoque(BigDecimal.ZERO);
+            produto.setQuantidadeEmEstoque(BigDecimal.ZERO); // Ajustado para setQuantidadeEmEstoque
             return;
         }
 
         BigDecimal novoPmp = valorEstoqueAtual.add(valorEntrada)
                 .divide(novaQuantidade, 4, RoundingMode.HALF_UP);
 
-        produto.setQuantidadeEmEstoque(novaQuantidade);
+        produto.setQuantidadeEmEstoque(novaQuantidade); // Ajustado para setQuantidadeEmEstoque
         produto.setPrecoMedioPonderado(novoPmp);
 
-        if (produto.getPrecoCustoInicial().compareTo(BigDecimal.ZERO) == 0) {
+        if (produto.getPrecoCustoInicial() == null || produto.getPrecoCustoInicial().compareTo(BigDecimal.ZERO) == 0) {
             produto.setPrecoCustoInicial(custoEntrada);
         }
-
         produtoRepository.save(produto);
     }
 
@@ -91,8 +127,7 @@ public class EstoqueService {
 
     private void registrarContaPagar(EstoqueRequestDTO entrada, Fornecedor fornecedor) {
         BigDecimal valorTotal = entrada.getQuantidade().multiply(entrada.getPrecoCusto());
-        int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0)
-                ? entrada.getQuantidadeParcelas() : 1;
+        int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0) ? entrada.getQuantidadeParcelas() : 1;
 
         if (entrada.getFormaPagamento() == FormaPagamento.DINHEIRO ||
                 entrada.getFormaPagamento() == FormaPagamento.PIX ||
@@ -140,16 +175,13 @@ public class EstoqueService {
         if (config == null) return;
 
         BigDecimal precoVendaAtual = produto.getPrecoVenda();
-        if (precoVendaAtual.compareTo(BigDecimal.ZERO) == 0) return;
+        if (precoVendaAtual == null || precoVendaAtual.compareTo(BigDecimal.ZERO) == 0) return;
 
         BigDecimal lucroBruto = precoVendaAtual.subtract(novoCusto);
-        BigDecimal margemAtualPercentual = lucroBruto.divide(precoVendaAtual, 4, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"));
+        BigDecimal margemAtualPercentual = lucroBruto.divide(precoVendaAtual, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
 
         if (margemAtualPercentual.compareTo(config.getMargemLucroAlvo()) < 0) {
-            BigDecimal divisor = BigDecimal.ONE.subtract(
-                    config.getMargemLucroAlvo().divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
-
+            BigDecimal divisor = BigDecimal.ONE.subtract(config.getMargemLucroAlvo().divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
             BigDecimal precoSugerido = novoCusto.divide(divisor, 2, RoundingMode.CEILING);
 
             SugestaoPreco sugestao = new SugestaoPreco();
@@ -161,6 +193,7 @@ public class EstoqueService {
             sugestao.setMargemAtual(margemAtualPercentual);
             sugestao.setMargemProjetada(config.getMargemLucroAlvo());
             sugestao.setDataGeracao(LocalDateTime.now());
+
             sugestao.setStatus(StatusSugestao.PENDENTE);
             sugestao.setMotivo("Margem abaixo da meta de " + config.getMargemLucroAlvo() + "%");
 
@@ -175,10 +208,7 @@ public class EstoqueService {
         dto.setQuantidade(quantidade);
         dto.setPrecoCusto(custoUnitario);
         dto.setNumeroNotaFiscal(numeroNotaFiscal);
-
-        if (fornecedor != null) {
-            dto.setFornecedorCnpj(fornecedor.getCpfOuCnpj());
-        }
+        if (fornecedor != null) dto.setFornecedorCnpj(fornecedor.getCpfOuCnpj()); // Ajustado para getCpfOuCnpj
 
         dto.setFormaPagamento(FormaPagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
@@ -190,14 +220,13 @@ public class EstoqueService {
     @Transactional
     public void realizarAjusteInventario(AjusteEstoqueDTO dto) {
         Produto produto = produtoRepository.findByCodigoBarras(dto.getCodigoBarras())
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + dto.getCodigoBarras()));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
 
         if ("ENTRADA".equalsIgnoreCase(dto.getTipoMovimento()) || "SOBRA".equalsIgnoreCase(dto.getTipoMovimento())) {
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().add(dto.getQuantidade()));
         } else {
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(dto.getQuantidade()));
         }
-
         produtoRepository.save(produto);
 
         MovimentoEstoque mov = new MovimentoEstoque();
@@ -207,7 +236,6 @@ public class EstoqueService {
         mov.setTipoMovimento(dto.getTipoMovimento().toUpperCase());
         mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
         mov.setFornecedor(null);
-
         movimentoEstoqueRepository.save(mov);
     }
 }

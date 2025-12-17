@@ -1,11 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard;
 
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.List;
 
 @Data
-public class DashboardResumoDTO {
+public class DashboardResumoDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
     // 1. O Dia (Vendas)
     private BigDecimal totalVendidoHoje;
     private Long quantidadeVendasHoje;

@@ -4,13 +4,15 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao; // <--
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
 @Entity
 @Table(name = "sugestao_preco")
-public class SugestaoPreco {
+public class SugestaoPreco implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

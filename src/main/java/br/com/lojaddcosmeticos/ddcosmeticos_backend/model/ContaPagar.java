@@ -4,13 +4,15 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // <--- E
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
 @Entity
 @Table(name = "conta_pagar")
-public class ContaPagar {
+public class ContaPagar implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

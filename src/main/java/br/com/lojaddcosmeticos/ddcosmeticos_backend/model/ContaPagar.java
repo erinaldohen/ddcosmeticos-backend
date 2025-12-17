@@ -1,38 +1,42 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // <--- ESTA LINHA É OBRIGATÓRIA
 import jakarta.persistence.*;
 import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
 @Entity
+@Table(name = "conta_pagar")
 public class ContaPagar {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String descricao; // Ex: "Compra de Mercadoria - NF 123"
+    private String descricao;
 
-    @ManyToOne
-    private Fornecedor fornecedor;
+    @Column(name = "valor_total")
+    private BigDecimal valorTotal;
 
-    private BigDecimal valorTotal; // Valor do Boleto
-
+    @Column(name = "data_emissao")
     private LocalDate dataEmissao;
+
+    @Column(name = "data_vencimento")
     private LocalDate dataVencimento;
 
-    private LocalDate dataPagamento; // Null se não pago
+    @Column(name = "data_pagamento")
+    private LocalDate dataPagamento;
 
     @Enumerated(EnumType.STRING)
-    private StatusConta status; // PENDENTE, PAGO, ATRASADO
+    private StatusConta status; // O compilador agora sabe que este StatusConta vem do import acima
 
-    // Vinculo opcional com a Entrada de Estoque (Rastreabilidade)
-    // Se quiser saber: "Essa conta veio de qual entrada?"
-    private Long idEntradaEstoqueRef;
+    @ManyToOne
+    @JoinColumn(name = "fornecedor_id")
+    private Fornecedor fornecedor;
 
-    public enum StatusConta {
-        PENDENTE, PAGO, ATRASADO, CANCELADO
-    }
+    @Column(name = "id_entrada_estoque_ref")
+    private Long idEntradaEstoque;
 }

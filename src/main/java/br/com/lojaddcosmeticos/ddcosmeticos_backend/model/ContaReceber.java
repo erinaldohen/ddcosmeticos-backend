@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.math.BigDecimal;

@@ -1,8 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.FormaPagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -20,7 +21,9 @@ import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @SpringBootTest
 @Transactional
@@ -39,11 +42,6 @@ public class EstoqueFinanceiroIntegrationTest {
     @Autowired private EstoqueService estoqueService;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
-
-    // ==================================================================================
-    // GRUPO 1: PAGAMENTOS IMEDIATOS (PIX, DINHEIRO, DÉBITO)
-    // Devem gerar conta com Status PAGO e Data de Pagamento preenchida.
-    // ==================================================================================
 
     @Test
     @DisplayName("PIX: Deve gerar conta e BAIXAR automaticamente (PAGO)")
@@ -67,7 +65,7 @@ public class EstoqueFinanceiroIntegrationTest {
     }
 
     private void executarTestePagamentoImediato(FormaPagamento forma, String codBarras, String nf) {
-        Produto p = criarProduto(codBarras, new BigDecimal("50.00"));
+        criarProduto(codBarras, new BigDecimal("50.00"));
 
         EstoqueRequestDTO dto = criarDtoBase(codBarras, nf);
         dto.setFormaPagamento(forma);
@@ -75,15 +73,13 @@ public class EstoqueFinanceiroIntegrationTest {
 
         estoqueService.registrarEntrada(dto);
 
-        // Validação Genérica para Imediatos
         List<ContaPagar> contas = contaPagarRepository.findAll();
-        // Filtra pela NF para garantir isolamento se rodar em paralelo (mesmo com Transactional)
         ContaPagar conta = contas.stream()
                 .filter(c -> c.getDescricao().contains(nf))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow(() -> new RuntimeException("Conta não encontrada para NF " + nf));
 
-        Assertions.assertEquals(ContaPagar.StatusConta.PAGO, conta.getStatus(),
+        Assertions.assertEquals(StatusConta.PAGO, conta.getStatus(),
                 "Pagamento via " + forma + " deve ser PAGO imediatamente");
         Assertions.assertEquals(LocalDate.now(), conta.getDataPagamento(),
                 "Data de pagamento deve ser hoje");
@@ -91,11 +87,6 @@ public class EstoqueFinanceiroIntegrationTest {
 
         System.out.println(">>> SUCESSO: " + forma + " validado.");
     }
-
-    // ==================================================================================
-    // GRUPO 2: PAGAMENTOS FUTUROS (BOLETO, CRÉDITO)
-    // Devem gerar conta com Status PENDENTE.
-    // ==================================================================================
 
     @Test
     @DisplayName("BOLETO (A Prazo): Deve gerar conta PENDENTE para o futuro")
@@ -107,7 +98,6 @@ public class EstoqueFinanceiroIntegrationTest {
         dto.setFormaPagamento(FormaPagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
 
-        // Simula vencimento para daqui a 10 dias
         LocalDate dataVencimento = LocalDate.now().plusDays(10);
         dto.setDataVencimentoBoleto(dataVencimento);
 
@@ -117,7 +107,7 @@ public class EstoqueFinanceiroIntegrationTest {
                 .filter(c -> c.getDescricao().contains("NF-BOL"))
                 .findFirst().orElseThrow();
 
-        Assertions.assertEquals(ContaPagar.StatusConta.PENDENTE, conta.getStatus());
+        Assertions.assertEquals(StatusConta.PENDENTE, conta.getStatus());
         Assertions.assertNull(conta.getDataPagamento(), "Não deve ter data de pagamento ainda");
         Assertions.assertEquals(dataVencimento, conta.getDataVencimento(), "Vencimento deve respeitar o input");
 
@@ -130,7 +120,6 @@ public class EstoqueFinanceiroIntegrationTest {
     public void testeCompraParceladaCartao() {
         criarProduto("PROD_CRED", new BigDecimal("300.00"));
 
-        // Entrada: 3 un * R$ 100,00 = R$ 300,00 (Total) + 0 impostos no DTO base (simplificado)
         EstoqueRequestDTO dto = new EstoqueRequestDTO();
         dto.setCodigoBarras("PROD_CRED");
         dto.setQuantidade(new BigDecimal("3"));
@@ -143,24 +132,24 @@ public class EstoqueFinanceiroIntegrationTest {
 
         estoqueService.registrarEntrada(dto);
 
-        // Ordena por vencimento para validar a sequência (30, 60, 90 dias)
         List<ContaPagar> contas = contaPagarRepository.findByFornecedorId(
                 contaPagarRepository.findAll().get(0).getFornecedor().getId()
         );
-        // Filtra apenas as desse teste
+
         contas = contas.stream()
                 .filter(c -> c.getDescricao().contains("NF-PARC"))
-                .sorted((c1, c2) -> c1.getDataVencimento().compareTo(c2.getDataVencimento()))
-                .toList();
+                .sorted(Comparator.comparing(ContaPagar::getDataVencimento))
+                .collect(Collectors.toList());
 
         Assertions.assertEquals(3, contas.size(), "Devem ser geradas 3 parcelas");
 
-        // Validações
+        // Valida Parcela 1
         ContaPagar p1 = contas.get(0);
-        Assertions.assertEquals(ContaPagar.StatusConta.PENDENTE, p1.getStatus());
+        Assertions.assertEquals(StatusConta.PENDENTE, p1.getStatus());
         Assertions.assertTrue(new BigDecimal("100.00").compareTo(p1.getValorTotal()) == 0);
         Assertions.assertTrue(p1.getDescricao().contains("(Parc 1/3)"));
 
+        // Valida Parcela 3 (Vencimento em 90 dias)
         ContaPagar p3 = contas.get(2);
         Assertions.assertEquals(LocalDate.now().plusDays(90), p3.getDataVencimento());
         Assertions.assertTrue(p3.getDescricao().contains("(Parc 3/3)"));
@@ -168,14 +157,25 @@ public class EstoqueFinanceiroIntegrationTest {
         System.out.println(">>> SUCESSO: CRÉDITO 3x validado.");
     }
 
-    // --- Métodos Auxiliares para limpar o código ---
-
     private Produto criarProduto(String codigo, BigDecimal precoVenda) {
         Produto p = new Produto();
         p.setCodigoBarras(codigo);
         p.setDescricao("PRODUTO TESTE " + codigo);
+
+        // Se o seu Produto usa 'quantidadeEmEstoque', mude para 'setQuantidadeEmEstoque'
+        // Mas recomendo padronizar tudo para 'setQuantidadeEstoque'.
         p.setQuantidadeEmEstoque(BigDecimal.ZERO);
+
         p.setPrecoVenda(precoVenda);
+
+        // --- FIX CRUCIAL PARA O NULLPOINTEREXCEPTION ---
+        // O erro acontecia porque esses valores estavam NULL no banco H2
+        p.setPrecoMedioPonderado(BigDecimal.ZERO);
+        p.setPrecoCustoInicial(BigDecimal.ZERO);
+        // -----------------------------------------------
+
+        p.setAtivo(true);
+        p.setPossuiNfEntrada(true);
         return produtoRepository.save(p);
     }
 
@@ -183,7 +183,7 @@ public class EstoqueFinanceiroIntegrationTest {
         EstoqueRequestDTO dto = new EstoqueRequestDTO();
         dto.setCodigoBarras(codigo);
         dto.setQuantidade(new BigDecimal("10"));
-        dto.setPrecoCusto(new BigDecimal("20.00")); // Total 200.00
+        dto.setPrecoCusto(new BigDecimal("20.00"));
         dto.setFornecedorCnpj("11.111.111/0001-11");
         dto.setNumeroNotaFiscal(nf);
         return dto;

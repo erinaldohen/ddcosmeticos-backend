@@ -1,6 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
@@ -60,11 +62,11 @@ public class DashboardIntegrationTest {
         // 3. Financeiro - Contas a Pagar
         Fornecedor f = criarFornecedor();
         // Atrasada (Venceu ontem) -> Alerta
-        criarContaPagar(f, new BigDecimal("50.00"), hoje.minusDays(1), ContaPagar.StatusConta.PENDENTE);
+        criarContaPagar(f, new BigDecimal("50.00"), hoje.minusDays(1), StatusConta.PENDENTE);
         // Vence Hoje -> Fluxo do Dia
-        criarContaPagar(f, new BigDecimal("120.00"), hoje, ContaPagar.StatusConta.PENDENTE);
+        criarContaPagar(f, new BigDecimal("120.00"), hoje, StatusConta.PENDENTE);
         // Vence Amanhã -> Projeção Futura
-        criarContaPagar(f, new BigDecimal("1000.00"), hoje.plusDays(1), ContaPagar.StatusConta.PENDENTE);
+        criarContaPagar(f, new BigDecimal("1000.00"), hoje.plusDays(1), StatusConta.PENDENTE);
 
         // 4. Financeiro - Contas a Receber
         // Recebe Hoje -> Fluxo do Dia
@@ -147,7 +149,7 @@ public class DashboardIntegrationTest {
         return fornecedorRepository.save(f);
     }
 
-    private void criarContaPagar(Fornecedor f, BigDecimal valor, LocalDate vencimento, ContaPagar.StatusConta status) {
+    private void criarContaPagar(Fornecedor f, BigDecimal valor, LocalDate vencimento, StatusConta status) {
         ContaPagar c = new ContaPagar();
         c.setFornecedor(f);
         c.setValorTotal(valor);

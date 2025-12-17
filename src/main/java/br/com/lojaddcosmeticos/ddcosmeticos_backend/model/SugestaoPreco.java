@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao; // <--- O IMPORT QUE FALTA
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -8,6 +9,7 @@ import java.time.LocalDateTime;
 
 @Data
 @Entity
+@Table(name = "sugestao_preco")
 public class SugestaoPreco {
 
     @Id
@@ -18,28 +20,30 @@ public class SugestaoPreco {
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
-    // Dados para comparação
+    @Column(name = "custo_antigo")
     private BigDecimal custoAntigo;
-    private BigDecimal custoNovo; // O novo custo que gerou o alerta
 
+    @Column(name = "custo_novo")
+    private BigDecimal custoNovo;
+
+    @Column(name = "preco_venda_atual")
     private BigDecimal precoVendaAtual;
+
+    @Column(name = "preco_venda_sugerido")
     private BigDecimal precoVendaSugerido;
 
-    // Dados de Inteligência
-    private BigDecimal margemAtual;     // Margem (%) se mantiver o preço atual
-    private BigDecimal margemProjetada; // Margem (%) se aceitar a sugestão
+    @Column(name = "margem_atual")
+    private BigDecimal margemAtual;
 
-    @Column(length = 500)
-    private String motivo; // Ex: "Custo subiu 20%"
-
-    private LocalDateTime dataGeracao = LocalDateTime.now();
+    @Column(name = "margem_projetada")
+    private BigDecimal margemProjetada;
 
     @Enumerated(EnumType.STRING)
-    private StatusSugestao status; // PENDENTE, APROVADO, REJEITADO
+    private StatusSugestao status; // Agora ele vai reconhecer este tipo
 
-    public enum StatusSugestao {
-        PENDENTE,
-        APROVADO,
-        REJEITADO
-    }
+    @Column(length = 500)
+    private String motivo;
+
+    @Column(name = "data_geracao")
+    private LocalDateTime dataGeracao = LocalDateTime.now();
 }

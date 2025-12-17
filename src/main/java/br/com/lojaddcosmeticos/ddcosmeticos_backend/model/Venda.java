@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 @Data
 @Entity
 public class Venda {
@@ -24,7 +24,7 @@ public class Venda {
     private BigDecimal descontoTotal;
 
     @Enumerated(EnumType.STRING)
-    private FormaPagamento formaPagamento; // Novo campo
+    private FormaPagamento formaPagamento; // Agora vai funcionar
 
     @ManyToOne
     private Usuario operador;

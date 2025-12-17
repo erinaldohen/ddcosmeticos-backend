@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.Perfil;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;

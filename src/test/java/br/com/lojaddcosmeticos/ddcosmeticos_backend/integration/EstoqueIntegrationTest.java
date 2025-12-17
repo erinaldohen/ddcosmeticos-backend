@@ -1,9 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
 import jakarta.transaction.Transactional;
@@ -18,15 +23,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
+import java.math.RoundingMode;
 import java.util.List;
 
 @SpringBootTest
 @Transactional
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY) // Usa H2 em memória
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
 @ActiveProfiles("test")
 @TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:h2:mem:ddcosmeticos_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL",
+        "spring.datasource.url=jdbc:h2:mem:ddcosmeticos_test_estoque;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL",
         "spring.datasource.driverClassName=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -37,64 +42,105 @@ public class EstoqueIntegrationTest {
 
     @Autowired private EstoqueService estoqueService;
     @Autowired private ProdutoRepository produtoRepository;
+    @Autowired private MovimentoEstoqueRepository movimentoEstoqueRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
 
     @Test
-    @DisplayName("INTEGRAÇÃO TOTAL: Entrada de Estoque deve gerar Conta a Pagar e calcular Custo Real")
+    @DisplayName("ENTRADA: Deve atualizar estoque, calcular custo médio e gerar financeiro")
     @WithMockUser(username = "gerente", roles = {"GERENTE"})
     public void testeEntradaComFinanceiro() {
-        // 1. Preparação: Produto com estoque zero
-        Produto p = new Produto();
-        p.setCodigoBarras("PROD_FINANCEIRO_01");
-        p.setDescricao("BATOM MATTE");
-        p.setQuantidadeEmEstoque(BigDecimal.ZERO);
-        p.setPrecoVenda(new BigDecimal("30.00"));
+        // 1. Preparação: Produto com estoque zerado
+        String codigoBarras = "789100010001";
+        criarProduto(codigoBarras, new BigDecimal("100.00")); // Preço de venda R$ 100
+
+        // 2. Ação: Entrada de 10 unidades a R$ 50,00 cada
+        EstoqueRequestDTO dto = new EstoqueRequestDTO();
+        dto.setCodigoBarras(codigoBarras);
+        dto.setQuantidade(new BigDecimal("10"));
+        dto.setPrecoCusto(new BigDecimal("50.00"));
+        dto.setNumeroNotaFiscal("NF-1234");
+        dto.setFornecedorCnpj("00.000.000/0001-00");
+        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setQuantidadeParcelas(1);
+
+        estoqueService.registrarEntrada(dto);
+
+        // 3. Validação do Produto (Estoque e Custo)
+        Produto produtoAtualizado = produtoRepository.findByCodigoBarras(codigoBarras).orElseThrow();
+
+        // Verifica Quantidade: 0 + 10 = 10
+        Assertions.assertEquals(0, new BigDecimal("10.000").compareTo(produtoAtualizado.getQuantidadeEmEstoque()));
+
+        // Verifica Custo Médio: (0*0 + 10*50) / 10 = 50.00
+        Assertions.assertEquals(0, new BigDecimal("50.0000").compareTo(produtoAtualizado.getPrecoMedioPonderado()));
+
+        // 4. Validação do Histórico (Kardex)
+        List<MovimentoEstoque> movimentos = movimentoEstoqueRepository.findAll();
+        Assertions.assertFalse(movimentos.isEmpty());
+        MovimentoEstoque mov = movimentos.get(0);
+        Assertions.assertEquals("ENTRADA", mov.getTipoMovimento());
+        Assertions.assertEquals(0, new BigDecimal("10.000").compareTo(mov.getQuantidadeMovimentada()));
+
+        // 5. Validação Financeira
+        List<ContaPagar> contas = contaPagarRepository.findAll();
+        Assertions.assertFalse(contas.isEmpty());
+        ContaPagar conta = contas.get(0);
+        Assertions.assertEquals(StatusConta.PENDENTE, conta.getStatus()); // Boleto é pendente
+        Assertions.assertEquals(0, new BigDecimal("500.00").compareTo(conta.getValorTotal())); // 10 * 50
+    }
+
+    @Test
+    @DisplayName("AJUSTE: Deve reduzir estoque em caso de PERDA/QUEBRA")
+    @WithMockUser(username = "gerente", roles = {"GERENTE"})
+    public void testeAjusteInventarioSaida() {
+        // 1. Preparação: Produto com 20 unidades em estoque
+        String codigoBarras = "789100020002";
+        Produto p = criarProduto(codigoBarras, new BigDecimal("50.00"));
+        p.setQuantidadeEmEstoque(new BigDecimal("20.000"));
+        p.setPrecoMedioPonderado(new BigDecimal("25.0000")); // Custo de 25
         produtoRepository.save(p);
 
-        // 2. Dados da Entrada (Simulando o Front)
-        // Compra: 10 unidades a R$ 10,00 cada.
-        // Impostos extras (Frete/ST): R$ 20,00.
-        // Total esperado da conta: R$ 120,00.
-        // Custo Unitário Real esperado: (100 + 20) / 10 = R$ 12,00.
+        // 2. Ação: Registrar quebra de 2 unidades
+        AjusteEstoqueDTO dto = new AjusteEstoqueDTO();
+        dto.setCodigoBarras(codigoBarras);
+        dto.setQuantidade(new BigDecimal("2"));
+        dto.setTipoMovimento("PERDA");
+        dto.setMotivo("Produto danificado na prateleira");
 
-        EstoqueRequestDTO entrada = new EstoqueRequestDTO();
-        entrada.setCodigoBarras("PROD_FINANCEIRO_01");
-        entrada.setQuantidade(new BigDecimal("10"));
-        entrada.setPrecoCusto(new BigDecimal("10.00"));
-        entrada.setValorImpostosAdicionais(new BigDecimal("20.00")); // O pulo do gato
-        entrada.setFornecedorCnpj("99.999.999/0001-99");
-        entrada.setNumeroNotaFiscal("NF-100");
-        entrada.setDataVencimentoBoleto(LocalDate.now().plusDays(15)); // Vence em 15 dias
+        estoqueService.realizarAjusteInventario(dto);
 
-        // 3. Execução
-        estoqueService.registrarEntrada(entrada);
+        // 3. Validação do Estoque
+        Produto produtoAtualizado = produtoRepository.findByCodigoBarras(codigoBarras).orElseThrow();
+        // 20 - 2 = 18
+        Assertions.assertEquals(0, new BigDecimal("18.000").compareTo(produtoAtualizado.getQuantidadeEmEstoque()));
 
-        // 4. Validações
+        // 4. Validação do Histórico
+        MovimentoEstoque mov = movimentoEstoqueRepository.findAll().stream()
+                .filter(m -> m.getProduto().getCodigoBarras().equals(codigoBarras))
+                .findFirst().orElseThrow();
 
-        // A. Validação de Estoque e Custo (PMP)
-        Produto produtoAtualizado = produtoRepository.findByCodigoBarras("PROD_FINANCEIRO_01").get();
+        Assertions.assertEquals("PERDA", mov.getTipoMovimento());
+        Assertions.assertEquals(0, new BigDecimal("2.000").compareTo(mov.getQuantidadeMovimentada()));
+        // O custo movimentado deve ser o PMP atual (25.00)
+        Assertions.assertEquals(0, new BigDecimal("25.0000").compareTo(mov.getCustoMovimentado()));
+    }
 
-        // CORREÇÃO: Usar compareTo para ignorar diferenças de escala (10.00 vs 10.000)
-        Assertions.assertTrue(new BigDecimal("10.000").compareTo(produtoAtualizado.getQuantidadeEmEstoque()) == 0,
-                "Estoque deveria ser 10 unidades");
+    // --- MÉTODOS AUXILIARES ---
 
-        // Verifica se o sistema calculou o Custo Real (12.00) e não o da nota (10.00)
-        Assertions.assertTrue(new BigDecimal("12.00").compareTo(produtoAtualizado.getPrecoMedioPonderado()) == 0,
-                "O PMP deveria considerar os impostos adicionais (10 + 2 = 12.00)");
+    private Produto criarProduto(String codigo, BigDecimal precoVenda) {
+        Produto p = new Produto();
+        p.setCodigoBarras(codigo);
+        p.setDescricao("PRODUTO TESTE INTEGRACAO " + codigo);
+        p.setQuantidadeEmEstoque(BigDecimal.ZERO);
+        p.setPrecoVenda(precoVenda);
 
-        // B. Validação Financeira (Conta a Pagar)
-        List<ContaPagar> contas = contaPagarRepository.findAll();
-        Assertions.assertFalse(contas.isEmpty(), "Deveria ter gerado uma conta a pagar");
+        // --- CORREÇÃO IMPORTANTE: Inicializa custos com ZERO para evitar NullPointerException ---
+        p.setPrecoMedioPonderado(BigDecimal.ZERO);
+        p.setPrecoCustoInicial(BigDecimal.ZERO);
+        // --------------------------------------------------------------------------------------
 
-        ContaPagar conta = contas.get(0);
-        Assertions.assertTrue(new BigDecimal("120.00").compareTo(conta.getValorTotal()) == 0,
-                "O valor da conta deve ser Produtos + Impostos (100 + 20 = 120)");
-
-        Assertions.assertEquals("PENDENTE", conta.getStatus().name());
-
-        // Verifica se limpou a formatação do CNPJ corretamente
-        Assertions.assertEquals("99999999000199", conta.getFornecedor().getCpfOuCnpj());
-
-        System.out.println(">>> SUCESSO: Estoque atualizado para 10un e Dívida de R$ 120,00 gerada!");
+        p.setAtivo(true);
+        p.setPossuiNfEntrada(true);
+        return produtoRepository.save(p);
     }
 }

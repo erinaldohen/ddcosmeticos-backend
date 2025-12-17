@@ -2,8 +2,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaReceber;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.FormaPagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;

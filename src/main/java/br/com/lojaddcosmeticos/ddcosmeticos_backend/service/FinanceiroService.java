@@ -10,6 +10,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 
 @Service
 public class FinanceiroService {
@@ -31,7 +33,7 @@ public class FinanceiroService {
             conta.setDataEmissao(LocalDate.now());
             conta.setDataVencimento(LocalDate.now());
             conta.setDataPagamento(LocalDate.now());
-            conta.setStatus(ContaPagar.StatusConta.PAGO);
+            conta.setStatus(StatusConta.PAGO);
             conta.setDescricao("Compra Estoque (" + formaPagamento + ") - NF: " + nota);
             contaPagarRepository.save(conta);
         } else {
@@ -49,7 +51,7 @@ public class FinanceiroService {
                 if (qtdParcelas == 1 && dataVencimentoManual != null) conta.setDataVencimento(dataVencimentoManual);
                 else conta.setDataVencimento(LocalDate.now().plusDays((long) i * 30));
 
-                conta.setStatus(ContaPagar.StatusConta.PENDENTE);
+                conta.setStatus(StatusConta.PENDENTE);
                 contaPagarRepository.save(conta);
             }
         }

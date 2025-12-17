@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // <--- Importante: Adicione este import
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -13,8 +14,8 @@ import java.util.List;
 @Repository
 public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
-    // Busca contas pendentes (útil para o dashboard financeiro)
-    List<ContaPagar> findByStatus(ContaPagar.StatusConta status);
+    // CORREÇÃO NA LINHA 17: Usar 'StatusConta' direto, em vez de 'ContaPagar.StatusConta'
+    List<ContaPagar> findByStatus(StatusConta status);
 
     // Busca histórico de contas de um fornecedor
     List<ContaPagar> findByFornecedorId(Long idFornecedor);

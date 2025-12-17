@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;

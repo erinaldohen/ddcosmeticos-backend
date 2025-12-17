@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
@@ -47,7 +48,7 @@ public class PrecificacaoService {
 
     private void gerarSugestao(Produto produto, BigDecimal novoCusto, BigDecimal precoIdeal, ConfiguracaoLoja config) {
         // Evita duplicar sugestão pendente para o mesmo produto
-        if (sugestaoRepository.existsByProdutoAndStatus(produto, SugestaoPreco.StatusSugestao.PENDENTE)) {
+        if (sugestaoRepository.existsByProdutoAndStatus(produto, StatusSugestao.PENDENTE)) {
             return;
         }
 
@@ -57,7 +58,7 @@ public class PrecificacaoService {
         sugestao.setCustoNovo(novoCusto);
         sugestao.setPrecoVendaAtual(produto.getPrecoVenda());
         sugestao.setPrecoVendaSugerido(precoIdeal);
-        sugestao.setStatus(SugestaoPreco.StatusSugestao.PENDENTE);
+        sugestao.setStatus(StatusSugestao.PENDENTE);
 
         // Calcula a margem atual (que caiu)
         BigDecimal receitaLiquidaAtual = produto.getPrecoVenda().multiply(
@@ -92,19 +93,19 @@ public class PrecificacaoService {
         p.setPrecoVenda(sugestao.getPrecoVendaSugerido());
         produtoRepository.save(p);
 
-        sugestao.setStatus(SugestaoPreco.StatusSugestao.APROVADO);
+        sugestao.setStatus(StatusSugestao.APROVADO);
         sugestaoRepository.save(sugestao);
     }
 
     public List<SugestaoPreco> listarSugestoesPendentes() {
-        return sugestaoRepository.findByStatus(SugestaoPreco.StatusSugestao.PENDENTE);
+        return sugestaoRepository.findByStatus(StatusSugestao.PENDENTE);
     }
 
     public void rejeitarSugestao(Long idSugestao) {
         SugestaoPreco sugestao = sugestaoRepository.findById(idSugestao)
                 .orElseThrow(() -> new ResourceNotFoundException("Sugestão não encontrada"));
 
-        sugestao.setStatus(SugestaoPreco.StatusSugestao.REJEITADO);
+        sugestao.setStatus(StatusSugestao.REJEITADO);
         sugestaoRepository.save(sugestao);
     }
 
@@ -119,7 +120,7 @@ public class PrecificacaoService {
         p.setPrecoVenda(precoManual); // Usa o preço que o gerente digitou
         produtoRepository.save(p);
 
-        sugestao.setStatus(SugestaoPreco.StatusSugestao.APROVADO);
+        sugestao.setStatus(StatusSugestao.APROVADO);
 
         // Adiciona um registro no motivo para auditoria futura
         String observacao = String.format(" | Ajustado manualmente de %s (sugerido) para %s",

@@ -34,4 +34,6 @@ public class EstoqueController {
         estoqueService.realizarAjusteInventario(dados);
         return ResponseEntity.ok("Estoque ajustado com sucesso e auditoria registrada.");
     }
+
+
 }

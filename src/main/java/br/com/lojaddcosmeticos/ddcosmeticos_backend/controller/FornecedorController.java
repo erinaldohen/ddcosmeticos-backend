@@ -1,48 +1,40 @@
-// Local: src/main/java/br/com.lojaddcosmeticos.ddcosmeticos_backend.controller/FornecedorController.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FornecedorService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/fornecedores")
 public class FornecedorController {
 
     @Autowired
-    private FornecedorRepository fornecedorRepository;
+    private FornecedorService fornecedorService;
 
-    /**
-     * Permite ao Gerente cadastrar novos fornecedores.
-     */
     @PostMapping
     @PreAuthorize("hasRole('GERENTE')")
     public ResponseEntity<Fornecedor> cadastrarFornecedor(@RequestBody Fornecedor fornecedor) {
-        // Verifica se já existe um CNPJ/CPF
-        Optional<Fornecedor> existing = fornecedorRepository.findByCpfOuCnpj(fornecedor.getCpfOuCnpj());
-        if (existing.isPresent()) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build(); // 409 Conflict
+        try {
+            Fornecedor saved = fornecedorService.salvar(fornecedor);
+            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
-
-        // Nota: A validação detalhada (CPF/CNPJ válido) virá na próxima fase
-        Fornecedor saved = fornecedorRepository.save(fornecedor);
-        return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
-    /**
-     * Consulta de fornecedor por CNPJ/CPF
-     */
     @GetMapping
-    @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')") // Caixa pode precisar consultar
+    @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
     public ResponseEntity<Fornecedor> buscarFornecedor(@RequestParam String cnpjCpf) {
-        return fornecedorRepository.findByCpfOuCnpj(cnpjCpf)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        // O Service lança exceção 404 se não achar, o Spring trata globalmente se configurado,
+        // ou podemos usar try-catch aqui para ser explícito.
+        try {
+            return ResponseEntity.ok(fornecedorService.buscarPorCnpjCpf(cnpjCpf));
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 }

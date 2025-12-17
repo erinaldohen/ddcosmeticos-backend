@@ -23,49 +23,57 @@ public class DashboardService {
     @Autowired private ProdutoRepository produtoRepository;
 
     public DashboardResumoDTO obterResumoExecutivo() {
-        DashboardResumoDTO dto = new DashboardResumoDTO();
         LocalDate hoje = LocalDate.now();
-
-        // 1. DADOS DE VENDAS (HOJE)
         LocalDateTime inicioDia = hoje.atStartOfDay();
         LocalDateTime fimDia = hoje.atTime(LocalTime.MAX);
 
-        dto.setTotalVendidoHoje(vendaRepository.somarVendasPorPeriodo(inicioDia, fimDia));
-        dto.setQuantidadeVendasHoje(vendaRepository.contarVendasPorPeriodo(inicioDia, fimDia));
+        // 1. Cálculos de Vendas
+        BigDecimal totalVendidoHoje = vendaRepository.somarVendasPorPeriodo(inicioDia, fimDia);
 
-        if (dto.getQuantidadeVendasHoje() > 0) {
-            dto.setTicketMedioHoje(dto.getTotalVendidoHoje()
-                    .divide(new BigDecimal(dto.getQuantidadeVendasHoje()), 2, RoundingMode.HALF_UP));
-        } else {
-            dto.setTicketMedioHoje(BigDecimal.ZERO);
+        // CORREÇÃO NA LINHA 32: Alterado de countByDataVendaBetween para contarVendasPorPeriodo
+        Long quantidadeVendasHoje = vendaRepository.contarVendasPorPeriodo(inicioDia, fimDia);
+
+        BigDecimal ticketMedio = BigDecimal.ZERO;
+
+        if (quantidadeVendasHoje > 0) {
+            ticketMedio = totalVendidoHoje.divide(new BigDecimal(quantidadeVendasHoje), 2, RoundingMode.HALF_UP);
         }
 
-        // 2. FINANCEIRO IMEDIATO (HOJE)
-        dto.setAPagarHoje(contaPagarRepository.somarAPagarPorData(hoje));
-        // Nota: Para receber hoje, consideramos o que estava previsto para vencer hoje (D+1 de ontem)
-        dto.setAReceberHoje(contaReceberRepository.somarAReceberPorData(hoje));
+        // 2. Cálculos Financeiros
+        BigDecimal aPagarHoje = contaPagarRepository.somarAPagarPorData(hoje);
+        BigDecimal aReceberHoje = contaReceberRepository.somarAReceberPorData(hoje);
+        BigDecimal saldoDoDia = aReceberHoje.subtract(aPagarHoje);
 
-        dto.setSaldoDoDia(dto.getAReceberHoje().subtract(dto.getAPagarHoje()));
+        // 3. Alertas
+        BigDecimal totalVencidoPagar = contaPagarRepository.somarTotalAtrasado(hoje);
+        Long produtosAbaixoMinimo = produtoRepository.contarProdutosAbaixoDoMinimo();
 
-        // 3. ALERTAS
-        dto.setTotalVencidoPagar(contaPagarRepository.somarTotalAtrasado(hoje));
-        dto.setProdutosAbaixoMinimo(produtoRepository.contarProdutosAbaixoDoMinimo());
-
-        // 4. PROJEÇÃO SEMANAL (Gráfico)
+        // 4. Projeção Semanal utilizando os Records DTO
         List<FluxoCaixaDiarioDTO> projecao = new ArrayList<>();
-
-        // Loop para os próximos 7 dias
         for (int i = 0; i < 7; i++) {
             LocalDate dataAnalise = hoje.plusDays(i);
-
             BigDecimal receber = contaReceberRepository.somarAReceberPorData(dataAnalise);
             BigDecimal pagar = contaPagarRepository.somarAPagarPorData(dataAnalise);
-            BigDecimal saldo = receber.subtract(pagar);
 
-            projecao.add(new FluxoCaixaDiarioDTO(dataAnalise, receber, pagar, saldo));
+            projecao.add(FluxoCaixaDiarioDTO.builder()
+                    .data(dataAnalise)
+                    .aReceber(receber)
+                    .aPagar(pagar)
+                    .saldoPrevisto(receber.subtract(pagar))
+                    .build());
         }
-        dto.setProjecaoSemanal(projecao);
 
-        return dto;
+        // RETORNO FINAL COM BUILDER (Imutável)
+        return DashboardResumoDTO.builder()
+                .totalVendidoHoje(totalVendidoHoje)
+                .quantidadeVendasHoje(quantidadeVendasHoje)
+                .ticketMedioHoje(ticketMedio)
+                .aPagarHoje(aPagarHoje)
+                .aReceberHoje(aReceberHoje)
+                .saldoDoDia(saldoDoDia)
+                .totalVencidoPagar(totalVencidoPagar)
+                .produtosAbaixoMinimo(produtosAbaixoMinimo)
+                .projecaoSemanal(projecao)
+                .build();
     }
 }

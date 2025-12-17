@@ -1,40 +1,42 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // Importe seu Enum aqui
 import jakarta.persistence.*;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
 @Entity
-public class ContaReceber {
+@Table(name = "conta_receber")
+public class ContaReceber implements Serializable { // <--- FALTAVA ISSO
+    private static final long serialVersionUID = 1L; // <--- FALTAVA ISSO
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String descricao; // Ex: "Venda #100 - Parc 1/3"
-
-    // Dados do Cliente (Opcional, mas bom ter)
+    private String descricao;
     private String nomeCliente;
 
-    private BigDecimal valorTotal;   // Valor Bruto
-    private BigDecimal valorLiquido; // Valor que cai na conta (Bruto - Taxa)
+    @Column(precision = 10, scale = 2)
+    private BigDecimal valorTotal;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal valorLiquido;
 
     private LocalDate dataEmissao;
-    private LocalDate dataVencimento; // Quando a operadora PROMETEU pagar (Amanhã)
-    private LocalDate dataRecebimento; // Quando confirmou que caiu (Conciliação)
+    private LocalDate dataVencimento;
+    private LocalDate dataRecebimento;
 
     @Enumerated(EnumType.STRING)
-    private StatusConta status; // PENDENTE, RECEBIDO
+    private StatusConta status;
 
     @Enumerated(EnumType.STRING)
     private FormaPagamento formaPagamento;
 
-    private Long idVendaRef; // Link com a Venda
-
-    public enum StatusConta {
-        PENDENTE, RECEBIDO, CANCELADO
-    }
+    private Long idVendaRef;
 }

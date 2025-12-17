@@ -1,8 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
 public enum StatusConta {
-    PENDENTE,
-    PAGO,
     ATRASADO,
-    CANCELADO
+    CANCELADO,
+    PAGO,
+    PENDENTE,
+    RECEBIDO,
 }

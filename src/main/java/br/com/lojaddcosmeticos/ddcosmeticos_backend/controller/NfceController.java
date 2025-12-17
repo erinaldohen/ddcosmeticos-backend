@@ -1,13 +1,12 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.NfceService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.VendaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize; // Importante para segurança
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,15 +20,14 @@ public class NfceController {
     private NfceService nfceService;
 
     @Autowired
-    private VendaRepository vendaRepository;
+    private VendaService vendaService; // Substituiu o Repository
 
     @GetMapping("/nfce/{idVenda}")
-    @PreAuthorize("hasAnyRole('GERENTE', 'CAIXA')") // Garante segurança
+    @PreAuthorize("hasAnyRole('GERENTE', 'CAIXA')")
     public ResponseEntity<NfceResponseDTO> gerarNfce(@PathVariable Long idVenda) {
 
-        // CORREÇÃO: Usa o método que busca os itens junto (JOIN FETCH)
-        Venda venda = vendaRepository.findByIdWithItens(idVenda)
-                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + idVenda));
+        // O Service já trata a exceção ResourceNotFoundException se não achar
+        Venda venda = vendaService.buscarVendaComItens(idVenda);
 
         NfceResponseDTO resultado = nfceService.emitirNfce(venda);
 

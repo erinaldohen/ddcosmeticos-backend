@@ -3,19 +3,17 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.SQLDelete;
-import org.hibernate.annotations.SQLRestriction; // <--- NOVA ANOTAÇÃO (Hibernate 7)
+import org.hibernate.annotations.SQLRestriction;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Data
 @Entity
-@Table(name = "produto", indexes = {
-        @Index(name = "idx_produto_descricao", columnList = "descricao")
-})
-// Soft Delete no Hibernate 7+:
+@Table(name = "produto")
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
-@SQLRestriction("ativo = true") // <--- Substitui o @Where
+@SQLRestriction("ativo = true")
 public class Produto implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -29,34 +27,40 @@ public class Produto implements Serializable {
     @Column(nullable = false)
     private String descricao;
 
+    @Column(length = 10)
+    private String unidade = "UN";
+
+    private boolean ativo = true;
+
+    // --- CAMPOS FINANCEIROS ---
     @Column(name = "preco_custo_inicial", precision = 10, scale = 4)
     private BigDecimal precoCustoInicial;
 
     @Column(name = "preco_medio_ponderado", precision = 10, scale = 4)
-    private BigDecimal precoMedioPonderado; // O Custo Real (PMP)
+    private BigDecimal precoMedioPonderado;
 
     @Column(name = "preco_venda", precision = 10, scale = 2)
     private BigDecimal precoVenda;
 
     @Column(name = "quantidade_estoque", precision = 10, scale = 3)
-    private BigDecimal quantidadeEmEstoque;
+    private BigDecimal quantidadeEmEstoque = BigDecimal.ZERO;
 
-    @Column(name = "estoque_minimo")
-    private BigDecimal estoqueMinimo;
-
-    @Column(name = "possui_nf_entrada", nullable = false)
-    private boolean possuiNfEntrada = false; // Define se produto tem origem fiscal
+    // --- CAMPOS FISCAIS (Cruciais para NFC-e em PE) ---
+    @Column(length = 10)
+    private String ncm;
 
     @Column(length = 10)
-    private String ncm; // Ex: 33051000
-
-    @Column(name = "is_monofasico")
-    private boolean isMonofasico; // Se true, avisa o contador para abater PIS/COFINS
-
     private String cest;
-    private String origem;
 
-    // Campo novo para Soft Delete
-    @Column(nullable = false)
-    private boolean ativo = true;
+    @Column(length = 1)
+    private String origem = "0"; // 0-Nacional, 1-Importado
+
+    private boolean monofasico = false; // O ERRO DA LINHA 94 ERA AQUI
+
+    @Column(name = "possui_nf_entrada")
+    private boolean possuiNfEntrada = false;
+
+    // Dentro de Produto.java - Adicione este campo
+    @Column(name = "estoque_minimo", precision = 10, scale = 3)
+    private BigDecimal estoqueMinimo = BigDecimal.ZERO;
 }

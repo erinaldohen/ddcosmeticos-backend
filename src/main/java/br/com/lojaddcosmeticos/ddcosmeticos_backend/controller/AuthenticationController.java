@@ -3,7 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.LoginRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.LoginResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.JwtService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.security.JwtService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;

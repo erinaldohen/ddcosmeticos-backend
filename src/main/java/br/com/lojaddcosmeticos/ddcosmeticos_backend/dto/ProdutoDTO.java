@@ -38,7 +38,7 @@ public class ProdutoDTO implements Serializable { // <--- Implementar
         this.precoMedioPonderado = produto.getPrecoMedioPonderado();
 
         // Campos auxiliares que estavam no DTO
-        this.unidade = "UN";
+        this.unidade = produto.getUnidade();
         this.movimentaEstoque = true;
         this.ncm = produto.getNcm();
     }

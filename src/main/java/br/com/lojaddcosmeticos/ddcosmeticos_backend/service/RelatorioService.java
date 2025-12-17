@@ -11,6 +11,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class RelatorioService {
@@ -32,247 +34,169 @@ public class RelatorioService {
     private ProdutoRepository produtoRepository;
 
     @Autowired
+    private AuditoriaRepository auditoriaRepository;
+
+    @Autowired
     private ItemVendaRepository itemVendaRepository;
 
-    @Autowired private AuditoriaRepository auditoriaRepository;
-
-    public RelatorioDiarioDTO gerarRelatorioDoDia() {
-        LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
-        LocalDateTime fimDia = LocalDate.now().atTime(LocalTime.MAX);
-        List<Venda> vendasHoje = vendaRepository.findByDataVendaBetween(inicioDia, fimDia);
-
-        BigDecimal fatBruto = BigDecimal.ZERO;
-        BigDecimal descontos = BigDecimal.ZERO;
-        BigDecimal fatLiquido = BigDecimal.ZERO;
-        BigDecimal cmvTotal = BigDecimal.ZERO;
-
-        for (Venda venda : vendasHoje) {
-            // CORREÇÃO DAS LINHAS 50, 51 e 52
-
-            // 1. Pega os valores seguros (evitando NullPointerException)
-            BigDecimal valorLiquidoVenda = venda.getTotalVenda() != null ? venda.getTotalVenda() : BigDecimal.ZERO;
-            BigDecimal valorDescontoVenda = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
-
-            // 2. Calcula o Bruto (Líquido + Desconto)
-            BigDecimal valorBrutoVenda = valorLiquidoVenda.add(valorDescontoVenda);
-
-            // 3. Acumula nos totais do dia
-            fatBruto = fatBruto.add(valorBrutoVenda);
-            descontos = descontos.add(valorDescontoVenda);
-            fatLiquido = fatLiquido.add(valorLiquidoVenda); // getTotalVenda é o valor final pago
-
-            for (ItemVenda item : venda.getItens()) {
-                if (item.getCustoTotal() != null) {
-                    cmvTotal = cmvTotal.add(item.getCustoTotal());
-                }
-            }
-        }
-
-        BigDecimal lucro = fatLiquido.subtract(cmvTotal);
-        Double margem = 0.0;
-        if (fatLiquido.compareTo(BigDecimal.ZERO) > 0) {
-            margem = lucro.divide(fatLiquido, 4, RoundingMode.HALF_UP)
-                    .multiply(new BigDecimal(100)).doubleValue();
-        }
-
-        return RelatorioDiarioDTO.builder()
-                .data(LocalDate.now())
-                .quantidadeVendas(vendasHoje.size())
-                .faturamentoBruto(fatBruto)
-                .totalDescontos(descontos)
-                .faturamentoLiquido(fatLiquido)
-                .custoMercadoriaVendida(cmvTotal)
-                .lucroLiquido(lucro)
-                .margemLucroPorcentagem(margem)
-                .build();
-    }
-
-    /**
-     * Gera a Curva ABC corrigida.
-     * Lógica ajustada: O item é classificado baseado no acumulado ANTES de sua adição.
-     */
-    public List<ItemAbcDTO> gerarCurvaAbc() {
-        List<ItemAbcDTO> lista = itemVendaRepository.agruparVendasPorProduto();
-
-        if (lista.isEmpty()) return new ArrayList<>();
-
-        BigDecimal faturamentoTotal = lista.stream()
-                .map(ItemAbcDTO::getValorTotalVendido)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        if (faturamentoTotal.compareTo(BigDecimal.ZERO) == 0) return lista;
-
-        BigDecimal acumulado = BigDecimal.ZERO;
-
-        for (ItemAbcDTO item : lista) {
-            // Percentual deste item
-            BigDecimal pctItem = item.getValorTotalVendido()
-                    .divide(faturamentoTotal, 4, RoundingMode.HALF_UP)
-                    .multiply(new BigDecimal(100));
-
-            item.setPorcentagemDoFaturamento(pctItem.doubleValue());
-
-            // Verifica o acumulado ANTES de somar o atual
-            double acumuladoAnterior = acumulado.doubleValue();
-
-            acumulado = acumulado.add(pctItem);
-            item.setAcumulado(acumulado.doubleValue());
-
-            // Regra de Pareto Ajustada:
-            if (acumuladoAnterior < 80.0) {
-                item.setClasse("A");
-            } else if (acumuladoAnterior < 95.0) {
-                item.setClasse("B");
-            } else {
-                item.setClasse("C");
-            }
-        }
-
-        return lista;
-    }
-
-    /**
-     * Gera o Inventário baseado no tipo solicitado.
-     * @param apenasFiscal Se true, traz apenas produtos com NF de entrada.
-     */
-    public InventarioResponseDTO gerarInventarioEstoque(boolean apenasFiscal) {
-        List<Produto> produtos;
-
-        if (apenasFiscal) {
-            // Visão do Contador (Apenas o que existe "oficialmente")
-            produtos = produtoRepository.findByAtivoTrueAndPossuiNfEntradaTrue();
-        } else {
-            // Visão do Gerente (Tudo o que está na prateleira)
-            produtos = produtoRepository.findAllByAtivoTrue();
-        }
-
-        List<ItemInventarioDTO> itensDTO = new ArrayList<>();
-        BigDecimal valorTotalGeral = BigDecimal.ZERO;
-
-        for (Produto p : produtos) {
-            // Calcula valor total deste item (Qtd * PMP)
-            BigDecimal custo = p.getPrecoMedioPonderado() != null ? p.getPrecoMedioPonderado() : BigDecimal.ZERO;
-            BigDecimal qtd = p.getQuantidadeEmEstoque();
-            BigDecimal totalItem = custo.multiply(qtd);
-
-            ItemInventarioDTO item = ItemInventarioDTO.builder()
-                    .codigoBarras(p.getCodigoBarras())
-                    .descricao(p.getDescricao())
-                    .unidade("UN")
-                    .quantidade(qtd)
-                    .custoUnitarioPmp(custo)
-                    .valorTotalEstoque(totalItem)
-                    .statusFiscal(p.isPossuiNfEntrada() ? "FISCAL" : "NAO_FISCAL")
-                    .build();
-
-            itensDTO.add(item);
-            valorTotalGeral = valorTotalGeral.add(totalItem);
-        }
-
-        return InventarioResponseDTO.builder()
-                .tipoInventario(apenasFiscal ? "CONTABIL_FISCAL (Apenas com NF)" : "GERENCIAL_COMPLETO (Físico Real)")
-                .dataGeracao(LocalDateTime.now())
-                .totalItens(itensDTO.size())
-                .valorTotalEstoque(valorTotalGeral)
-                .itens(itensDTO)
-                .build();
-    }
-
-    public List<RelatorioPerdasDTO> gerarRelatorioPerdasPorMotivo() {
-        // 1. Busca todas as auditorias de perda
-        List<Auditoria> perdas = auditoriaRepository.findAll().stream()
-                .filter(a -> a.getTipoEvento().equals("INVENTARIO_PERDA"))
-                .toList();
-
-        Map<String, BigDecimal> mapaPrejuizo = new HashMap<>();
-        Map<String, Long> mapaContagem = new HashMap<>();
-
-        for (Auditoria a : perdas) {
-            // Extrai o motivo da mensagem (fizemos um padrão: "[MOTIVO: XXX] ...")
-            String msg = a.getMensagem();
-            String motivo = "OUTROS";
-
-            if (msg.contains("[MOTIVO:") && msg.contains("]")) {
-                motivo = msg.substring(msg.indexOf(":") + 1, msg.indexOf("]")).trim();
-            }
-
-            // Acumula contagem
-            mapaContagem.put(motivo, mapaContagem.getOrDefault(motivo, 0L) + 1);
-
-            // Simulação de valor (para o exemplo funcionar sem query complexa)
-            mapaPrejuizo.put(motivo, mapaPrejuizo.getOrDefault(motivo, BigDecimal.ZERO).add(BigDecimal.TEN));
-        }
-
-        // Transforma em Lista DTO
-        List<RelatorioPerdasDTO> resultado = new ArrayList<>();
-        for (String motivo : mapaContagem.keySet()) {
-            resultado.add(new RelatorioPerdasDTO(
-                    motivo,
-                    mapaContagem.get(motivo),
-                    mapaPrejuizo.get(motivo)
-            ));
-        }
-
-        return resultado;
-    }
-
+    @Transactional(readOnly = true)
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
-        // 1. Define o intervalo (do primeiro minuto do dia 'inicio' até o último do dia 'fim')
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
-        // 2. Busca as vendas
         List<Venda> vendas = vendaRepository.buscarPorPeriodo(dataInicio, dataFim);
 
-        // 3. Inicializa acumuladores
         BigDecimal totalBruto = BigDecimal.ZERO;
         BigDecimal totalDescontos = BigDecimal.ZERO;
         BigDecimal totalLiquido = BigDecimal.ZERO;
         BigDecimal custoTotalMercadoria = BigDecimal.ZERO;
 
-        // 4. Processa cada venda
         for (Venda venda : vendas) {
-            // Se tiver desconto na venda global (cabeçalho)
             BigDecimal descontoVenda = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
-
-            // Soma os totais da venda
             totalLiquido = totalLiquido.add(venda.getTotalVenda());
             totalDescontos = totalDescontos.add(descontoVenda);
 
-            // Para calcular Bruto e Custo, olhamos os itens
             for (ItemVenda item : venda.getItens()) {
-                totalBruto = totalBruto.add(item.getValorTotalItem()); // Preço cheio * Qtd
-
-                // Custo (Se for nulo, assume zero para não quebrar)
+                totalBruto = totalBruto.add(item.getValorTotalItem());
                 BigDecimal custoItem = item.getCustoTotal() != null ? item.getCustoTotal() : BigDecimal.ZERO;
                 custoTotalMercadoria = custoTotalMercadoria.add(custoItem);
             }
         }
 
-        // Se calculamos o totalBruto pelos itens, ele não considera o desconto global.
-        // Ajuste fino: Total Bruto = Total Liquido + Descontos
         totalBruto = totalLiquido.add(totalDescontos);
 
-        // 5. Calcula Lucro e Margem
         BigDecimal lucroBruto = totalLiquido.subtract(custoTotalMercadoria);
-
         BigDecimal margem = BigDecimal.ZERO;
+
         if (totalLiquido.compareTo(BigDecimal.ZERO) > 0) {
-            // Margem = (Lucro / Venda Líquida) * 100
             margem = lucroBruto.divide(totalLiquido, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
         }
 
-        // 6. Retorna o DTO preenchido
-        return new RelatorioVendasDTO(
-                inicio,
-                fim,
-                vendas.size(),
-                totalBruto,
-                totalDescontos,
-                totalLiquido,
-                custoTotalMercadoria,
-                lucroBruto,
-                margem
-        );
+        return new RelatorioVendasDTO(inicio, fim, vendas.size(), totalBruto, totalDescontos, totalLiquido, custoTotalMercadoria, lucroBruto, margem);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Auditoria> buscarHistoricoAjustesEstoque() {
+        return auditoriaRepository.findAll().stream()
+                .filter(a -> a.getTipoEvento() != null &&
+                        (a.getTipoEvento().startsWith("INVENTARIO_") || a.getTipoEvento().equals("ESTOQUE_ENTRADA")))
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> gerarRelatorioMonofasicos() {
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+        return produtos.stream().map(p -> {
+            Map<String, Object> map = new HashMap<>();
+            map.put("codigo", p.getCodigoBarras());
+            map.put("produto", p.getDescricao());
+            map.put("ncm", p.getNcm());
+            map.put("monofasico", p.isMonofasico());
+            map.put("status", p.isMonofasico() ? "ISENTO DE PIS/COFINS (MONOFÁSICO)" : "TRIBUTADO NORMAL");
+            return map;
+        }).collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public InventarioResponseDTO gerarInventarioEstoque(boolean contabil) {
+        // Busca todos os produtos ativos
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+
+        // Filtra para inventário fiscal se solicitado
+        if (contabil) {
+            produtos = produtos.stream()
+                    .filter(Produto::isPossuiNfEntrada)
+                    .collect(Collectors.toList());
+        }
+
+        // Mapeamento detalhado de cada produto para o DTO de item do inventário
+        List<ItemInventarioDTO> itensDTO = produtos.stream()
+                .map(p -> {
+                    BigDecimal qtd = p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : BigDecimal.ZERO;
+                    BigDecimal custo = p.getPrecoMedioPonderado() != null ? p.getPrecoMedioPonderado() : BigDecimal.ZERO;
+
+                    return ItemInventarioDTO.builder()
+                            .codigoBarras(p.getCodigoBarras())
+                            .descricao(p.getDescricao())
+                            .unidade(p.getUnidade()) // AGORA USA O CAMPO DA ENTIDADE
+                            .quantidade(qtd)
+                            .custoUnitarioPmp(custo)
+                            .valorTotalEstoque(qtd.multiply(custo))
+                            .statusFiscal(p.isPossuiNfEntrada() ? "FISCAL" : "NAO_FISCAL")
+                            .build();
+                })
+                .collect(Collectors.toList());
+
+        // Soma o valor total financeiro baseado nos itens mapeados
+        BigDecimal valorTotalEstoque = itensDTO.stream()
+                .map(ItemInventarioDTO::valorTotalEstoque)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Retorno utilizando o Builder para evitar erros de ordem de parâmetros
+        return InventarioResponseDTO.builder()
+                .tipoInventario(contabil ? "INVENTARIO_FISCAL_CONTABIL" : "INVENTARIO_GERENCIAL_FISICO")
+                .dataGeracao(LocalDateTime.now())
+                .totalItens(itensDTO.size())
+                .valorTotalEstoque(valorTotalEstoque)
+                .itens(itensDTO)
+                .build();
+    }
+
+    public List<RelatorioPerdasDTO> gerarRelatorioPerdasPorMotivo() {
+        return new ArrayList<>();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ItemAbcDTO> gerarCurvaAbc() {
+        // 1. Busca os dados agrupados e ordenados pelo banco
+        List<ItemAbcDTO> listaBruta = itemVendaRepository.agruparVendasPorProduto();
+
+        // 2. Calcula o Faturamento Total para base de porcentagem
+        BigDecimal faturamentoTotal = listaBruta.stream()
+                .map(ItemAbcDTO::valorTotalVendido)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (faturamentoTotal.compareTo(BigDecimal.ZERO) == 0) return new ArrayList<>();
+
+        List<ItemAbcDTO> listaEnriquecida = new ArrayList<>();
+        BigDecimal acumuladoValor = BigDecimal.ZERO;
+
+        // 3. Processamento da Curva ABC (Princípio de Pareto)
+        for (ItemAbcDTO item : listaBruta) {
+            // Calcula % individual deste item no faturamento
+            double porcentagem = item.valorTotalVendido()
+                    .divide(faturamentoTotal, 4, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal("100")).doubleValue();
+
+            acumuladoValor = acumuladoValor.add(item.valorTotalVendido());
+
+            // Calcula % acumulada
+            double porcentagemAcumulada = acumuladoValor
+                    .divide(faturamentoTotal, 4, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal("100")).doubleValue();
+
+            // 4. Classificação de Curva
+            String classe;
+            if (porcentagemAcumulada <= 80.0) {
+                classe = "A"; // 80% do faturamento
+            } else if (porcentagemAcumulada <= 95.0) {
+                classe = "B"; // Próximos 15%
+            } else {
+                classe = "C"; // Últimos 5%
+            }
+
+            // Cria novo Record enriquecido com os cálculos
+            listaEnriquecida.add(new ItemAbcDTO(
+                    item.codigoBarras(),
+                    item.nomeProduto(),
+                    item.quantidadeVendida(),
+                    item.valorTotalVendido(),
+                    porcentagem,
+                    porcentagemAcumulada,
+                    classe
+            ));
+        }
+
+        return listaEnriquecida;
     }
 }

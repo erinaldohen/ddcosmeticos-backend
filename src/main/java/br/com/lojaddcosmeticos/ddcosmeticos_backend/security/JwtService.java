@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.security;
 
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;

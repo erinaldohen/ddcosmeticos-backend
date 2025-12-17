@@ -2,17 +2,21 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.InventarioResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioPerdasDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.AuditoriaRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository; // Import necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,8 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/relatorios")
+@Tag(name = "Relatórios", description = "Endpoints para análise financeira e operacional")
+@SecurityRequirement(name = "bearerAuth") // Protege com Cadeado no Swagger
 public class RelatorioController {
 
     @Autowired
@@ -73,6 +79,20 @@ public class RelatorioController {
             return map;
         }).collect(Collectors.toList());
 
+        return ResponseEntity.ok(relatorio);
+    }
+
+    @GetMapping("/vendas")
+    @Operation(summary = "Relatório Financeiro de Vendas", description = "Retorna faturamento, custos e lucro em um período.")
+    public ResponseEntity<RelatorioVendasDTO> getRelatorioVendas(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
+    ) {
+        // Se não informar data, pega o dia de HOJE
+        if (inicio == null) inicio = LocalDate.now();
+        if (fim == null) fim = LocalDate.now();
+
+        RelatorioVendasDTO relatorio = relatorioService.gerarRelatorioVendas(inicio, fim);
         return ResponseEntity.ok(relatorio);
     }
 }

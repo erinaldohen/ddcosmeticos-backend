@@ -215,4 +215,64 @@ public class RelatorioService {
 
         return resultado;
     }
+
+    public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
+        // 1. Define o intervalo (do primeiro minuto do dia 'inicio' até o último do dia 'fim')
+        LocalDateTime dataInicio = inicio.atStartOfDay();
+        LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
+
+        // 2. Busca as vendas
+        List<Venda> vendas = vendaRepository.buscarPorPeriodo(dataInicio, dataFim);
+
+        // 3. Inicializa acumuladores
+        BigDecimal totalBruto = BigDecimal.ZERO;
+        BigDecimal totalDescontos = BigDecimal.ZERO;
+        BigDecimal totalLiquido = BigDecimal.ZERO;
+        BigDecimal custoTotalMercadoria = BigDecimal.ZERO;
+
+        // 4. Processa cada venda
+        for (Venda venda : vendas) {
+            // Se tiver desconto na venda global (cabeçalho)
+            BigDecimal descontoVenda = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
+
+            // Soma os totais da venda
+            totalLiquido = totalLiquido.add(venda.getTotalVenda());
+            totalDescontos = totalDescontos.add(descontoVenda);
+
+            // Para calcular Bruto e Custo, olhamos os itens
+            for (ItemVenda item : venda.getItens()) {
+                totalBruto = totalBruto.add(item.getValorTotalItem()); // Preço cheio * Qtd
+
+                // Custo (Se for nulo, assume zero para não quebrar)
+                BigDecimal custoItem = item.getCustoTotal() != null ? item.getCustoTotal() : BigDecimal.ZERO;
+                custoTotalMercadoria = custoTotalMercadoria.add(custoItem);
+            }
+        }
+
+        // Se calculamos o totalBruto pelos itens, ele não considera o desconto global.
+        // Ajuste fino: Total Bruto = Total Liquido + Descontos
+        totalBruto = totalLiquido.add(totalDescontos);
+
+        // 5. Calcula Lucro e Margem
+        BigDecimal lucroBruto = totalLiquido.subtract(custoTotalMercadoria);
+
+        BigDecimal margem = BigDecimal.ZERO;
+        if (totalLiquido.compareTo(BigDecimal.ZERO) > 0) {
+            // Margem = (Lucro / Venda Líquida) * 100
+            margem = lucroBruto.divide(totalLiquido, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+        }
+
+        // 6. Retorna o DTO preenchido
+        return new RelatorioVendasDTO(
+                inicio,
+                fim,
+                vendas.size(),
+                totalBruto,
+                totalDescontos,
+                totalLiquido,
+                custoTotalMercadoria,
+                lucroBruto,
+                margem
+        );
+    }
 }

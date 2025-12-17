@@ -27,4 +27,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     Long contarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    // Busca vendas dentro de um intervalo de datas (ex: 00:00 até 23:59)
+    @Query("SELECT v FROM Venda v JOIN FETCH v.itens WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    List<Venda> buscarPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

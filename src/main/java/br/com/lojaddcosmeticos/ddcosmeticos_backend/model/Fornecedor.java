@@ -7,7 +7,9 @@ import java.io.Serializable;
 
 @Data
 @Entity
-@Table(name = "fornecedor")
+@Table(name = "fornecedor", indexes = {
+        @Index(name = "idx_fornecedor_nome", columnList = "nome_fantasia")
+})
 public class Fornecedor implements Serializable {
     private static final long serialVersionUID = 1L;
 

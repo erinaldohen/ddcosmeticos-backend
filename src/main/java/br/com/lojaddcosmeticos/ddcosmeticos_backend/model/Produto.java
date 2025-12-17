@@ -10,7 +10,9 @@ import java.math.BigDecimal;
 
 @Data
 @Entity
-@Table(name = "produto")
+@Table(name = "produto", indexes = {
+        @Index(name = "idx_produto_descricao", columnList = "descricao")
+})
 // Soft Delete no Hibernate 7+:
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true") // <--- Substitui o @Where

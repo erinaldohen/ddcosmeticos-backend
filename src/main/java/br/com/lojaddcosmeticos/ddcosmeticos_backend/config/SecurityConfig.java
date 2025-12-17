@@ -1,35 +1,63 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/config/SecurityConfig.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-/**
- * Configurações de segurança básicas: PasswordEncoder e UserDetailsService (busca de usuários).
- */
 @Configuration
+@EnableWebSecurity
 public class SecurityConfig {
 
-    /**
-     * Define o algoritmo de criptografia de senhas (BCrypt).
-     */
+    // AQUI ESTAVA O ERRO: Precisamos injetar o seu filtro de segurança
+    @Autowired
+    private SecurityFilter securityFilter;
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        return http
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(authorize -> authorize
+                        // --- LIBERAÇÃO DO SWAGGER (Documentação) ---
+                        .requestMatchers(
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html"
+                        ).permitAll()
+                        // ------------------------------------------
+
+                        // Endpoints públicos de autenticação
+                        .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
+
+                        // Exemplo de regra para Gerentes (ajuste conforme suas rotas)
+                        .requestMatchers(HttpMethod.POST, "/produto").hasRole("GERENTE")
+
+                        // Qualquer outra requisição exige login
+                        .anyRequest().authenticated()
+                )
+                // Adiciona o filtro de Token antes do filtro padrão do Spring
+                .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)
+                .build();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+        return authenticationConfiguration.getAuthenticationManager();
+    }
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
-    }
-
-    /**
-     * Define como o Spring Security deve buscar um usuário no banco (usando a matrícula como username).
-     */
-    @Bean
-    public UserDetailsService userDetailsService(UsuarioRepository usuarioRepository) {
-        return matricula -> usuarioRepository.findByMatricula(matricula)
-                .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado com matrícula: " + matricula));
     }
 }

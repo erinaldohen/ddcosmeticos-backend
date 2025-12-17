@@ -4,10 +4,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
-public class ProdutoDTO {
+public class ProdutoDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     private Long id;
     private String codigoBarras;

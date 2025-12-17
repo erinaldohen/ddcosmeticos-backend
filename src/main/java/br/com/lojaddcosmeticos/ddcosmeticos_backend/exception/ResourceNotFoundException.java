@@ -7,7 +7,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.exception;
  * não é encontrado no banco de dados. Mapeia para 404 Not Found.
  */
 public class ResourceNotFoundException extends RuntimeException {
-
+    private static final long serialVersionUID = 1L;
     public ResourceNotFoundException(String message) {
         super(message);
     }

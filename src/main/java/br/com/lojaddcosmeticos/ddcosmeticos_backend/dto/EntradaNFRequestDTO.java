@@ -7,10 +7,13 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.util.List;
 
 @Data
-public class EntradaNFRequestDTO {
+public class EntradaNFRequestDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     @NotBlank(message = "O número da nota é obrigatório.")
     private String numeroNota;

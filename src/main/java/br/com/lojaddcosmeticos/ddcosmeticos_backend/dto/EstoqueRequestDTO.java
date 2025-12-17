@@ -3,11 +3,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
-public class EstoqueRequestDTO {
+public class EstoqueRequestDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     private String codigoBarras;
     private BigDecimal quantidade;

@@ -2,6 +2,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -11,7 +13,8 @@ import java.util.stream.Collectors;
  * DTO para visualizar todos os detalhes de uma venda já registrada.
  */
 @Data
-public class VendaCompletaResponseDTO {
+public class VendaCompletaResponseDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     private Long idVenda;
     private LocalDateTime dataVenda;

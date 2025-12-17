@@ -5,8 +5,11 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+import java.io.Serializable;
+
 @Data
-public class LoginRequestDTO {
+public class LoginRequestDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     @NotBlank(message = "A matrícula é obrigatória.")
     private String matricula;

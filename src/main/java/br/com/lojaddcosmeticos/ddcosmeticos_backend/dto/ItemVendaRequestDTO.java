@@ -1,6 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -11,7 +13,8 @@ import jakarta.validation.constraints.NotNull;
  * Usado para receber os dados de um produto adicionado ao carrinho pelo PDV.
  */
 @Data
-public class ItemVendaRequestDTO {
+public class ItemVendaRequestDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     /**
      * Código de Barras (EAN) do produto. Essencial para identificar o produto no banco de dados.

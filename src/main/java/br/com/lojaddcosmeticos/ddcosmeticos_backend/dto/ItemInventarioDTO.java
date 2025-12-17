@@ -2,11 +2,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import lombok.Builder;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
 @Builder
-public class ItemInventarioDTO {
+public class ItemInventarioDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
     private String codigoBarras;
     private String descricao;
     private String unidade; // UN, KG, etc.

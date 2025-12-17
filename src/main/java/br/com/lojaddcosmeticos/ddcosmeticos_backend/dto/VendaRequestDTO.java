@@ -4,10 +4,13 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.util.List;
 
 @Data
-public class VendaRequestDTO {
+public class VendaRequestDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     @NotEmpty(message = "A venda deve ter pelo menos um item")
     private List<ItemVendaDTO> itens;

@@ -4,10 +4,13 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
-public class ItemVendaDTO {
+public class ItemVendaDTO implements Serializable { // <--- Implementar
+    private static final long serialVersionUID = 1L;
 
     @NotBlank(message = "Código de barras obrigatório")
     private String codigoBarras;

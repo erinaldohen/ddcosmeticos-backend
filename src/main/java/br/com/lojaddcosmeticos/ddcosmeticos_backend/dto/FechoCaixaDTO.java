@@ -9,10 +9,9 @@ import java.util.List;
 @Builder
 public record FechoCaixaDTO(
         LocalDate data,
-        int totalVendas,
+        long totalVendas,           // Alterado para long para bater com o Repository
         BigDecimal faturamentoBruto,
-        BigDecimal totalDescontos,
-        BigDecimal faturamentoLiquido,
+        BigDecimal faturamentoLiquido, // O campo que estava faltando na linha 219
         List<ResumoPagamentoDTO> pagamentos
 ) implements Serializable {
     private static final long serialVersionUID = 1L;

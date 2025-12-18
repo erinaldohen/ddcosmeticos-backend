@@ -1,15 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -17,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -29,62 +24,70 @@ public class VendaService {
     @Autowired private NfceService nfceService;
 
     /**
-     * Realiza o processamento completo da venda.
-     * Orquestra: Validação -> Snapshot Fiscal/Custo -> Estoque -> Financeiro -> NFC-e.
+     * Fluxo Principal: Finaliza a venda orquestrando Estoque, Financeiro e Auditoria.
      */
     @Transactional
-    public Venda realizarVenda(VendaRequestDTO dto) {
-        log.info("Processando venda PDV - Cliente CPF: {}", dto.getCpfCliente() != null ? dto.getCpfCliente() : "N/I");
+    public Venda finalizarVenda(VendaRequestDTO dto, String usuarioLogado) {
+        log.info("Iniciando finalização de venda - Vendedor: {} | Cliente: {}", usuarioLogado, dto.clienteCpf());
 
+        // 1. Instanciar a Venda com auditoria
         Venda venda = new Venda();
-        venda.setClienteCpf(dto.getCpfCliente());
         venda.setDataVenda(LocalDateTime.now());
+        venda.setUsuarioVendedor(usuarioLogado);
+        venda.setFormaPagamento(dto.formaPagamento());
+        venda.setTotalVenda(dto.totalVenda());
+        venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
+        venda.setClienteCpf(dto.clienteCpf());
+        venda.setClienteNome(dto.clienteNome());
         venda.setStatusFiscal("PENDENTE");
 
-        BigDecimal totalVenda = BigDecimal.ZERO;
+        // 2. Processar Itens (Baixa de Estoque e CMV)
+        for (ItemVendaRequestDTO itemDto : dto.itens()) {
+            Produto produto = produtoRepository.findByCodigoBarras(itemDto.codigoBarras())
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado: " + itemDto.codigoBarras()));
 
-        for (ItemVendaDTO itemDto : dto.getItens()) {
-            Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
-                    .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado: " + itemDto.getCodigoBarras()));
-
-            // 1. Validação de Disponibilidade
-            if (produto.getQuantidadeEmEstoque().compareTo(itemDto.getQuantidade()) < 0) {
+            // Validação de Estoque (Safety Check)
+            if (produto.getQuantidadeEmEstoque().compareTo(itemDto.quantidade()) < 0) {
                 throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao());
             }
 
-            // 2. Snapshot para Cálculo de Lucro Real e CMV
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
-            item.setQuantidade(itemDto.getQuantidade());
-            item.setPrecoUnitario(produto.getPrecoVenda());
+            item.setQuantidade(itemDto.quantidade());
+            item.setPrecoUnitario(itemDto.precoUnitario());
+            item.setDescontoItem(itemDto.descontoItem() != null ? itemDto.descontoItem() : BigDecimal.ZERO);
 
-            // Travamos o custo médio atual no item da venda.
-            // Essencial para o relatório de lucro não mudar se o custo do produto subir amanhã.
-            item.setCustoUnitario(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
+            // SNAPSHOT DO CUSTO (CMV): Essencial para lucro real
+            BigDecimal custoAtual = (produto.getPrecoMedioPonderado() != null && produto.getPrecoMedioPonderado().compareTo(BigDecimal.ZERO) > 0)
+                    ? produto.getPrecoMedioPonderado() : produto.getPrecoCustoInicial();
+            item.setCustoUnitarioHistorico(custoAtual != null ? custoAtual : BigDecimal.ZERO);
 
-            BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
-            item.setValorTotalItem(valorItem);
-            item.setCustoTotal(item.getCustoUnitario().multiply(item.getQuantidade()));
+            // Totalização do Item
+            BigDecimal valorTotalItem = item.getQuantidade().multiply(item.getPrecoUnitario()).subtract(item.getDescontoItem());
+            item.setValorTotalItem(valorTotalItem);
 
             venda.adicionarItem(item);
-            totalVenda = totalVenda.add(valorItem);
+
+            // 3. Baixa física no estoque via EstoqueService
+            estoqueService.realizarAjusteSaidaVenda(produto, itemDto.quantidade());
         }
 
-        venda.setTotalVenda(totalVenda);
-        venda.setDescontoTotal(BigDecimal.ZERO); // Expansível para lógica de cupons
-
-        // 3. Persistência da Transação
+        // 4. Salvar Venda e Itens (Cascade)
         Venda vendaSalva = vendaRepository.save(venda);
 
-        // 4. Integração com Módulos Satélites
-        executarFluxosOperacionais(vendaSalva, dto);
+        // 5. Lançamento Financeiro
+        financeiroService.lancarReceitaDeVenda(
+                vendaSalva.getId(),
+                vendaSalva.getTotalVenda(),
+                vendaSalva.getFormaPagamento().name()
+        );
 
-        // 5. Tentativa de Emissão de Cupom Fiscal (NFC-e)
+        // 6. Integração Fiscal (NFC-e)
         try {
             nfceService.emitirNfce(vendaSalva);
         } catch (Exception e) {
-            log.warn("SEFAZ Indisponível para Venda #{} - Operando em Contingência.", vendaSalva.getId());
-            vendaSalva.setStatusFiscal("CONTINGENCIA");
+            log.error("Falha na emissão da NFC-e para Venda #{}: {}", vendaSalva.getId(), e.getMessage());
+            vendaSalva.setStatusFiscal("ERRO_EMISSAO");
             vendaRepository.save(vendaSalva);
         }
 
@@ -92,33 +95,65 @@ public class VendaService {
     }
 
     /**
-     * Garante a baixa física no estoque e o lançamento no Contas a Receber.
+     * Módulo de Reversão: Processa Cancelamentos e Devoluções.
      */
-    private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // Baixa de Estoque Automática
-        venda.getItens().forEach(item -> {
-            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
-            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setTipoMovimento("SAIDA_VENDA");
-            estoqueService.realizarAjusteInventario(ajuste);
-        });
+    @Transactional
+    public void processarEstornoOuCancelamento(EstornoRequestDTO dto) {
+        Venda venda = vendaRepository.findByIdComItens(dto.vendaId())
+                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada."));
 
-        // Lançamento Financeiro (Cálculo de D+1 para cartões integrado)
-        financeiroService.lancarReceitaDeVenda(
-                venda.getId(),
-                venda.getTotalVenda(),
-                dto.getFormaPagamento(),
-                dto.getQuantidadeParcelas()
-        );
+        if (venda.isCancelada()) {
+            throw new ValidationException("Esta venda já está cancelada.");
+        }
+
+        if (dto.itensParaDevolver() == null || dto.itensParaDevolver().isEmpty()) {
+            cancelarVendaCompleta(venda, dto.motivo());
+        } else {
+            processarDevolucaoParcial(venda, dto);
+        }
     }
 
-    /**
-     * Busca os detalhes de uma venda incluindo seus itens para fins fiscais ou relatórios.
-     */
+    private void cancelarVendaCompleta(Venda venda, String motivo) {
+        venda.getItens().forEach(item ->
+                estoqueService.estornarEstoqueVenda(item.getProduto(), item.getQuantidade(), "CANCELAMENTO_VENDA")
+        );
+
+        financeiroService.cancelarReceitaVenda(venda.getId());
+
+        venda.setCancelada(true);
+        venda.setMotivoCancelamento(motivo);
+        venda.setStatusFiscal("CANCELADA");
+        vendaRepository.save(venda);
+        log.info("Cancelamento total da Venda #{} processado.", venda.getId());
+    }
+
+    private void processarDevolucaoParcial(Venda venda, EstornoRequestDTO dto) {
+        BigDecimal totalEstornadoBruto = BigDecimal.ZERO;
+
+        for (ItemEstornoDTO itemEstorno : dto.itensParaDevolver()) {
+            Produto produto = produtoRepository.findByCodigoBarras(itemEstorno.codigoBarras())
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado."));
+
+            estoqueService.estornarEstoqueVenda(produto, itemEstorno.quantidade(), "DEVOLUCAO_PARCIAL");
+
+            BigDecimal precoUnitario = buscarPrecoNoItemVenda(venda, itemEstorno.codigoBarras());
+            totalEstornadoBruto = totalEstornadoBruto.add(precoUnitario.multiply(itemEstorno.quantidade()));
+        }
+
+        financeiroService.ajustarReceitaPorDevolucao(venda.getId(), totalEstornadoBruto);
+    }
+
+    private BigDecimal buscarPrecoNoItemVenda(Venda venda, String codigoBarras) {
+        return venda.getItens().stream()
+                .filter(i -> i.getProduto().getCodigoBarras().equals(codigoBarras))
+                .findFirst()
+                .map(ItemVenda::getPrecoUnitario)
+                .orElse(BigDecimal.ZERO);
+    }
+
     @Transactional(readOnly = true)
     public Venda buscarVendaComItens(Long id) {
         return vendaRepository.findByIdComItens(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada para processamento fiscal."));
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
     }
 }

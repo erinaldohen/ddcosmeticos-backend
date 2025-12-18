@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // <--- Importante: Adicione este import
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -14,17 +14,16 @@ import java.util.List;
 @Repository
 public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
-    // CORREÇÃO NA LINHA 17: Usar 'StatusConta' direto, em vez de 'ContaPagar.StatusConta'
-    List<ContaPagar> findByStatus(StatusConta status);
-
-    // Busca histórico de contas de um fornecedor
-    List<ContaPagar> findByFornecedorId(Long idFornecedor);
-
-    // Soma contas PENDENTES para uma data específica
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = 'PENDENTE'")
     BigDecimal somarAPagarPorData(@Param("data") LocalDate data);
 
-    // Soma contas ATRASADAS (Vencimento < Hoje e Status Pendente)
-    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :hoje AND c.status = 'PENDENTE'")
-    BigDecimal somarTotalAtrasado(@Param("hoje") LocalDate hoje);
+    // OTIMIZAÇÃO: Consulta por período
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento BETWEEN :inicio AND :fim AND c.status = 'PENDENTE'")
+    BigDecimal somarPagamentosNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
+
+    @Query("SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO(c.categoria, COUNT(c), SUM(c.valorTotal)) " +
+            "FROM ContaPagar c WHERE c.dataVencimento BETWEEN :inicio AND :fim GROUP BY c.categoria")
+    List<ResumoDespesaDTO> agruparDespesasPorPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
+
+    List<ContaPagar> findByDataVencimentoBeforeAndStatus(LocalDate data, String status);
 }

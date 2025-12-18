@@ -3,23 +3,21 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
-import lombok.Data;
-
-import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.List;
 
-@Data
-public class VendaRequestDTO implements Serializable { // <--- Implementar
-    private static final long serialVersionUID = 1L;
+public record VendaRequestDTO(
+        @NotNull(message = "A forma de pagamento é obrigatória")
+        FormaPagamento formaPagamento,
 
-    @NotEmpty(message = "A venda deve ter pelo menos um item")
-    private List<ItemVendaDTO> itens;
+        @NotNull(message = "O valor total da venda é obrigatório")
+        BigDecimal totalVenda,
 
-    @NotNull(message = "Informe a forma de pagamento")
-    private FormaPagamento formaPagamento;
+        BigDecimal descontoTotal,
 
-    private Integer quantidadeParcelas; // Pode ser nulo (assume 1)
+        String clienteCpf,
+        String clienteNome,
 
-    // Opcional: CPF na nota
-    private String cpfCliente;
-}
+        @NotEmpty(message = "A venda deve conter pelo menos um item")
+        List<ItemVendaRequestDTO> itens
+) {}

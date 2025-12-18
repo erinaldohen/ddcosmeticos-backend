@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.ArrayList;
 
 @RestController
@@ -25,17 +26,21 @@ public class VendaController {
     private VendaService vendaService;
 
     /**
-     * Realiza uma nova venda no PDV.
-     * Requer perfil de CAIXA ou GERENTE.
+     * ÚNICO PONTO DE ENTRADA PARA VENDAS.
+     * Resolve o erro de Ambiguous Mapping e unifica auditoria + resposta.
      */
     @PostMapping
     @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
-    @Operation(summary = "Registrar Venda", description = "Processa o carrinho, baixa estoque e gera financeiro.")
-    public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        // O motor de orquestração processa a venda
-        Venda venda = vendaService.realizarVenda(dto);
+    @Operation(summary = "Registrar Venda", description = "Processa o carrinho, baixa estoque, gera financeiro e registra o vendedor.")
+    public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto, Principal principal) {
 
-        // Mapeia para o DTO de resposta para evitar enviar o XML pesado de imediato
+        // 1. Auditoria: Captura o usuário logado via Principal
+        String usuarioLogado = (principal != null) ? principal.getName() : "SISTEMA_LOCAL";
+
+        // 2. Orquestração: Chama o método finalizarVenda que já corrigimos no Service
+        Venda venda = vendaService.finalizarVenda(dto, usuarioLogado);
+
+        // 3. Resposta: Mapeia para o DTO de performance (ResponseDTO)
         VendaResponseDTO response = VendaResponseDTO.builder()
                 .idVenda(venda.getId())
                 .dataVenda(venda.getDataVenda())
@@ -50,15 +55,13 @@ public class VendaController {
     }
 
     /**
-     * Busca os detalhes completos de uma venda específica para consulta ou impressão.
+     * Busca os detalhes completos de uma venda.
      */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
     @Operation(summary = "Detalhes da Venda", description = "Busca todos os itens e totais de uma venda realizada.")
     public ResponseEntity<VendaCompletaResponseDTO> buscarDetalhes(@PathVariable Long id) {
-        // Busca com JOIN FETCH para evitar erros de carregamento tardio
         Venda venda = vendaService.buscarVendaComItens(id);
-
         return ResponseEntity.ok(new VendaCompletaResponseDTO(venda));
     }
 }

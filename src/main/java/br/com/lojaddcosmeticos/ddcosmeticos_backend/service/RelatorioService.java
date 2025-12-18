@@ -205,22 +205,19 @@ public class RelatorioService {
         LocalDateTime inicio = data.atStartOfDay();
         LocalDateTime fim = data.atTime(LocalTime.MAX);
 
-        // 1. Busca resumo de vendas do repositório
-        List<Venda> vendasDoDia = vendaRepository.buscarPorPeriodo(inicio, fim);
+        // 1. Busca os dados (Certifique-se que o VendaRepository já tem esses métodos)
+        BigDecimal faturamentoBruto = vendaRepository.somarVendasNoPeriodo(inicio, fim);
+        long totalVendas = vendaRepository.contarVendasNoPeriodo(inicio, fim);
 
-        BigDecimal bruto = vendasDoDia.stream()
-                .map(Venda::getTotalVenda)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // 2. Busca detalhamento por forma de pagamento no financeiro
+        // 2. Detalhe por Forma de Pagamento
         List<ResumoPagamentoDTO> pagamentos = contaReceberRepository.agruparPagamentosPorData(data);
 
+        // 3. Montagem do DTO (Correção da Linha 219)
         return FechoCaixaDTO.builder()
                 .data(data)
-                .totalVendas(vendasDoDia.size())
-                .faturamentoBruto(bruto)
-                .totalDescontos(BigDecimal.ZERO) // Pode ser expandido futuramente
-                .faturamentoLiquido(bruto)
+                .totalVendas(totalVendas)
+                .faturamentoBruto(faturamentoBruto != null ? faturamentoBruto : BigDecimal.ZERO)
+                .faturamentoLiquido(faturamentoBruto != null ? faturamentoBruto : BigDecimal.ZERO) // Agora o Builder reconhece este método
                 .pagamentos(pagamentos)
                 .build();
     }

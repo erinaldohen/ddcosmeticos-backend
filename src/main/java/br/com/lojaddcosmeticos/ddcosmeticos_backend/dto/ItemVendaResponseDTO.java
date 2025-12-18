@@ -1,18 +1,15 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/dto/ItemVendaResponseDTO.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
 
-/**
- * DTO para representar um item de venda em uma consulta de transação.
- */
 @Data
-public class ItemVendaResponseDTO implements Serializable { // <--- Implementar
+@NoArgsConstructor
+public class ItemVendaResponseDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private String codigoBarras;
@@ -22,7 +19,7 @@ public class ItemVendaResponseDTO implements Serializable { // <--- Implementar
     private BigDecimal descontoItem;
     private BigDecimal valorTotalItem;
 
-    // NOVOS CAMPOS PARA CMV
+    // CAMPOS PARA CMV
     private BigDecimal custoUnitario;
     private BigDecimal custoTotal;
 
@@ -31,10 +28,13 @@ public class ItemVendaResponseDTO implements Serializable { // <--- Implementar
         this.descricaoProduto = item.getProduto().getDescricao();
         this.quantidade = item.getQuantidade();
         this.precoUnitario = item.getPrecoUnitario();
-        this.descontoItem = item.getDescontoItem();
+        this.descontoItem = item.getDescontoItem() != null ? item.getDescontoItem() : BigDecimal.ZERO;
         this.valorTotalItem = item.getValorTotalItem();
 
-        this.custoUnitario = item.getCustoUnitario();
+        // CORREÇÃO DA LINHA 37: O nome do campo na entidade é custoUnitarioHistorico
+        this.custoUnitario = item.getCustoUnitarioHistorico();
+
+        // O método getCustoTotal() na entidade calcula: quantidade * custoUnitarioHistorico
         this.custoTotal = item.getCustoTotal();
     }
 }

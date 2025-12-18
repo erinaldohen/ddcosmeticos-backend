@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -9,41 +10,67 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * DTO para visualizar todos os detalhes de uma venda já registrada.
- */
 @Data
-public class VendaCompletaResponseDTO implements Serializable { // <--- Implementar
+@NoArgsConstructor
+public class VendaCompletaResponseDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private Long idVenda;
+    // Dados Identificadores
+    private Long id;
     private LocalDateTime dataVenda;
-    private BigDecimal valorTotal; // Bruto (Soma dos itens sem desconto)
+    private String usuarioVendedor; // Auditoria de quem operou o caixa
+
+    // Totais Financeiros
+    private BigDecimal totalVenda;
     private BigDecimal descontoTotal;
-    private BigDecimal valorLiquido; // Valor Final a Pagar
+    private BigDecimal faturamentoLiquido; // Total - Descontos
+
+    // Dados do Cliente (Para NF-e/NFC-e)
+    private String clienteCpf;
+    private String clienteNome;
+
+    // Status e Fiscal
+    private String statusFiscal;
+    private boolean cancelada;
+    private String motivoCancelamento;
+    private String formaPagamento;
+
+    // Detalhamento dos Produtos (Usando o DTO que corrigimos na linha 37)
     private List<ItemVendaResponseDTO> itens;
 
     public VendaCompletaResponseDTO(Venda venda) {
-        this.idVenda = venda.getId();
+        this.id = venda.getId();
         this.dataVenda = venda.getDataVenda();
+        this.usuarioVendedor = venda.getUsuarioVendedor();
 
-        // --- CORREÇÃO DAS LINHAS 31, 32 e 33 ---
-
-        // 1. O desconto na entidade chama-se 'descontoTotal'
+        this.totalVenda = venda.getTotalVenda();
         this.descontoTotal = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
+        this.faturamentoLiquido = this.totalVenda.subtract(this.descontoTotal);
 
-        // 2. O valor salvo no banco ('totalVenda') já é o valor LÍQUIDO (com desconto aplicado)
-        this.valorLiquido = venda.getTotalVenda() != null ? venda.getTotalVenda() : BigDecimal.ZERO;
+        this.clienteCpf = venda.getClienteCpf();
+        this.clienteNome = venda.getClienteNome();
 
-        // 3. O valor BRUTO (Total) nós calculamos revertendo a conta: Líquido + Desconto
-        this.valorTotal = this.valorLiquido.add(this.descontoTotal);
+        this.statusFiscal = venda.getStatusFiscal();
+        this.cancelada = venda.isCancelada();
+        this.motivoCancelamento = venda.getMotivoCancelamento();
 
-        // Mapeia a lista de itens
-        // Nota: Certifique-se de que ItemVendaResponseDTO tem um construtor que aceita ItemVenda
+        // Converte o Enum para String para exibição amigável no Frontend
+        this.formaPagamento = venda.getFormaPagamento() != null ? venda.getFormaPagamento().name() : "N/I";
+
+        // MAPEAMENTO DOS ITENS: Aqui usamos o construtor do ItemVendaResponseDTO que corrigimos
         if (venda.getItens() != null) {
             this.itens = venda.getItens().stream()
                     .map(ItemVendaResponseDTO::new)
                     .collect(Collectors.toList());
         }
+    }
+
+    // Método auxiliar para o Dashboard: Calcula o Lucro Total da Venda
+    public BigDecimal getLucroBrutoVenda() {
+        if (itens == null) return BigDecimal.ZERO;
+        BigDecimal custoTotal = itens.stream()
+                .map(ItemVendaResponseDTO::getCustoTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return this.faturamentoLiquido.subtract(custoTotal);
     }
 }

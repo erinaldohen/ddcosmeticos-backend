@@ -1,42 +1,38 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta; // Importe seu Enum aqui
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import jakarta.persistence.*;
 import lombok.Data;
-
-import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
 @Entity
 @Table(name = "conta_receber")
-public class ContaReceber implements Serializable { // <--- FALTAVA ISSO
-    private static final long serialVersionUID = 1L; // <--- FALTAVA ISSO
+public class ContaReceber {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String descricao;
-    private String nomeCliente;
+    @Column(name = "id_venda_ref")
+    private Long idVendaRef; // Referência à venda no PDV
 
-    @Column(precision = 10, scale = 2)
+    @Column(name = "valor_total", precision = 10, scale = 2)
     private BigDecimal valorTotal;
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal valorLiquido;
+    @Column(name = "valor_liquido", precision = 10, scale = 2)
+    private BigDecimal valorLiquido; // Valor após taxas de cartão
 
+    @Column(name = "forma_pagamento")
+    private String formaPagamento;
+
+    @Column(name = "data_emissao")
     private LocalDate dataEmissao;
+
+    @Column(name = "data_vencimento")
     private LocalDate dataVencimento;
-    private LocalDate dataRecebimento;
 
     @Enumerated(EnumType.STRING)
     private StatusConta status;
-
-    @Enumerated(EnumType.STRING)
-    private FormaPagamento formaPagamento;
-
-    private Long idVendaRef;
 }

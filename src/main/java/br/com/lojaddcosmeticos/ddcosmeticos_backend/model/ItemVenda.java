@@ -2,43 +2,40 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
-
-import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
 @Entity
-public class ItemVenda implements Serializable {
-    private static final long serialVersionUID = 1L;
-
+@Table(name = "item_venda")
+public class ItemVenda {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @ManyToOne
-    @JoinColumn(name = "venda_id", nullable = false)
+    @JoinColumn(name = "venda_id")
     private Venda venda;
 
     @ManyToOne
-    @JoinColumn(name = "produto_id", nullable = false)
+    @JoinColumn(name = "produto_id")
     private Produto produto;
 
-    @Column(nullable = false, precision = 10, scale = 3)
     private BigDecimal quantidade;
-
-    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal precoUnitario;
-
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal valorTotalItem;
-
-    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal descontoItem = BigDecimal.ZERO;
 
-    // --- NOVOS CAMPOS PARA RELATÓRIO DE LUCRO ---
-    @Column(nullable = false, precision = 10, scale = 4)
-    private BigDecimal custoUnitario; // PMP no momento da venda
+    // CAMPO CRÍTICO PARA AUDITORIA E LUCRO
+    @Column(name = "custo_unitario_historico")
+    private BigDecimal custoUnitarioHistorico;
 
-    @Column(nullable = false, precision = 10, scale = 4)
-    private BigDecimal custoTotal;
+    @Column(name = "valor_total_item")
+    private BigDecimal valorTotalItem;
+
+    // Método auxiliar para o DTO
+    public BigDecimal getCustoTotal() {
+        if (this.custoUnitarioHistorico == null || this.quantidade == null) {
+            return BigDecimal.ZERO;
+        }
+        return this.custoUnitarioHistorico.multiply(this.quantidade);
+    }
 }

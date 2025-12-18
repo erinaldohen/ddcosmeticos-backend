@@ -1,108 +1,102 @@
-# 💄 DD Cosméticos - Sistema de Gestão (Backend)
+# DD Cosméticos - Backend ERP & PDV 💄
 
-Sistema de gestão comercial (ERP) e Ponto de Venda (PDV) desenvolvido para alta performance, segurança e conformidade fiscal. O projeto suporta operações complexas como vendas híbridas (fiscal/não-fiscal), auditoria de estoque negativo e emissão inteligente de NFC-e.
+Sistema de gestão robusto desenvolvido especificamente para o setor de retalho de cosméticos em Recife/PE. O sistema foca em alta performance transacional, integridade fiscal (SEFAZ-PE) e inteligência de dados para tomada de decisão.
 
-## 🚀 Tecnologias Utilizadas
+## 🚀 Stack Tecnológica
 
-* **Java 25** (JDK)
-* **Spring Boot 4.0.0**
-* **Spring Security 7** (Autenticação Stateless com JWT)
-* **Spring Data JPA** (Hibernate 7 com Dialeto MySQL)
-* **MySQL 8.0** (Banco de Dados de Produção)
-* **Maven** (Gerenciamento de Dependências)
-
----
-
-## 🛡️ Segurança e Arquitetura
-
-O sistema foi blindado seguindo as melhores práticas de DevSecOps:
-
-* **Autenticação JWT:** Tokens assinados com algoritmo HMAC256.
-* **Tipagem Forte:** Perfis de acesso controlados via Enum (`ROLE_GERENTE`, `ROLE_CAIXA`).
-* **Proteção de Rotas:**
-  * CORS restrito a origens confiáveis (Front-end autorizado).
-  * CSRF desativado (Padrão para APIs REST).
-  * **Zero Backdoors:** Rotas de administração removidas do código final.
-* **Tratamento de Erros:** `GlobalExceptionHandler` retorna JSONs limpos, ocultando Stack Traces.
-* **Banco de Dados:** Configurado com `ddl-auto=update` para evolução ágil e `open-in-view=false` para performance.
+* **Java 21:** Utilização de *Records* para imutabilidade e novas funcionalidades de concorrência.
+* **Spring Boot 3.4.1:** Framework base para produtividade e configuração simplificada.
+* **Spring Security + JWT:** Autenticação e autorização baseada em funções (`GERENTE` e `CAIXA`).
+* **Hibernate/JPA:** Persistência de dados com suporte a `Soft Delete` e filtros automáticos de itens ativos.
+* **MySQL 8.0:** Banco de dados relacional para armazenamento seguro e performático.
+* **SpringDoc (Swagger):** Documentação interativa da API.
 
 ---
 
-## 📦 Regras de Negócio Avançadas
+## 🛠️ Funcionalidades Principais
 
-### 1. Venda Híbrida Inteligente
-O sistema permite que o operador registre, em uma única venda, produtos com diferentes origens fiscais.
-* **No Balcão:** O cliente leva tudo o que comprou.
-* **No Fiscal (NFC-e):** O sistema filtra automaticamente os itens. Apenas produtos com a flag `possui_nf_entrada = true` são incluídos no XML enviado à SEFAZ. Itens sem origem fiscal são registrados internamente mas ocultados do documento fiscal.
+### 1. Motor Fiscal Inteligente
 
-### 2. Gestão de Estoque e Auditoria
-* **Estoque Negativo:** A venda **não é bloqueada** por falta de estoque físico (evita atrito com cliente).
-* **Auditoria Automática:** Se o estoque ficar negativo, o sistema:
-  1. Grava um registro indelével na tabela `auditoria`.
-  2. Envia um alerta no JSON de resposta para o Caixa/Gerente.
-  3. Marca o status fiscal da venda como `PENDENTE_ANALISE_GERENTE`.
+* **Automatização de CFOP:** O sistema analisa o **NCM** e a presença do **CEST** para decidir entre **5102** (Tributação Normal) e **5405** (Substituição Tributária).
+* **Regra Monofásica:** Identificação automática de produtos isentos de PIS/COFINS na revenda (conforme Lei 10.147/00) baseada no prefixo do NCM (3303, 3304, 3305, 3307).
 
-### 3. Soft Delete (Imutabilidade)
-Nenhum dado crítico (Produto, Usuário, Venda) é excluído fisicamente do banco. O sistema utiliza exclusão lógica (`ativo = false`) para manter o histórico e integridade referencial.
+### 2. Gestão de Stock e Custos
 
----
+* **PMP (Preço Médio Ponderado):** Recálculo em tempo real a cada entrada de mercadoria, garantindo a precisão do valor do inventário.
+* **Importação em Lote:** Motor de importação de CSV capaz de processar milhares de itens em blocos (*batch processing*) para evitar sobrecarga de memória.
 
-## ⚙️ Configuração e Instalação
+### 3. Operações de PDV
 
-### Variáveis de Ambiente (Obrigatório)
-Configure estas variáveis no servidor para rodar a aplicação:
+* **Venda Atómica:** Processa a venda, reserva o custo médio (Snapshot), abate o stock e gera o título financeiro numa única transação.
+* **Contingência:** Suporte para gravação de vendas mesmo em caso de indisponibilidade da SEFAZ.
 
-| Variável | Descrição | Exemplo |
-| :--- | :--- | :--- |
-| `DB_HOST` | Endereço do MySQL | `ddcosmetic.mysql.uhserver.com` |
-| `DB_NAME` | Nome do Banco | `ddcosmetic` |
-| `DB_USER` | Usuário do Banco | `app_user` |
-| `DB_PASSWORD` | Senha do Banco | `S3nhaF0rt3!` |
-| `JWT_SECRET` | Chave do Token | `Chave_Secreta_Aleatoria` |
-| `CERT_PASS` | Senha do Certificado A1 | `123456` |
+### 4. Inteligência Financeira e Relatórios
 
-### Como Rodar em Produção
-
-1.  **Gerar o Executável (.jar):**
-    ```bash
-    mvn clean package -DskipTests
-    ```
-
-2.  **Executar o Sistema:**
-    ```bash
-    java -jar target/ddcosmeticos-backend-0.0.1-SNAPSHOT.jar
-    ```
+* **Projeção D+1:** Receitas de cartão são projetadas no fluxo de caixa para o próximo dia útil.
+* **Curva ABC:** Classificação de produtos (A, B, C) baseada no impacto direto no faturamento (Pareto).
+* **Fecho de Caixa:** Relatório detalhado por forma de pagamento (Dinheiro, PIX, Cartão).
 
 ---
 
-## 📚 Documentação da API (Principais Endpoints)
+## 📂 Estrutura de Pacotes
 
-### 🔐 Autenticação
-* **Login:** `POST /api/v1/auth/login`
-  * *Retorno:* Token JWT e Perfil.
+O projeto segue os princípios de **Clean Architecture**:
 
-### 🛒 Vendas (PDV)
-* **Registrar Venda:** `POST /api/v1/vendas`
-  * *Auth:* Bearer Token
-  * *Comportamento:* Aceita itens mistos. Retorna alertas de estoque e status fiscal.
-
-### 🧾 Fiscal
-* **Gerar NFC-e:** `GET /api/v1/fiscal/nfce/{idVenda}`
-  * *Auth:* Bearer Token
-  * *Lógica:* Gera XML assinado contendo **apenas** os itens fiscais da venda selecionada.
-
-### 📊 Relatórios
-* **Curva ABC:** `GET /api/v1/relatorios/curva-abc` (Classificação Pareto A/B/C)
-* **Lucro Diário:** `GET /api/v1/relatorios/diario`
+* `config`: Configurações globais (Segurança, Swagger, CORS).
+* `controller`: Endpoints REST da aplicação.
+* `dto`: Objetos de transferência de dados (Java Records).
+* `exception`: Definição de erros customizados.
+* `handler`: Interceptadores globais (Exception Handlers, Security Filters).
+* `model`: Entidades de banco de dados.
+* `repository`: Interfaces de acesso ao banco (JPA).
+* `service`: Regras de negócio e orquestração.
 
 ---
 
-## 👤 Credenciais Iniciais
+## ⚙️ Configuração do Ambiente
 
-* **Matrícula:** `GERENTE02`
-* **Senha Inicial:** `123456` (Deve ser alterada após o primeiro acesso)
+### Propriedades do Banco de Dados
+
+No ficheiro `src/main/resources/application.properties`:
+
+```properties
+spring.datasource.url=jdbc:mysql://localhost:3306/dd_cosmeticos
+spring.datasource.username=seu_usuario
+spring.datasource.password=sua_senha
+spring.jpa.hibernate.ddl-auto=update
+
+```
+
+### Inicialização
+
+1. Compile o projeto: `./mvnw clean install`
+2. Execute a aplicação: `./mvnw spring-boot:run`
+3. Execute o script SQL inicial para criar os utilizadores `GERENTE` e `CAIXA`.
 
 ---
 
-## 📝 Licença
-Software proprietário desenvolvido exclusivamente para **DD Cosméticos**.
+## 📑 Endpoints de Referência
+
+| Método | Rota | Perfil | Função |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/auth/login` | Público | Autenticação e geração de Token. |
+| `POST` | `/api/v1/produtos/importar` | GERENTE | Carga de stock via CSV. |
+| `GET` | `/api/v1/produtos/ean/{ean}` | CAIXA/GERENTE | Busca rápida para scanner. |
+| `POST` | `/api/v1/vendas` | CAIXA/GERENTE | Registo de venda e baixa de stock. |
+| `GET` | `/api/v1/relatorios/fecho-caixa` | CAIXA/GERENTE | Resumo financeiro do dia. |
+| `GET` | `/api/v1/relatorios/curva-abc` | GERENTE | Ranking de produtos por lucro. |
+
+---
+
+## 📝 Documentação API (Swagger)
+
+Aceda à documentação visual e teste os endpoints em tempo real:
+`http://localhost:8080/swagger-ui/index.html`
+
+---
+
+### Parecer da Equipa Técnica Sénior
+
+Este backend foi construído para ser **auditável e resiliente**. O uso de *Snapshots* de custo nos itens de venda e a automatização do CFOP garantem que a **DD Cosméticos** tenha um crescimento sustentável e livre de problemas fiscais com a SEFAZ-PE.
+
+**Gostaria de avançar agora para o plano de manutenção e backup do banco de dados MySQL ou prefere que eu ajude com a documentação dos campos do CSV para a sua equipa de operações?**

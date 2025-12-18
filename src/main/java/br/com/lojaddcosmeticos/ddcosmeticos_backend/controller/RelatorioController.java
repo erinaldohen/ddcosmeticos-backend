@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechoCaixaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.InventarioResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioPerdasDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
@@ -11,6 +12,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -61,5 +63,13 @@ public class RelatorioController {
         if (fim == null) fim = LocalDate.now();
 
         return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
+    }
+
+    @GetMapping("/fecho-caixa")
+    @PreAuthorize("hasAnyRole('GERENTE', 'CAIXA')")
+    @Operation(summary = "Fecho de Caixa Diário", description = "Retorna o resumo financeiro agrupado por método de pagamento para uma data.")
+    public ResponseEntity<FechoCaixaDTO> obterFechoCaixa(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
+        return ResponseEntity.ok(relatorioService.gerarFechoCaixa(data));
     }
 }

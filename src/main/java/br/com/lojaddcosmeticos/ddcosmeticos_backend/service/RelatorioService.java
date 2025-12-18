@@ -5,10 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.AuditoriaRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ItemVendaRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +35,9 @@ public class RelatorioService {
 
     @Autowired
     private ItemVendaRepository itemVendaRepository;
+
+    @Autowired
+    private ContaReceberRepository contaReceberRepository;
 
     @Transactional(readOnly = true)
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
@@ -198,5 +198,30 @@ public class RelatorioService {
         }
 
         return listaEnriquecida;
+    }
+
+    @Transactional(readOnly = true)
+    public FechoCaixaDTO gerarFechoCaixa(LocalDate data) {
+        LocalDateTime inicio = data.atStartOfDay();
+        LocalDateTime fim = data.atTime(LocalTime.MAX);
+
+        // 1. Busca resumo de vendas do repositório
+        List<Venda> vendasDoDia = vendaRepository.buscarPorPeriodo(inicio, fim);
+
+        BigDecimal bruto = vendasDoDia.stream()
+                .map(Venda::getTotalVenda)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // 2. Busca detalhamento por forma de pagamento no financeiro
+        List<ResumoPagamentoDTO> pagamentos = contaReceberRepository.agruparPagamentosPorData(data);
+
+        return FechoCaixaDTO.builder()
+                .data(data)
+                .totalVendas(vendasDoDia.size())
+                .faturamentoBruto(bruto)
+                .totalDescontos(BigDecimal.ZERO) // Pode ser expandido futuramente
+                .faturamentoLiquido(bruto)
+                .pagamentos(pagamentos)
+                .build();
     }
 }

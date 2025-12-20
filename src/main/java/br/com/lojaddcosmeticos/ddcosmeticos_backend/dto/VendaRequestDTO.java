@@ -17,7 +17,9 @@ public record VendaRequestDTO(
 
         String clienteCpf,
         String clienteNome,
+        List<PagamentoRequestDTO> pagamentos, // Certifique-se que o tipo aqui é PagamentoRequestDTO
 
         @NotEmpty(message = "A venda deve conter pelo menos um item")
         List<ItemVendaRequestDTO> itens
+
 ) {}

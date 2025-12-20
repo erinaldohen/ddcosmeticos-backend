@@ -1,20 +1,21 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import lombok.Builder;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Map;
 
+/**
+ * Record para transporte de dados do fechamento.
+ * A anotação @Builder permite o uso do padrão nomeado (FechamentoCaixaDTO.builder()...)
+ */
+@Builder
 public record FechamentoCaixaDTO(
         LocalDate data,
         long quantidadeVendas,
         BigDecimal totalVendasBruto,
-
-        // Novas métricas de fluxo manual
-        BigDecimal totalSuprimentos, // (+) Dinheiro que entrou para troco
-        BigDecimal totalSangrias,    // (-) Dinheiro retirado
-
+        BigDecimal totalSuprimentos,
+        BigDecimal totalSangrias,
         Map<String, BigDecimal> totaisPorFormaPagamento,
-
-        // O valor real que deve estar na gaveta de dinheiro
         BigDecimal saldoFinalDinheiroEmEspecie
 ) {}

@@ -14,9 +14,6 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    @Query("SELECT v FROM Venda v JOIN FETCH v.itens WHERE v.id = :id")
-    Optional<Venda> findByIdComItens(@Param("id") Long id);
-
     // Método necessário para a linha 42 do seu RelatorioService
     @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     List<Venda> buscarPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
@@ -27,4 +24,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     long contarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    // RESOLVE O ERRO DA LINHA 109/121: Carrega a venda com os itens (JOIN FETCH)
+    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.id = :id")
+    Optional<Venda> findByIdComItens(@Param("id") Long id);
 }

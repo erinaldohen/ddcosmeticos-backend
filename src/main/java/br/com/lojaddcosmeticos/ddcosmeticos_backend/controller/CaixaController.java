@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechoCaixaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService; // CORREÇÃO: Import do serviço correto
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,14 +18,15 @@ import java.time.LocalDate;
 public class CaixaController {
 
     @Autowired
-    private RelatorioService relatorioService;
+    private FinanceiroService financeiroService; // CORREÇÃO: Alterado de RelatorioService para FinanceiroService
 
     @GetMapping("/fechamento")
     @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
-    @Operation(summary = "Gerar Fechamento de Caixa", description = "Resumo detalhado para conferência de valores.")
-    public ResponseEntity<FechoCaixaDTO> obterFechamento(
+    @Operation(summary = "Gerar Fechamento de Caixa", description = "Resumo detalhado para conferência de valores, incluindo sangrias e suprimentos.")
+    public ResponseEntity<FechamentoCaixaDTO> obterFechamento(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
 
-        return ResponseEntity.ok(relatorioService.gerarFechoCaixa(data));
+        // CORREÇÃO DA LINHA 29: Chamada ao método consolidado no FinanceiroService
+        return ResponseEntity.ok(financeiroService.gerarResumoFechamento(data));
     }
 }

@@ -1,13 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechoCaixaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.InventarioResponseDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioPerdasDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -21,55 +16,45 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/relatorios")
-@Tag(name = "Relatórios", description = "Endpoints para análise financeira e operacional")
-@SecurityRequirement(name = "bearerAuth")
+@Tag(name = "Relatórios e BI", description = "Endpoints para análise de vendas, estoque e impostos")
 public class RelatorioController {
 
     @Autowired
     private RelatorioService relatorioService;
 
-    @GetMapping("/inventario/contabil")
-    public ResponseEntity<InventarioResponseDTO> getInventarioContabil() {
-        return ResponseEntity.ok(relatorioService.gerarInventarioEstoque(true));
-    }
-
-    @GetMapping("/inventario/gerencial")
-    public ResponseEntity<InventarioResponseDTO> getInventarioGerencial() {
-        return ResponseEntity.ok(relatorioService.gerarInventarioEstoque(false));
-    }
-
-    @GetMapping("/perdas/motivos")
-    public ResponseEntity<List<RelatorioPerdasDTO>> getPerdasPorMotivo() {
-        return ResponseEntity.ok(relatorioService.gerarRelatorioPerdasPorMotivo());
-    }
-
-    @GetMapping("/auditoria/ajustes-estoque")
-    public ResponseEntity<List<Auditoria>> getHistoricoAjustes() {
-        return ResponseEntity.ok(relatorioService.buscarHistoricoAjustesEstoque());
-    }
-
-    @GetMapping("/fiscal/monofasicos")
-    public ResponseEntity<List<Map<String, Object>>> getRelatorioMonofasicos() {
-        return ResponseEntity.ok(relatorioService.gerarRelatorioMonofasicos());
-    }
-
     @GetMapping("/vendas")
-    @Operation(summary = "Relatório Financeiro de Vendas", description = "Retorna faturamento, custos e lucro em um período.")
-    public ResponseEntity<RelatorioVendasDTO> getRelatorioVendas(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
-    ) {
-        if (inicio == null) inicio = LocalDate.now();
-        if (fim == null) fim = LocalDate.now();
+    @PreAuthorize("hasRole('GERENTE')")
+    @Operation(summary = "Relatório de Vendas com Gráfico por Hora",
+            description = "Retorna totais financeiros, CMV e a lista de faturamento por hora para o gráfico.")
+    public ResponseEntity<RelatorioVendasDTO> obterRelatorioVendas(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
 
         return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
     }
 
-    @GetMapping("/fecho-caixa")
-    @PreAuthorize("hasAnyRole('GERENTE', 'CAIXA')")
-    @Operation(summary = "Fecho de Caixa Diário", description = "Retorna o resumo financeiro agrupado por método de pagamento para uma data.")
-    public ResponseEntity<FechoCaixaDTO> obterFechoCaixa(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
-        return ResponseEntity.ok(relatorioService.gerarFechoCaixa(data));
+    @GetMapping("/curva-abc")
+    @PreAuthorize("hasRole('GERENTE')")
+    @Operation(summary = "Análise de Curva ABC",
+            description = "Classifica produtos em A (80% do faturamento), B (15%) ou C (5%).")
+    public ResponseEntity<List<ItemAbcDTO>> obterCurvaAbc() {
+        return ResponseEntity.ok(relatorioService.gerarCurvaAbc());
+    }
+
+    @GetMapping("/inventario")
+    @PreAuthorize("hasRole('GERENTE')")
+    @Operation(summary = "Inventário de Estoque",
+            description = "Gera o valor patrimonial do estoque. contabil=true filtra apenas itens com nota fiscal.")
+    public ResponseEntity<InventarioResponseDTO> obterInventario(
+            @RequestParam(defaultValue = "false") boolean contabil) {
+        return ResponseEntity.ok(relatorioService.gerarInventarioEstoque(contabil));
+    }
+
+    @GetMapping("/monofasicos")
+    @PreAuthorize("hasRole('GERENTE')")
+    @Operation(summary = "Relatório de Produtos Monofásicos",
+            description = "Lista produtos com PIS/COFINS monofásico para redução de impostos no Simples Nacional.")
+    public ResponseEntity<List<Map<String, Object>>> obterMonofasicos() {
+        return ResponseEntity.ok(relatorioService.gerarRelatorioMonofasicos());
     }
 }

@@ -15,6 +15,26 @@ public class FornecedorService {
     @Autowired
     private FornecedorRepository fornecedorRepository;
 
+    /**
+     * Método utilitário para buscar ou criar rápido (usado em entradas de estoque/xml)
+     */
+    @Transactional
+    public Fornecedor buscarOuCriarRapido(String documento) {
+        String cpfCnpjSemPontuacao = documento.replaceAll("\\D", "");
+
+        return fornecedorRepository.findByCpfOuCnpj(documento)
+                .or(() -> fornecedorRepository.findByCpfOuCnpj(cpfCnpjSemPontuacao))
+                .orElseGet(() -> {
+                    Fornecedor novo = new Fornecedor();
+                    novo.setCpfOuCnpj(documento);
+                    novo.setRazaoSocial("Fornecedor " + documento);
+                    novo.setNomeFantasia("Fornecedor " + documento);
+                    novo.setAtivo(true);
+                    novo.setTipoPessoa(cpfCnpjSemPontuacao.length() <= 11 ? "FISICA" : "JURIDICA");
+                    return fornecedorRepository.save(novo);
+                });
+    }
+
     public Fornecedor buscarPorCnpjCpf(String doc) {
         return fornecedorRepository.findByCpfOuCnpj(doc)
                 .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado: " + doc));
@@ -30,23 +50,5 @@ public class FornecedorService {
         return fornecedorRepository.save(fornecedor);
     }
 
-    /**
-     * Método utilitário para buscar ou criar rápido (usado em entradas de estoque/xml)
-     */
-    @Transactional
-    public Fornecedor buscarOuCriarRapido(String documento) {
-        String docLimpo = documento.replaceAll("\\D", "");
 
-        return fornecedorRepository.findByCpfOuCnpj(documento)
-                .or(() -> fornecedorRepository.findByCpfOuCnpj(docLimpo))
-                .orElseGet(() -> {
-                    Fornecedor novo = new Fornecedor();
-                    novo.setCpfOuCnpj(documento);
-                    novo.setRazaoSocial("Fornecedor " + documento);
-                    novo.setNomeFantasia("Fornecedor " + documento);
-                    novo.setAtivo(true);
-                    novo.setTipoPessoa(docLimpo.length() <= 11 ? "FISICA" : "JURIDICA");
-                    return fornecedorRepository.save(novo);
-                });
-    }
 }

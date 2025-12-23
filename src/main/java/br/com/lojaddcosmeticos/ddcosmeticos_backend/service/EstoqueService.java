@@ -31,10 +31,6 @@ public class EstoqueService {
     @Autowired private TributacaoService tributacaoService;
     @Autowired private AuditoriaRepository auditoriaRepository;
 
-    /**
-     * Recupera o usuário logado no contexto de segurança.
-     * Retorna null se for uma operação automática do sistema.
-     */
     private Usuario getUsuarioLogado() {
         try {
             var authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -53,21 +49,16 @@ public class EstoqueService {
         Produto produto = produtoRepository.findByCodigoBarras(entrada.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + entrada.getCodigoBarras()));
 
-        // --- REGRA FISCAL ---
-        // Se houver nota fiscal na entrada, marcamos o produto para permitir emissão parcial de NFC-e futuramente
         if (entrada.getNumeroNotaFiscal() != null && !entrada.getNumeroNotaFiscal().isBlank()) {
             produto.setPossuiNfEntrada(true);
         }
 
         atualizarEstoqueECusto(produto, entrada.getQuantidade(), entrada.getPrecoCusto());
 
-        // Linha 120 (Correção): Garante que o tributacaoService não é nulo e trata possíveis erros de classificação
         try {
-            if(tributacaoService != null) {
-                tributacaoService.classificarProduto(produto);
-            }
+            if(tributacaoService != null) tributacaoService.classificarProduto(produto);
         } catch (Exception e) {
-            log.warn("Erro ao classificar tributação do produto {}: {}", produto.getCodigoBarras(), e.getMessage());
+            log.warn("Erro na classificação tributária: {}", e.getMessage());
         }
 
         registrarMovimento(
@@ -98,7 +89,6 @@ public class EstoqueService {
         mov.setCustoMovimentado(custo);
         mov.setDataMovimento(LocalDateTime.now());
         mov.setUsuario(getUsuarioLogado());
-
         movimentoEstoqueRepository.save(mov);
     }
 
@@ -156,7 +146,6 @@ public class EstoqueService {
         produtoRepository.save(produto);
     }
 
-    // Linha 173/184: Correção do uso do Enum FormaDePagamento (Antes estava FormaPagamento)
     @Transactional
     public void processarEntradaDePedido(Produto produto, BigDecimal quantidade, BigDecimal custoUnitario, Fornecedor fornecedor, String numeroNotaFiscal) {
         EstoqueRequestDTO dto = new EstoqueRequestDTO();
@@ -166,7 +155,6 @@ public class EstoqueService {
         dto.setNumeroNotaFiscal(numeroNotaFiscal);
         if (fornecedor != null) dto.setFornecedorCnpj(fornecedor.getCpfOuCnpj());
 
-        // FIX: Usando o enum correto FormaDePagamento
         dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
         dto.setDataVencimentoBoleto(LocalDate.now().plusDays(30));
@@ -178,7 +166,6 @@ public class EstoqueService {
         BigDecimal valorTotal = entrada.getQuantidade().multiply(entrada.getPrecoCusto());
         int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0) ? entrada.getQuantidadeParcelas() : 1;
 
-        // Linha 200 e 206: Correção na chamada do método auxiliar
         if (isPagamentoAVista(entrada.getFormaPagamento())) {
             parcelas = 1;
         }
@@ -195,17 +182,12 @@ public class EstoqueService {
             conta.setDescricao(desc);
             conta.setValorTotal(valorParcela);
 
-            // Categoria contábil padrão para compras de estoque
-            conta.setCategoria("FORNECEDORES_MERCADORIA");
-
-            // Linha 216 e 217: Correção de Enum e uso de data de vencimento
             if (isPagamentoAVista(entrada.getFormaPagamento())) {
                 conta.setStatus(StatusConta.PAGO);
                 conta.setDataPagamento(LocalDate.now());
                 conta.setDataVencimento(LocalDate.now());
             } else {
                 conta.setStatus(StatusConta.PENDENTE);
-                // FIX: Enum correto
                 if (entrada.getFormaPagamento() == FormaDePagamento.BOLETO && entrada.getDataVencimentoBoleto() != null) {
                     conta.setDataVencimento(entrada.getDataVencimentoBoleto());
                 } else {
@@ -216,7 +198,6 @@ public class EstoqueService {
         }
     }
 
-    // FIX: Assinatura do método corrigida para receber FormaDePagamento
     private boolean isPagamentoAVista(FormaDePagamento fp) {
         return fp == FormaDePagamento.DINHEIRO || fp == FormaDePagamento.PIX || fp == FormaDePagamento.DEBITO;
     }
@@ -232,8 +213,9 @@ public class EstoqueService {
             BigDecimal divisor = BigDecimal.ONE.subtract(config.getMargemLucroAlvo().divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
             BigDecimal precoSugerido = novoCusto.divide(divisor, 2, RoundingMode.CEILING);
 
-            // Linha 231: Validação de nulidade antes de buscar/salvar
-            boolean existePendente = sugestaoPrecoRepository.existsByProdutoAndStatus(produto, StatusPrecificacao.PENDENTE);
+            // CORREÇÃO: Uso do novo método e Enum StatusPrecificacao
+            boolean existePendente = sugestaoPrecoRepository.existsByProdutoAndStatusPrecificacao(produto, StatusPrecificacao.PENDENTE);
+
             if (!existePendente) {
                 SugestaoPreco sugestao = new SugestaoPreco();
                 sugestao.setProduto(produto);
@@ -244,9 +226,11 @@ public class EstoqueService {
                 sugestao.setMargemAtual(margemAtualPercentual);
                 sugestao.setMargemProjetada(config.getMargemLucroAlvo());
                 sugestao.setDataGeracao(LocalDateTime.now());
-                sugestao.setStatusPrecificacao(StatusPrecificacao.PENDENTE);
-                sugestao.setMotivo("Margem caiu para " + margemAtualPercentual + "%. Meta: " + config.getMargemLucroAlvo() + "%");
 
+                // CORREÇÃO: Setando o campo correto
+                sugestao.setStatusPrecificacao(StatusPrecificacao.PENDENTE);
+
+                sugestao.setMotivo("Margem caiu para " + margemAtualPercentual + "%. Meta: " + config.getMargemLucroAlvo() + "%");
                 sugestaoPrecoRepository.save(sugestao);
             }
         }
@@ -257,32 +241,23 @@ public class EstoqueService {
         logAuditoria.setDataHora(LocalDateTime.now());
         logAuditoria.setTipoEvento("EMISSAO_NOTA_ENTRADA");
         logAuditoria.setEntidadeAfetada("Estoque");
-
-        // Linha 242: Garantia de que mensagem e usuário não quebrem
-        logAuditoria.setMensagem("NOTA DE ENTRADA (CPF) PROCESSADA para " + (fornecedor != null ? fornecedor.getNomeFantasia() : "DESCONHECIDO"));
+        logAuditoria.setMensagem("NOTA DE ENTRADA (CPF) PROCESSADA para " + fornecedor.getNomeFantasia());
 
         Usuario u = getUsuarioLogado();
-        // Assume-se que Auditoria espera uma String no campo usuarioResponsavel.
-        // Se sua entidade Auditoria esperar um objeto Usuario, altere para: logAuditoria.setUsuario(u);
         logAuditoria.setUsuarioResponsavel(u != null ? u.getNome() : "SISTEMA_AUTOMATICO");
 
         auditoriaRepository.save(logAuditoria);
     }
 
     private Fornecedor buscarOuCriarFornecedor(EstoqueRequestDTO entrada) {
-        String docOriginal = entrada.getFornecedorCnpj();
-        if(docOriginal == null) docOriginal = "";
-
-        String docLimpo = docOriginal.replaceAll("\\D", "");
-
-        String finalDocOriginal = docOriginal;
-        return fornecedorRepository.findByCpfOuCnpj(docOriginal)
+        String docLimpo = entrada.getFornecedorCnpj().replaceAll("\\D", "");
+        return fornecedorRepository.findByCpfOuCnpj(entrada.getFornecedorCnpj())
                 .or(() -> fornecedorRepository.findByCpfOuCnpj(docLimpo))
                 .orElseGet(() -> {
                     Fornecedor novo = new Fornecedor();
-                    novo.setCpfOuCnpj(finalDocOriginal);
-                    novo.setRazaoSocial("Fornecedor " + finalDocOriginal);
-                    novo.setNomeFantasia("Fornecedor " + finalDocOriginal);
+                    novo.setCpfOuCnpj(entrada.getFornecedorCnpj());
+                    novo.setRazaoSocial("Fornecedor " + entrada.getFornecedorCnpj());
+                    novo.setNomeFantasia("Fornecedor " + entrada.getFornecedorCnpj());
                     novo.setAtivo(true);
                     novo.setTipoPessoa(docLimpo.length() <= 11 ? "FISICA" : "JURIDICA");
                     return fornecedorRepository.save(novo);

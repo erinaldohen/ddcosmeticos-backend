@@ -31,9 +31,10 @@ public class SugestaoPreco implements Serializable {
     private BigDecimal margemAtual;
     private BigDecimal margemProjetada;
 
+    // --- CORREÇÃO: Campo renomeado para evitar erro de propriedade ---
     @Enumerated(EnumType.STRING)
     @Column(name = "status_precificacao")
-    private StatusPrecificacao statusPrecificacao; // PENDENTE, APROVADO, REJEITADO
+    private StatusPrecificacao statusPrecificacao;
 
     private LocalDateTime dataGeracao = LocalDateTime.now();
 

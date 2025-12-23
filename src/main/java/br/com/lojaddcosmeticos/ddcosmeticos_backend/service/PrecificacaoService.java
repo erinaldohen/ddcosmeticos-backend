@@ -49,7 +49,7 @@ public class PrecificacaoService {
 
     private void gerarSugestao(Produto produto, BigDecimal novoCusto, BigDecimal precoIdeal, ConfiguracaoLoja config) {
         // Evita duplicar sugestão pendente para o mesmo produto
-        if (sugestaoRepository.existsByProdutoAndStatus(produto, StatusPrecificacao.PENDENTE)) {
+        if (sugestaoRepository.existsByProdutoAndStatusPrecificacao(produto, StatusPrecificacao.PENDENTE)) {
             return;
         }
 
@@ -99,7 +99,7 @@ public class PrecificacaoService {
     }
 
     public List<SugestaoPreco> listarSugestoesPendentes() {
-        return sugestaoRepository.findByStatus(StatusPrecificacao.PENDENTE);
+        return sugestaoRepository.findByStatusPrecificacao(StatusPrecificacao.PENDENTE);
     }
 
     public void rejeitarSugestao(Long idSugestao) {

@@ -11,8 +11,8 @@ import java.util.List;
 @Repository
 public interface SugestaoPrecoRepository extends JpaRepository<SugestaoPreco, Long> {
 
-    // CORRIGIDO: O Spring Data JPA agora reconhece o tipo StatusSugestao
-    List<SugestaoPreco> findByStatus(StatusPrecificacao statusPrecificacao);
+    // O nome do método AGORA corresponde ao campo 'statusPrecificacao' da entidade
+    List<SugestaoPreco> findByStatusPrecificacao(StatusPrecificacao statusPrecificacao);
 
-    boolean existsByProdutoAndStatus(Produto produto, StatusPrecificacao statusPrecificacao);
+    boolean existsByProdutoAndStatusPrecificacao(Produto produto, StatusPrecificacao statusPrecificacao);
 }

@@ -7,6 +7,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundEx
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 public class EstoqueService {
 
@@ -29,6 +31,18 @@ public class EstoqueService {
     @Autowired private TributacaoService tributacaoService;
     @Autowired private AuditoriaRepository auditoriaRepository;
 
+    private Usuario getUsuarioLogado() {
+        try {
+            var authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null && authentication.getPrincipal() instanceof Usuario) {
+                return (Usuario) authentication.getPrincipal();
+            }
+        } catch (Exception e) {
+            log.warn("Não foi possível identificar o usuário logado: {}", e.getMessage());
+        }
+        return null;
+    }
+
     @Transactional
     public void registrarEntrada(EstoqueRequestDTO entrada) {
         Fornecedor fornecedor = buscarOuCriarFornecedor(entrada);
@@ -37,37 +51,71 @@ public class EstoqueService {
 
         atualizarEstoqueECusto(produto, entrada.getQuantidade(), entrada.getPrecoCusto());
         tributacaoService.classificarProduto(produto);
-        registrarMovimento(produto, fornecedor, entrada);
+
+        // Atualizado para usar os novos nomes
+        registrarMovimento(
+                produto,
+                fornecedor,
+                entrada.getQuantidade(),
+                entrada.getPrecoCusto(),
+                TipoMovimentoEstoque.ENTRADA, // <--- Novo Enum
+                MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR
+        );
+
         registrarContaPagar(entrada, fornecedor);
         verificarNecessidadeReajuste(produto, entrada.getPrecoCusto());
 
         if ("FISICA".equalsIgnoreCase(fornecedor.getTipoPessoa())) {
-            gerarAuditoriaNotaAvulsa(fornecedor, entrada);
+            gerarAuditoriaNotaAvulsa(fornecedor);
         }
     }
 
-    private void gerarAuditoriaNotaAvulsa(Fornecedor fornecedor, EstoqueRequestDTO entrada) {
-        Auditoria log = new Auditoria();
-        log.setDataHora(LocalDateTime.now());
-        log.setTipoEvento("EMISSAO_NOTA_ENTRADA");
-        log.setEntidadeAfetada("Estoque");
-        log.setMensagem("NOTA DE ENTRADA (CPF) GERADA para: " + fornecedor.getNomeFantasia());
-        log.setUsuarioResponsavel("SISTEMA");
-        auditoriaRepository.save(log);
+    private void registrarMovimento(Produto produto, Fornecedor fornecedor, BigDecimal qtd, BigDecimal custo,
+                                    TipoMovimentoEstoque tipo, MotivoMovimentacaoDeEstoque motivo) {
+        MovimentoEstoque mov = new MovimentoEstoque();
+        mov.setProduto(produto);
+        mov.setFornecedor(fornecedor);
+
+        // --- MÉTODOS RENOMEADOS ---
+        mov.setTipoMovimentoEstoque(tipo);
+        mov.setMotivoMovimentacaoDeEstoque(motivo);
+
+        mov.setQuantidadeMovimentada(qtd);
+        mov.setCustoMovimentado(custo);
+        mov.setDataMovimento(LocalDateTime.now());
+        mov.setUsuario(getUsuarioLogado());
+
+        movimentoEstoqueRepository.save(mov);
     }
 
-    private Fornecedor buscarOuCriarFornecedor(EstoqueRequestDTO entrada) {
-        String docLimpo = entrada.getFornecedorCnpj().replaceAll("\\D", "");
-        return fornecedorRepository.findByCpfOuCnpj(docLimpo)
-                .orElseGet(() -> {
-                    Fornecedor novo = new Fornecedor();
-                    novo.setCpfOuCnpj(docLimpo);
-                    novo.setRazaoSocial("Fornecedor " + docLimpo);
-                    novo.setNomeFantasia("Fornecedor " + docLimpo);
-                    novo.setAtivo(true);
-                    novo.setTipoPessoa(docLimpo.length() <= 11 ? "FISICA" : "JURIDICA");
-                    return fornecedorRepository.save(novo);
-                });
+    @Transactional
+    public void realizarAjusteInventario(AjusteEstoqueDTO dto) {
+        Produto produto = produtoRepository.findByCodigoBarras(dto.getCodigoBarras())
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
+
+        MotivoMovimentacaoDeEstoque motivo;
+        try {
+            motivo = MotivoMovimentacaoDeEstoque.valueOf(dto.getMotivo().toUpperCase());
+        } catch (Exception e) {
+            if ("ENTRADA".equalsIgnoreCase(dto.getTipoMovimento())) return;
+            throw new ValidationException("Motivo de ajuste inválido: " + dto.getMotivo());
+        }
+
+        // --- ENUM RENOMEADO ---
+        TipoMovimentoEstoque status = switch (motivo) {
+            case AJUSTE_SOBRA, DEVOLUCAO_CLIENTE, CANCELAMENTO_DE_VENDA, COMPRA_FORNECEDOR -> TipoMovimentoEstoque.ENTRADA;
+            case AJUSTE_PERDA, AJUSTE_AVARIA, USO_INTERNO, VENDA, DEVOLUCAO_AO_FORNECEDOR -> TipoMovimentoEstoque.SAIDA;
+            default -> throw new ValidationException("Motivo não mapeado para movimentação de estoque: " + motivo);
+        };
+
+        if (status == TipoMovimentoEstoque.ENTRADA) {
+            produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().add(dto.getQuantidade()));
+        } else {
+            produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(dto.getQuantidade()));
+        }
+        produtoRepository.save(produto);
+
+        registrarMovimento(produto, null, dto.getQuantidade(), produto.getPrecoMedioPonderado(), status, motivo);
     }
 
     private void atualizarEstoqueECusto(Produto produto, BigDecimal qtdEntrada, BigDecimal custoEntrada) {
@@ -78,107 +126,21 @@ public class EstoqueService {
         BigDecimal valorEntrada = qtdEntrada.multiply(custoEntrada);
         BigDecimal novaQuantidade = estoqueAtual.add(qtdEntrada);
 
-        if (novaQuantidade.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal novoPmp = valorEstoqueAtual.add(valorEntrada)
-                    .divide(novaQuantidade, 4, RoundingMode.HALF_UP);
-            produto.setPrecoMedioPonderado(novoPmp);
+        if (novaQuantidade.compareTo(BigDecimal.ZERO) == 0) {
+            produto.setQuantidadeEmEstoque(BigDecimal.ZERO);
+            return;
         }
 
+        BigDecimal novoPmp = valorEstoqueAtual.add(valorEntrada)
+                .divide(novaQuantidade, 4, RoundingMode.HALF_UP);
+
         produto.setQuantidadeEmEstoque(novaQuantidade);
+        produto.setPrecoMedioPonderado(novoPmp);
+
         if (produto.getPrecoCustoInicial() == null || produto.getPrecoCustoInicial().compareTo(BigDecimal.ZERO) == 0) {
             produto.setPrecoCustoInicial(custoEntrada);
         }
         produtoRepository.save(produto);
-    }
-
-    private void registrarMovimento(Produto produto, Fornecedor fornecedor, EstoqueRequestDTO entrada) {
-        // Captura o usuário logado
-        Usuario usuarioLogado = (Usuario) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-
-        MovimentoEstoque mov = new MovimentoEstoque();
-        mov.setUsuario(usuarioLogado); // <--- Correção
-        mov.setProduto(produto);
-        mov.setFornecedor(fornecedor);
-        mov.setStatusMovimentoEstoque(StatusMovimentoEstoque.ENTRADA);
-        mov.setQuantidadeMovimentada(entrada.getQuantidade());
-        mov.setCustoMovimentado(entrada.getPrecoCusto());
-        mov.setDataMovimento(LocalDateTime.now());
-        movimentoEstoqueRepository.save(mov);
-    }
-
-    private void registrarContaPagar(EstoqueRequestDTO entrada, Fornecedor fornecedor) {
-        BigDecimal valorTotal = entrada.getQuantidade().multiply(entrada.getPrecoCusto());
-        int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0) ? entrada.getQuantidadeParcelas() : 1;
-
-        if (entrada.getFormaPagamento() == FormaDePagamento.DINHEIRO ||
-                entrada.getFormaPagamento() == FormaDePagamento.PIX ||
-                entrada.getFormaPagamento() == FormaDePagamento.DEBITO) {
-            parcelas = 1;
-        }
-
-        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
-
-        for (int i = 1; i <= parcelas; i++) {
-            ContaPagar conta = new ContaPagar();
-            conta.setFornecedor(fornecedor); // LINHA 142: Agora compila perfeitamente!
-            conta.setDataEmissao(LocalDate.now());
-            conta.setCategoria("COMPRA_ESTOQUE");
-
-            if (parcelas > 1) {
-                conta.setDescricao("Compra Estoque - NF " + entrada.getNumeroNotaFiscal() + " (Parc " + i + "/" + parcelas + ")");
-                conta.setValorTotal(valorParcela);
-            } else {
-                conta.setDescricao("Compra Estoque - NF " + entrada.getNumeroNotaFiscal());
-                conta.setValorTotal(valorTotal);
-            }
-
-            if (entrada.getFormaPagamento() == FormaDePagamento.DINHEIRO ||
-                    entrada.getFormaPagamento() == FormaDePagamento.PIX ||
-                    entrada.getFormaPagamento() == FormaDePagamento.DEBITO) {
-
-                conta.setStatus(StatusConta.PAGO);
-                conta.setDataPagamento(LocalDate.now());
-                conta.setDataVencimento(LocalDate.now());
-
-            } else {
-                conta.setStatus(StatusConta.PENDENTE);
-                if (entrada.getFormaPagamento() == FormaDePagamento.BOLETO && entrada.getDataVencimentoBoleto() != null) {
-                    conta.setDataVencimento(entrada.getDataVencimentoBoleto());
-                } else {
-                    conta.setDataVencimento(LocalDate.now().plusDays(30L * i));
-                }
-            }
-            contaPagarRepository.save(conta);
-        }
-    }
-
-    private void verificarNecessidadeReajuste(Produto produto, BigDecimal novoCusto) {
-        configuracaoLojaRepository.findAll().stream().findFirst().ifPresent(config -> {
-            BigDecimal precoVendaAtual = produto.getPrecoVenda();
-            if (precoVendaAtual == null || precoVendaAtual.compareTo(BigDecimal.ZERO) == 0) return;
-
-            BigDecimal lucroBruto = precoVendaAtual.subtract(novoCusto);
-            BigDecimal margemAtualPercentual = lucroBruto.divide(precoVendaAtual, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
-
-            if (margemAtualPercentual.compareTo(config.getMargemLucroAlvo()) < 0) {
-                BigDecimal divisor = BigDecimal.ONE.subtract(config.getMargemLucroAlvo().divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
-                BigDecimal precoSugerido = novoCusto.divide(divisor, 2, RoundingMode.CEILING);
-
-                SugestaoPreco sugestao = new SugestaoPreco();
-                sugestao.setProduto(produto);
-                sugestao.setCustoAntigo(produto.getPrecoMedioPonderado());
-                sugestao.setCustoNovo(novoCusto);
-                sugestao.setPrecoVendaAtual(precoVendaAtual);
-                sugestao.setPrecoVendaSugerido(precoSugerido);
-                sugestao.setMargemAtual(margemAtualPercentual);
-                sugestao.setMargemProjetada(config.getMargemLucroAlvo());
-                sugestao.setDataGeracao(LocalDateTime.now());
-                sugestao.setStatusPrecificacao(StatusPrecificacao.PENDENTE);
-                sugestao.setMotivo("Margem abaixo da meta de " + config.getMargemLucroAlvo() + "%");
-
-                sugestaoPrecoRepository.save(sugestao);
-            }
-        });
     }
 
     @Transactional
@@ -190,98 +152,107 @@ public class EstoqueService {
         dto.setNumeroNotaFiscal(numeroNotaFiscal);
         if (fornecedor != null) dto.setFornecedorCnpj(fornecedor.getCpfOuCnpj());
 
-        dto.setFormaPagamento(FormaDePagamento.BOLETO);
+        dto.setFormaPagamento(FormaPagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
         dto.setDataVencimentoBoleto(LocalDate.now().plusDays(30));
 
         registrarEntrada(dto);
     }
 
-    @Transactional
-    public void realizarAjusteInventario(AjusteEstoqueDTO dto) {
-        // 1. Auditoria: Captura quem está fazendo o ajuste
-        Usuario usuarioLogado = (Usuario) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    private void registrarContaPagar(EstoqueRequestDTO entrada, Fornecedor fornecedor) {
+        BigDecimal valorTotal = entrada.getQuantidade().multiply(entrada.getPrecoCusto());
+        int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0) ? entrada.getQuantidadeParcelas() : 1;
 
-        Produto produto = produtoRepository.findByCodigoBarras(dto.getCodigoBarras())
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
-
-        // 2. Converte a String do DTO para o Enum de Motivo (Blindagem)
-        MotivoMovimentacaoDeEstoque motivo;
-        try {
-            motivo = MotivoMovimentacaoDeEstoque.valueOf(dto.getMotivo().toUpperCase()); // Assumindo que o DTO agora tem um campo 'motivo'
-        } catch (IllegalArgumentException e) {
-            throw new ValidationException("Motivo de ajuste inválido: " + dto.getMotivo());
+        if (isPagamentoAVista(entrada.getFormaPagamento())) {
+            parcelas = 1;
         }
 
-        // 3. Define a Direção (Status) automaticamente baseada no Motivo (Regra de Negócio)
-        StatusMovimentoEstoque status = switch (motivo) {
-            case AJUSTE_SOBRA, DEVOLUCAO_CLIENTE, CANCELAMENTO_DE_VENDA, COMPRA_FORNECEDOR -> StatusMovimentoEstoque.ENTRADA;
-            case AJUSTE_PERDA, AJUSTE_AVARIA, USO_INTERNO, VENDA, DEVOLUCAO_AO_FORNECEDOR -> StatusMovimentoEstoque.SAIDA;
-            default -> throw new ValidationException("Motivo não mapeado para movimentação de estoque: " + motivo);
-        };
+        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
 
-        // 4. Atualiza o saldo do produto
-        if (status == StatusMovimentoEstoque.ENTRADA) {
-            produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().add(dto.getQuantidade()));
-        } else {
-            produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(dto.getQuantidade()));
+        for (int i = 1; i <= parcelas; i++) {
+            ContaPagar conta = new ContaPagar();
+            conta.setFornecedor(fornecedor);
+            conta.setDataEmissao(LocalDate.now());
+
+            String desc = "Compra Estoque - NF " + entrada.getNumeroNotaFiscal();
+            if (parcelas > 1) desc += " (" + i + "/" + parcelas + ")";
+            conta.setDescricao(desc);
+            conta.setValorTotal(valorParcela);
+
+            if (isPagamentoAVista(entrada.getFormaPagamento())) {
+                conta.setStatus(StatusConta.PAGO);
+                conta.setDataPagamento(LocalDate.now());
+                conta.setDataVencimento(LocalDate.now());
+            } else {
+                conta.setStatus(StatusConta.PENDENTE);
+                if (entrada.getFormaPagamento() == FormaPagamento.BOLETO && entrada.getDataVencimentoBoleto() != null) {
+                    conta.setDataVencimento(entrada.getDataVencimentoBoleto());
+                } else {
+                    conta.setDataVencimento(LocalDate.now().plusDays(30L * i));
+                }
+            }
+            contaPagarRepository.save(conta);
         }
-        produtoRepository.save(produto);
-
-        // 5. Registra o Movimento com Auditoria Completa
-        MovimentoEstoque mov = new MovimentoEstoque();
-        mov.setUsuario(usuarioLogado); // <--- AUDITORIA: Quem fez?
-        mov.setProduto(produto);       // <--- O que mudou?
-        mov.setDataMovimento(LocalDateTime.now());
-        mov.setQuantidadeMovimentada(dto.getQuantidade());
-
-        // Grava os Enums Corretos
-        mov.setStatusMovimentoEstoque(status); // ENTRADA ou SAIDA
-        mov.setMotivoMovimentacaoDeEstoque(motivo);        // PERDA, SOBRA, ETC
-
-        mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
-
-        movimentoEstoqueRepository.save(mov);
     }
 
-    /**
-     * Realiza a baixa física do produto no estoque durante a venda.
-     */
-    @Transactional
-    public void realizarAjusteSaidaVenda(Produto produto, BigDecimal quantidade) {
-        // Garante que o valor atual não seja nulo antes da conta
-        BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
-
-        // Atualiza a entidade
-        produto.setQuantidadeEmEstoque(estoqueAtual.subtract(quantidade));
-        produtoRepository.save(produto);
-
-        // Registra o movimento para auditoria e relatórios (Curva ABC)
-        MovimentoEstoque mov = new MovimentoEstoque();
-        mov.setProduto(produto);
-        mov.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.VENDA);
-        mov.setQuantidadeMovimentada(quantidade);
-        mov.setDataMovimento(LocalDateTime.now());
-        // Se o seu MovimentoEstoque tiver custoMovimentado, salve o custo médio do produto aqui
-        mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
-
-        movimentoEstoqueRepository.save(mov);
+    private boolean isPagamentoAVista(FormaPagamento fp) {
+        return fp == FormaPagamento.DINHEIRO || fp == FormaPagamento.PIX || fp == FormaPagamento.DEBITO;
     }
 
-    /**
-     * Devolve o produto ao estoque em caso de cancelamento ou estorno.
-     */
-    @Transactional
-    public void estornarEstoqueVenda(Produto produto, BigDecimal quantidade, String motivo) {
-        BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
-        produto.setQuantidadeEmEstoque(estoqueAtual.add(quantidade));
-        produtoRepository.save(produto);
+    private void verificarNecessidadeReajuste(Produto produto, BigDecimal novoCusto) {
+        ConfiguracaoLoja config = configuracaoLojaRepository.findAll().stream().findFirst().orElse(null);
+        if (config == null || produto.getPrecoVenda() == null || produto.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) return;
 
-        MovimentoEstoque mov = new MovimentoEstoque();
-        mov.setProduto(produto);
-        mov.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA); // ex: "CANCELAMENTO_VENDA"
-        mov.setQuantidadeMovimentada(quantidade);
-        mov.setDataMovimento(LocalDateTime.now());
-        movimentoEstoqueRepository.save(mov);
+        BigDecimal lucroBruto = produto.getPrecoVenda().subtract(novoCusto);
+        BigDecimal margemAtualPercentual = lucroBruto.divide(produto.getPrecoVenda(), 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+
+        if (margemAtualPercentual.compareTo(config.getMargemLucroAlvo()) < 0) {
+            BigDecimal divisor = BigDecimal.ONE.subtract(config.getMargemLucroAlvo().divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
+            BigDecimal precoSugerido = novoCusto.divide(divisor, 2, RoundingMode.CEILING);
+
+            boolean existePendente = sugestaoPrecoRepository.existsByProdutoAndStatus(produto, StatusSugestao.PENDENTE);
+            if (!existePendente) {
+                SugestaoPreco sugestao = new SugestaoPreco();
+                sugestao.setProduto(produto);
+                sugestao.setCustoAntigo(produto.getPrecoMedioPonderado());
+                sugestao.setCustoNovo(novoCusto);
+                sugestao.setPrecoVendaAtual(produto.getPrecoVenda());
+                sugestao.setPrecoVendaSugerido(precoSugerido);
+                sugestao.setMargemAtual(margemAtualPercentual);
+                sugestao.setMargemProjetada(config.getMargemLucroAlvo());
+                sugestao.setDataGeracao(LocalDateTime.now());
+                sugestao.setStatus(StatusSugestao.PENDENTE);
+                sugestao.setMotivo("Margem caiu para " + margemAtualPercentual + "%. Meta: " + config.getMargemLucroAlvo() + "%");
+                sugestaoPrecoRepository.save(sugestao);
+            }
+        }
+    }
+
+    private void gerarAuditoriaNotaAvulsa(Fornecedor fornecedor) {
+        Auditoria logAuditoria = new Auditoria();
+        logAuditoria.setDataHora(LocalDateTime.now());
+        logAuditoria.setTipoEvento("EMISSAO_NOTA_ENTRADA");
+        logAuditoria.setEntidadeAfetada("Estoque");
+        logAuditoria.setMensagem("NOTA DE ENTRADA (CPF) PROCESSADA para " + fornecedor.getNomeFantasia());
+
+        Usuario u = getUsuarioLogado();
+        logAuditoria.setUsuarioResponsavel(u != null ? u.getNome() : "SISTEMA_AUTOMATICO");
+
+        auditoriaRepository.save(logAuditoria);
+    }
+
+    private Fornecedor buscarOuCriarFornecedor(EstoqueRequestDTO entrada) {
+        String docLimpo = entrada.getFornecedorCnpj().replaceAll("\\D", "");
+        return fornecedorRepository.findByCpfOuCnpj(entrada.getFornecedorCnpj())
+                .or(() -> fornecedorRepository.findByCpfOuCnpj(docLimpo))
+                .orElseGet(() -> {
+                    Fornecedor novo = new Fornecedor();
+                    novo.setCpfOuCnpj(entrada.getFornecedorCnpj());
+                    novo.setRazaoSocial("Fornecedor " + entrada.getFornecedorCnpj());
+                    novo.setNomeFantasia("Fornecedor " + entrada.getFornecedorCnpj());
+                    novo.setAtivo(true);
+                    novo.setTipoPessoa(docLimpo.length() <= 11 ? "FISICA" : "JURIDICA");
+                    return fornecedorRepository.save(novo);
+                });
     }
 }

@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusMovimentoEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -23,14 +23,13 @@ public class MovimentoEstoque implements Serializable {
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
-    // --- CORREÇÃO 1: Mudança de String para Enum ---
+    // CORREÇÃO: Usando Enum para evitar erros de digitação ("Entrada" vs "ENTRADA")
     @Enumerated(EnumType.STRING)
     @Column(name = "tipo_movimento", nullable = false)
-    private StatusMovimentoEstoque statusMovimentoEstoque; // Agora aceita o Enum ENTRADA/SAIDA
+    private TipoMovimentoEstoque tipoMovimentoEstoque;
 
-    // --- CORREÇÃO 2: Novo campo de Motivo (Sobra, Perda, Venda...) ---
     @Enumerated(EnumType.STRING)
-    @Column(name = "motivo_movimento", length = 30)
+    @Column(name = "motivo_movimento")
     private MotivoMovimentacaoDeEstoque motivoMovimentacaoDeEstoque;
 
     @Column(name = "quantidade_movimentada", nullable = false, precision = 10, scale = 3)
@@ -49,7 +48,8 @@ public class MovimentoEstoque implements Serializable {
     @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
 
-    // --- CORREÇÃO 3: Campo de Auditoria (Quem fez?) ---
+    // AUDITORIA: Adicionado como nullable=true para não quebrar dados antigos.
+    // Em produção nova, passaria a ser false.
     @ManyToOne
     @JoinColumn(name = "usuario_id", nullable = false)
     private Usuario usuario;

@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
@@ -124,7 +124,7 @@ public class DashboardIntegrationTest {
         Venda v = new Venda();
         v.setDataVenda(data);
         v.setTotalVenda(total);
-        v.setFormaPagamento(FormaPagamento.DINHEIRO);
+        v.setFormaPagamento(FormaDePagamento.DINHEIRO);
         vendaRepository.save(v);
     }
 

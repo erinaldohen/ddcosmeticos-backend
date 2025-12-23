@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -18,7 +19,7 @@ public class VendaCompletaResponseDTO implements Serializable {
     // Dados Identificadores
     private Long id;
     private LocalDateTime dataVenda;
-    private String usuarioVendedor; // Auditoria de quem operou o caixa
+    private Usuario usuarioVendedor; // Auditoria de quem operou o caixa
 
     // Totais Financeiros
     private BigDecimal totalVenda;
@@ -41,7 +42,7 @@ public class VendaCompletaResponseDTO implements Serializable {
     public VendaCompletaResponseDTO(Venda venda) {
         this.id = venda.getId();
         this.dataVenda = venda.getDataVenda();
-        this.usuarioVendedor = venda.getUsuarioVendedor();
+        this.usuarioVendedor = venda.getUsuario();
 
         this.totalVenda = venda.getTotalVenda();
         this.descontoTotal = venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO;
@@ -50,9 +51,9 @@ public class VendaCompletaResponseDTO implements Serializable {
         this.clienteCpf = venda.getClienteCpf();
         this.clienteNome = venda.getClienteNome();
 
-        this.statusFiscal = venda.getStatusFiscal();
+        this.statusFiscal = venda.getStatusFiscal().toString();
         this.cancelada = venda.isCancelada();
-        this.motivoCancelamento = venda.getMotivoCancelamento();
+        this.motivoCancelamento = venda.getMotivoDoCancelamento();
 
         // Converte o Enum para String para exibição amigável no Frontend
         this.formaPagamento = venda.getFormaPagamento() != null ? venda.getFormaPagamento().name() : "N/I";

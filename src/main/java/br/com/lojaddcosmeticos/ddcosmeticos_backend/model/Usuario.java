@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.Perfil;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -39,14 +39,14 @@ public class Usuario implements UserDetails, Serializable {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "perfil", nullable = false)
-    private Perfil perfil;
+    private PerfilDoUsuario perfil;
 
     // Campo novo para Soft Delete
     @Column(nullable = false)
     private boolean ativo = true;
 
     // Construtor
-    public Usuario(String nome, String matricula, String senha, Perfil perfil) {
+    public Usuario(String nome, String matricula, String senha, PerfilDoUsuario perfil) {
         this.nome = nome;
         this.matricula = matricula;
         this.senha = senha;

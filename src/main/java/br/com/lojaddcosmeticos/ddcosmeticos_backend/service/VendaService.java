@@ -1,17 +1,18 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Slf4j
 @Service
@@ -28,17 +29,20 @@ public class VendaService {
      * Fluxo Principal: Finaliza a venda orquestrando Estoque e Financeiro.
      */
     @Transactional
-    public Venda finalizarVenda(VendaRequestDTO dto, String usuarioLogado) {
-        log.info("Iniciando finalização de venda - Vendedor: {} | Cliente: {}", usuarioLogado, dto.clienteNome());
+    public Venda realizarVenda(VendaRequestDTO dto) {
+        // 1. Captura o Usuário Logado do Contexto de Segurança
+        Usuario usuarioLogado = (Usuario) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        log.info("Processando venda PDV - Operador: {} | Cliente CPF: {}",
+                usuarioLogado.getMatricula(), dto.clienteCpf());
 
         Venda venda = new Venda();
         venda.setDataVenda(LocalDateTime.now());
-        venda.setUsuarioVendedor(usuarioLogado);
+        venda.setUsuario(usuarioLogado);
         venda.setTotalVenda(dto.totalVenda());
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
         venda.setClienteCpf(dto.clienteCpf());
         venda.setClienteNome(dto.clienteNome());
-        venda.setStatusFiscal("PENDENTE");
+        venda.setStatusFiscal(StatusFiscal.PENDENTE);
 
         // 1. Processar Itens (Estoque e CMV)
         for (ItemVendaRequestDTO itemDto : dto.itens()) {
@@ -100,7 +104,7 @@ public class VendaService {
         }
     }
 
-    private void cancelarVendaCompleta(Venda venda, String motivo) {
+    private void cancelarVendaCompleta(Venda venda, String motivoDoCancelamento) {
         venda.getItens().forEach(item ->
                 estoqueService.estornarEstoqueVenda(item.getProduto(), item.getQuantidade(), "CANCELAMENTO_VENDA")
         );
@@ -109,8 +113,8 @@ public class VendaService {
         financeiroService.cancelarReceitaVenda(venda.getId());
 
         venda.setCancelada(true);
-        venda.setMotivoCancelamento(motivo);
-        venda.setStatusFiscal("CANCELADA");
+        venda.setMotivoDoCancelamento(motivoDoCancelamento);
+        venda.setStatusFiscal(StatusFiscal.CANCELADA);
         vendaRepository.save(venda);
     }
 
@@ -144,7 +148,7 @@ public class VendaService {
             nfceService.emitirNfce(venda);
         } catch (Exception e) {
             log.error("Falha na NFC-e (Venda #{}): {}", venda.getId(), e.getMessage());
-            venda.setStatusFiscal("ERRO_EMISSAO");
+            venda.setStatusFiscal(StatusFiscal.ERRO_EMISSAO);
             vendaRepository.save(venda);
         }
     }

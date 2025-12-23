@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
@@ -85,7 +85,7 @@ public class TributacaoIntegrationTest {
         dto.setPrecoCusto(new BigDecimal("5.00"));
         dto.setFornecedorCnpj("123.456.789-00"); // CPF
         dto.setNumeroNotaFiscal("RECIBO_SIMPLES");
-        dto.setFormaPagamento(FormaPagamento.DINHEIRO);
+        dto.setFormaPagamento(FormaDePagamento.DINHEIRO);
         dto.setQuantidadeParcelas(1);
 
         // 3. Execução
@@ -131,7 +131,7 @@ public class TributacaoIntegrationTest {
         dto.setPrecoCusto(new BigDecimal("100.00"));
         dto.setFornecedorCnpj("12.345.678/0001-99"); // CNPJ
         dto.setNumeroNotaFiscal("NFE-5555");
-        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
         dto.setDataVencimentoBoleto(LocalDate.now().plusDays(30));
 

@@ -1,5 +1,11 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
+import jakarta.persistence.Column;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import lombok.Builder;
 import lombok.Data;
 
@@ -14,14 +20,16 @@ public class VendaResponseDTO implements Serializable { // <--- Implementar
     private static final long serialVersionUID = 1L;
     private Long idVenda;
     private LocalDateTime dataVenda;
+    private Usuario usuario;
     private BigDecimal valorTotal;
     private BigDecimal desconto;
-    private String operador;
     private int totalItens;
 
     // Novo campo para avisar o caixa
     private List<String> alertas;
 
     // Status para saber se a nota foi gerada ou ficou pendente
-    private String statusFiscal;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_fiscal", length = 11)
+    private StatusFiscal statusFiscal;
 }

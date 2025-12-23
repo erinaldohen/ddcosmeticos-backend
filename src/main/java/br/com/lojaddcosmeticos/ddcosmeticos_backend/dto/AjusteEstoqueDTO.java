@@ -18,8 +18,5 @@ public class AjusteEstoqueDTO implements Serializable { // <--- Implementar
     @Positive(message = "A quantidade deve ser maior que zero")
     private BigDecimal quantidade;
 
-    @NotNull(message = "O tipo de movimento é obrigatório (ENTRADA, SAIDA, PERDA, SOBRA)")
-    private String tipoMovimento; // <--- O erro estava aqui (faltava este campo)
-
     private String motivo;
 }

@@ -2,7 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
@@ -48,7 +48,7 @@ public class EstoqueIntegrationTest {
         dto.setPrecoCusto(new BigDecimal("50.00"));
         dto.setNumeroNotaFiscal("NF-1234");
         dto.setFornecedorCnpj("00.000.000/0001-00");
-        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
 
         estoqueService.registrarEntrada(dto);

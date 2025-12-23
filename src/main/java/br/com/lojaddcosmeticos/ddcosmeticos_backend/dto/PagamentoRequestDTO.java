@@ -1,10 +1,10 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import java.math.BigDecimal;
 
 public record PagamentoRequestDTO(
         BigDecimal valor,
-        FormaPagamento formaPagamento, // Deve ser o Enum, não String
+        FormaDePagamento formaPagamento, // Deve ser o Enum, não String
         String codigoVale // Opcional, para trocas
 ) {}

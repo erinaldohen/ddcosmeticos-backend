@@ -38,7 +38,7 @@ public class VendaController {
         String usuarioLogado = (principal != null) ? principal.getName() : "SISTEMA_LOCAL";
 
         // 2. Orquestração: Chama o método finalizarVenda que já corrigimos no Service
-        Venda venda = vendaService.finalizarVenda(dto, usuarioLogado);
+        Venda venda = vendaService.realizarVenda(dto);
 
         // 3. Resposta: Mapeia para o DTO de performance (ResponseDTO)
         VendaResponseDTO response = VendaResponseDTO.builder()

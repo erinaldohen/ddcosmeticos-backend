@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EntradaNFRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemEntradaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
@@ -109,7 +110,7 @@ public class CustoService {
             movimento.setDataMovimento(LocalDateTime.now()); // Corrigido para setDataMovimento
             movimento.setQuantidadeMovimentada(qtdeEntrada); // Positivo para entrada
             movimento.setCustoMovimentado(valorTotalEntrada.setScale(PMP_SCALE, PMP_ROUNDING_MODE));
-            movimento.setTipoMovimento("ENTRADA_NF");
+            movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
 
             // Ajuste para ID Referencia (Long) - Usando hash simples ou 0 temporariamente pois não temos entidade NF
             // O ideal seria criar uma entidade NotaFiscalEntrada no futuro

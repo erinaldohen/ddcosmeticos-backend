@@ -2,7 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.PedidoCompraDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
@@ -112,7 +112,7 @@ public class PedidoCompraService {
                 fornecedor,
                 pedido.getTotalFinal(),
                 numeroNotaFiscal,
-                FormaPagamento.BOLETO,
+                FormaDePagamento.BOLETO,
                 1,
                 dataVencimento // <--- PASSA A DATA QUE VEIO DO CONTROLLER
         );

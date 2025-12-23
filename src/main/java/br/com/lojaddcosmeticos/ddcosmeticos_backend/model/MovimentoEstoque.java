@@ -1,5 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusMovimentoEstoque;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -21,8 +23,15 @@ public class MovimentoEstoque implements Serializable {
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
-    @Column(name = "tipo_movimento", nullable = false) // ENTRADA ou SAIDA
-    private String tipoMovimento;
+    // --- CORREÇÃO 1: Mudança de String para Enum ---
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tipo_movimento", nullable = false)
+    private StatusMovimentoEstoque statusMovimentoEstoque; // Agora aceita o Enum ENTRADA/SAIDA
+
+    // --- CORREÇÃO 2: Novo campo de Motivo (Sobra, Perda, Venda...) ---
+    @Enumerated(EnumType.STRING)
+    @Column(name = "motivo_movimento", length = 30)
+    private MotivoMovimentacaoDeEstoque motivoMovimentacaoDeEstoque;
 
     @Column(name = "quantidade_movimentada", nullable = false, precision = 10, scale = 3)
     private BigDecimal quantidadeMovimentada;
@@ -30,14 +39,18 @@ public class MovimentoEstoque implements Serializable {
     @Column(name = "data_movimento", nullable = false)
     private LocalDateTime dataMovimento = LocalDateTime.now();
 
-    // Custo no momento da movimentação (Snapshot)
     @Column(name = "custo_movimentado", precision = 10, scale = 4)
     private BigDecimal custoMovimentado;
 
-    @Column(name = "id_referencia") // ID da Venda ou Nota
+    @Column(name = "id_referencia")
     private Long idReferencia;
 
     @ManyToOne
-    @JoinColumn(name = "fornecedor_id") // Nova coluna
+    @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
+
+    // --- CORREÇÃO 3: Campo de Auditoria (Quem fez?) ---
+    @ManyToOne
+    @JoinColumn(name = "usuario_id", nullable = false)
+    private Usuario usuario;
 }

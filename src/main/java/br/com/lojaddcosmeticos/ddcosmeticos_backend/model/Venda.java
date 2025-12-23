@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -23,14 +24,15 @@ public class Venda implements Serializable {
     @Column(name = "data_venda", nullable = false)
     private LocalDateTime dataVenda = LocalDateTime.now();
 
-    // AUDITORIA: Quem realizou a operação
-    @Column(name = "usuario_vendedor", nullable = false)
-    private String usuarioVendedor;
+    // --- NOVO CAMPO DE AUDITORIA ---
+    @ManyToOne
+    @JoinColumn(name = "usuario_id", nullable = false) // nullable=false obriga a ter usuário
+    private Usuario usuario;
 
     // FINANCEIRO: Como foi pago (Vinculado ao seu Enum)
     @Enumerated(EnumType.STRING)
     @Column(name = "forma_pagamento", nullable = false)
-    private FormaPagamento formaPagamento;
+    private FormaDePagamento formaPagamento;
 
     // TOTALIZAÇÃO
     @Column(name = "total_venda", nullable = false, precision = 10, scale = 2)
@@ -48,10 +50,12 @@ public class Venda implements Serializable {
 
     // GESTÃO DE ESTORNOS
     private boolean cancelada = false;
-    private String motivoCancelamento;
+    private String motivoDoCancelamento;
 
     // STATUS FISCAL
-    private String statusFiscal; // "PENDENTE", "AUTORIZADO", "ERRO"
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status-fiscal", nullable = false)
+    private StatusFiscal statusFiscal;
 
     @Lob
     @Column(columnDefinition = "TEXT")

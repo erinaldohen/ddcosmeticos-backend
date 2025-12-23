@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao; // <--- ADICIONE ESTE IMPORT
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao; // <--- CONFIRA ESTE IMPORT
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.SugestaoPreco;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,9 +11,8 @@ import java.util.List;
 @Repository
 public interface SugestaoPrecoRepository extends JpaRepository<SugestaoPreco, Long> {
 
-    // CORREÇÃO: Usar 'StatusSugestao' direto, sem 'SugestaoPreco.' antes
-    List<SugestaoPreco> findByStatus(StatusSugestao statusSugestao);
+    // O método DEVE usar StatusSugestao
+    List<SugestaoPreco> findByStatus(StatusSugestao status);
 
-    // CORREÇÃO: Usar 'StatusSugestao' direto aqui também
     boolean existsByProdutoAndStatus(Produto produto, StatusSugestao status);
 }

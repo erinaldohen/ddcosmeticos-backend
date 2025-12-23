@@ -2,7 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaReceber;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
@@ -46,7 +46,7 @@ public class VendaFinanceiroIntegrationTest {
 
         // 2. Venda: 3 unidades = R$ 300,00 (Parcelado em 3x)
         VendaRequestDTO dto = new VendaRequestDTO();
-        dto.setFormaPagamento(FormaPagamento.CREDITO);
+        dto.setFormaPagamento(FormaDePagamento.CREDITO);
         dto.setQuantidadeParcelas(3);
 
         ItemVendaDTO item = new ItemVendaDTO();

@@ -1,6 +1,5 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao;
 import jakarta.persistence.*;
 import lombok.Data;
 

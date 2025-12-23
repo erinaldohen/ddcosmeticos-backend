@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
@@ -36,24 +36,24 @@ public class EstoqueFinanceiroIntegrationTest {
     @DisplayName("PIX: Deve gerar conta e BAIXAR automaticamente (PAGO)")
     @WithMockUser(username = "gerente", roles = {"GERENTE"})
     public void testeCompraAvistaPix() {
-        executarTestePagamentoImediato(FormaPagamento.PIX, "PROD_PIX", "NF-PIX");
+        executarTestePagamentoImediato(FormaDePagamento.PIX, "PROD_PIX", "NF-PIX");
     }
 
     @Test
     @DisplayName("DINHEIRO: Deve gerar conta e BAIXAR automaticamente (PAGO)")
     @WithMockUser(username = "gerente", roles = {"GERENTE"})
     public void testeCompraAvistaDinheiro() {
-        executarTestePagamentoImediato(FormaPagamento.DINHEIRO, "PROD_DIN", "NF-DIN");
+        executarTestePagamentoImediato(FormaDePagamento.DINHEIRO, "PROD_DIN", "NF-DIN");
     }
 
     @Test
     @DisplayName("DÉBITO: Deve gerar conta e BAIXAR automaticamente (PAGO)")
     @WithMockUser(username = "gerente", roles = {"GERENTE"})
     public void testeCompraAvistaDebito() {
-        executarTestePagamentoImediato(FormaPagamento.DEBITO, "PROD_DEB", "NF-DEB");
+        executarTestePagamentoImediato(FormaDePagamento.DEBITO, "PROD_DEB", "NF-DEB");
     }
 
-    private void executarTestePagamentoImediato(FormaPagamento forma, String codBarras, String nf) {
+    private void executarTestePagamentoImediato(FormaDePagamento forma, String codBarras, String nf) {
         criarProduto(codBarras, new BigDecimal("50.00"));
 
         EstoqueRequestDTO dto = criarDtoBase(codBarras, nf);
@@ -84,7 +84,7 @@ public class EstoqueFinanceiroIntegrationTest {
         criarProduto("PROD_BOLETO", new BigDecimal("100.00"));
 
         EstoqueRequestDTO dto = criarDtoBase("PROD_BOLETO", "NF-BOL");
-        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
 
         LocalDate dataVencimento = LocalDate.now().plusDays(10);
@@ -116,7 +116,7 @@ public class EstoqueFinanceiroIntegrationTest {
         dto.setFornecedorCnpj("22.222.222/0001-22");
         dto.setNumeroNotaFiscal("NF-PARC");
 
-        dto.setFormaPagamento(FormaPagamento.CREDITO);
+        dto.setFormaPagamento(FormaDePagamento.CREDITO);
         dto.setQuantidadeParcelas(3);
 
         estoqueService.registrarEntrada(dto);

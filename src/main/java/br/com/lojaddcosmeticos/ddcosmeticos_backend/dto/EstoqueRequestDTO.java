@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -17,7 +17,7 @@ public class EstoqueRequestDTO implements Serializable { // <--- Implementar
     private String numeroNotaFiscal;
     private String fornecedorCnpj;
 
-    private FormaPagamento formaPagamento;
+    private FormaDePagamento formaPagamento;
 
     private Integer quantidadeParcelas;
     private LocalDate dataVencimentoBoleto;

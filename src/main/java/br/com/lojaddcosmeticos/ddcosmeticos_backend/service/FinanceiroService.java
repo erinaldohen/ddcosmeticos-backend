@@ -32,7 +32,7 @@ public class FinanceiroService {
             Fornecedor fornecedor,
             BigDecimal valorTotal,
             String numeroNota,
-            FormaPagamento forma,
+            FormaDePagamento forma,
             int parcelas,
             LocalDate vencimento) {
 
@@ -46,7 +46,7 @@ public class FinanceiroService {
         conta.setDataVencimento(vencimento);
         conta.setCategoria("MERCADORIA_REVENDA");
 
-        if (forma == FormaPagamento.DINHEIRO || forma == FormaPagamento.PIX) {
+        if (forma == FormaDePagamento.DINHEIRO || forma == FormaDePagamento.PIX) {
             conta.setStatus(StatusConta.PAGO);
             conta.setDataPagamento(LocalDate.now());
         } else {

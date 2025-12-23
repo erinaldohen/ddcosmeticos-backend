@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
-public enum StatusSugestao {
+public enum StatusPrecificacao {
     PENDENTE,
-    APROVADO,
-    REJEITADO
+    REJEITADO,
+    APROVADO;
 }

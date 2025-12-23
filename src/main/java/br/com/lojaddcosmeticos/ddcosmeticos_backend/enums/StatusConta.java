@@ -5,5 +5,5 @@ public enum StatusConta {
     CANCELADO,
     PAGO,
     PENDENTE,
-    RECEBIDO,
+    RECEBIDO;
 }

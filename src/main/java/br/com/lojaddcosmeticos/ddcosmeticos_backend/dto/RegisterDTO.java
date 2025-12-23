@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.Perfil; // Certifique-se de ter esse Enum
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario; // Certifique-se de ter esse Enum
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
@@ -21,5 +21,5 @@ public class RegisterDTO implements Serializable {
     private String senha;
 
     @NotNull(message = "Perfil é obrigatório")
-    private Perfil perfil; // Ex: ROLE_GERENTE, ROLE_CAIXA
+    private PerfilDoUsuario perfil; // Ex: ROLE_GERENTE, ROLE_CAIXA
 }

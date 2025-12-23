@@ -2,13 +2,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -92,10 +92,14 @@ public class EstoqueService {
     }
 
     private void registrarMovimento(Produto produto, Fornecedor fornecedor, EstoqueRequestDTO entrada) {
+        // Captura o usuário logado
+        Usuario usuarioLogado = (Usuario) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
         MovimentoEstoque mov = new MovimentoEstoque();
+        mov.setUsuario(usuarioLogado); // <--- Correção
         mov.setProduto(produto);
         mov.setFornecedor(fornecedor);
-        mov.setTipoMovimento("ENTRADA");
+        mov.setStatusMovimentoEstoque(StatusMovimentoEstoque.ENTRADA);
         mov.setQuantidadeMovimentada(entrada.getQuantidade());
         mov.setCustoMovimentado(entrada.getPrecoCusto());
         mov.setDataMovimento(LocalDateTime.now());
@@ -106,9 +110,9 @@ public class EstoqueService {
         BigDecimal valorTotal = entrada.getQuantidade().multiply(entrada.getPrecoCusto());
         int parcelas = (entrada.getQuantidadeParcelas() != null && entrada.getQuantidadeParcelas() > 0) ? entrada.getQuantidadeParcelas() : 1;
 
-        if (entrada.getFormaPagamento() == FormaPagamento.DINHEIRO ||
-                entrada.getFormaPagamento() == FormaPagamento.PIX ||
-                entrada.getFormaPagamento() == FormaPagamento.DEBITO) {
+        if (entrada.getFormaPagamento() == FormaDePagamento.DINHEIRO ||
+                entrada.getFormaPagamento() == FormaDePagamento.PIX ||
+                entrada.getFormaPagamento() == FormaDePagamento.DEBITO) {
             parcelas = 1;
         }
 
@@ -128,9 +132,9 @@ public class EstoqueService {
                 conta.setValorTotal(valorTotal);
             }
 
-            if (entrada.getFormaPagamento() == FormaPagamento.DINHEIRO ||
-                    entrada.getFormaPagamento() == FormaPagamento.PIX ||
-                    entrada.getFormaPagamento() == FormaPagamento.DEBITO) {
+            if (entrada.getFormaPagamento() == FormaDePagamento.DINHEIRO ||
+                    entrada.getFormaPagamento() == FormaDePagamento.PIX ||
+                    entrada.getFormaPagamento() == FormaDePagamento.DEBITO) {
 
                 conta.setStatus(StatusConta.PAGO);
                 conta.setDataPagamento(LocalDate.now());
@@ -138,7 +142,7 @@ public class EstoqueService {
 
             } else {
                 conta.setStatus(StatusConta.PENDENTE);
-                if (entrada.getFormaPagamento() == FormaPagamento.BOLETO && entrada.getDataVencimentoBoleto() != null) {
+                if (entrada.getFormaPagamento() == FormaDePagamento.BOLETO && entrada.getDataVencimentoBoleto() != null) {
                     conta.setDataVencimento(entrada.getDataVencimentoBoleto());
                 } else {
                     conta.setDataVencimento(LocalDate.now().plusDays(30L * i));
@@ -169,7 +173,7 @@ public class EstoqueService {
                 sugestao.setMargemAtual(margemAtualPercentual);
                 sugestao.setMargemProjetada(config.getMargemLucroAlvo());
                 sugestao.setDataGeracao(LocalDateTime.now());
-                sugestao.setStatus(StatusSugestao.PENDENTE);
+                sugestao.setStatusPrecificacao(StatusPrecificacao.PENDENTE);
                 sugestao.setMotivo("Margem abaixo da meta de " + config.getMargemLucroAlvo() + "%");
 
                 sugestaoPrecoRepository.save(sugestao);
@@ -186,7 +190,7 @@ public class EstoqueService {
         dto.setNumeroNotaFiscal(numeroNotaFiscal);
         if (fornecedor != null) dto.setFornecedorCnpj(fornecedor.getCpfOuCnpj());
 
-        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
         dto.setDataVencimentoBoleto(LocalDate.now().plusDays(30));
 
@@ -195,22 +199,48 @@ public class EstoqueService {
 
     @Transactional
     public void realizarAjusteInventario(AjusteEstoqueDTO dto) {
+        // 1. Auditoria: Captura quem está fazendo o ajuste
+        Usuario usuarioLogado = (Usuario) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
         Produto produto = produtoRepository.findByCodigoBarras(dto.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
 
-        if ("ENTRADA".equalsIgnoreCase(dto.getTipoMovimento()) || "SOBRA".equalsIgnoreCase(dto.getTipoMovimento())) {
+        // 2. Converte a String do DTO para o Enum de Motivo (Blindagem)
+        MotivoMovimentacaoDeEstoque motivo;
+        try {
+            motivo = MotivoMovimentacaoDeEstoque.valueOf(dto.getMotivo().toUpperCase()); // Assumindo que o DTO agora tem um campo 'motivo'
+        } catch (IllegalArgumentException e) {
+            throw new ValidationException("Motivo de ajuste inválido: " + dto.getMotivo());
+        }
+
+        // 3. Define a Direção (Status) automaticamente baseada no Motivo (Regra de Negócio)
+        StatusMovimentoEstoque status = switch (motivo) {
+            case AJUSTE_SOBRA, DEVOLUCAO_CLIENTE, CANCELAMENTO_DE_VENDA, COMPRA_FORNECEDOR -> StatusMovimentoEstoque.ENTRADA;
+            case AJUSTE_PERDA, AJUSTE_AVARIA, USO_INTERNO, VENDA, DEVOLUCAO_AO_FORNECEDOR -> StatusMovimentoEstoque.SAIDA;
+            default -> throw new ValidationException("Motivo não mapeado para movimentação de estoque: " + motivo);
+        };
+
+        // 4. Atualiza o saldo do produto
+        if (status == StatusMovimentoEstoque.ENTRADA) {
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().add(dto.getQuantidade()));
         } else {
             produto.setQuantidadeEmEstoque(produto.getQuantidadeEmEstoque().subtract(dto.getQuantidade()));
         }
         produtoRepository.save(produto);
 
+        // 5. Registra o Movimento com Auditoria Completa
         MovimentoEstoque mov = new MovimentoEstoque();
-        mov.setProduto(produto);
-        mov.setDataMovimento(LocalDateTime.now()); // Ajustado para o campo correto
+        mov.setUsuario(usuarioLogado); // <--- AUDITORIA: Quem fez?
+        mov.setProduto(produto);       // <--- O que mudou?
+        mov.setDataMovimento(LocalDateTime.now());
         mov.setQuantidadeMovimentada(dto.getQuantidade());
-        mov.setTipoMovimento(dto.getTipoMovimento().toUpperCase());
+
+        // Grava os Enums Corretos
+        mov.setStatusMovimentoEstoque(status); // ENTRADA ou SAIDA
+        mov.setMotivoMovimentacaoDeEstoque(motivo);        // PERDA, SOBRA, ETC
+
         mov.setCustoMovimentado(produto.getPrecoMedioPonderado());
+
         movimentoEstoqueRepository.save(mov);
     }
 
@@ -229,7 +259,7 @@ public class EstoqueService {
         // Registra o movimento para auditoria e relatórios (Curva ABC)
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
-        mov.setTipoMovimento("SAIDA_VENDA");
+        mov.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.VENDA);
         mov.setQuantidadeMovimentada(quantidade);
         mov.setDataMovimento(LocalDateTime.now());
         // Se o seu MovimentoEstoque tiver custoMovimentado, salve o custo médio do produto aqui
@@ -249,7 +279,7 @@ public class EstoqueService {
 
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(produto);
-        mov.setTipoMovimento(motivo); // ex: "CANCELAMENTO_VENDA"
+        mov.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA); // ex: "CANCELAMENTO_VENDA"
         mov.setQuantidadeMovimentada(quantidade);
         mov.setDataMovimento(LocalDateTime.now());
         movimentoEstoqueRepository.save(mov);

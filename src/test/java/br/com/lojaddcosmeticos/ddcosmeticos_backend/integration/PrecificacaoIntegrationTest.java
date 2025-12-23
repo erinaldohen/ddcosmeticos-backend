@@ -1,8 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusSugestao;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.SugestaoPreco;
@@ -62,11 +62,11 @@ public class PrecificacaoIntegrationTest {
         Assertions.assertFalse(sugestoes.isEmpty(), "Deveria ter gerado uma sugestão de preço");
 
         SugestaoPreco sugestao = sugestoes.get(0);
-        Assertions.assertEquals(StatusSugestao.PENDENTE, sugestao.getStatus());
+        Assertions.assertEquals(StatusFiscal.PENDENTE, sugestao.getStatus());
         Assertions.assertTrue(sugestao.getMotivo().contains("abaixo da meta"));
 
         // Simula APROVAÇÃO (Aqui você usaria seu Service de aprovação se tivesse)
-        sugestao.setStatus(StatusSugestao.APROVADO);
+        sugestao.setStatus(StatusFiscal.APROVADO);
         sugestaoPrecoRepository.save(sugestao);
 
         // Aplica o preço sugerido no produto
@@ -113,7 +113,7 @@ public class PrecificacaoIntegrationTest {
                 .findFirst().orElseThrow();
 
         // Simula REJEIÇÃO
-        sugestao.setStatus(StatusSugestao.REJEITADO);
+        sugestao.setStatus(StatusFiscal.REJEITADO);
         sugestaoPrecoRepository.save(sugestao);
 
         // Verifica que o preço do produto NÃO mudou
@@ -147,7 +147,7 @@ public class PrecificacaoIntegrationTest {
         dto.setPrecoCusto(custo);
         dto.setNumeroNotaFiscal("NF-AUTO");
         dto.setFornecedorCnpj("99.999.999/0001-99");
-        dto.setFormaPagamento(FormaPagamento.BOLETO);
+        dto.setFormaPagamento(FormaDePagamento.BOLETO);
         dto.setQuantidadeParcelas(1);
         return dto;
     }

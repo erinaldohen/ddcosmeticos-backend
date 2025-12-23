@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.junit.jupiter.api.Assertions;
@@ -127,7 +127,7 @@ public class ModelMappingIntegrationTest {
         conta.setValorLiquido(new BigDecimal("95.00"));
 
         // Testando Enum FormaPagamento (Externo)
-        conta.setFormaPagamento(FormaPagamento.CREDITO);
+        conta.setFormaPagamento(FormaDePagamento.CREDITO);
 
         // Testando Enum StatusConta (Interno da classe ContaReceber)
         conta.setStatus(ContaReceber.StatusConta.PENDENTE);
@@ -138,7 +138,7 @@ public class ModelMappingIntegrationTest {
 
         ContaReceber buscada = contaReceberRepository.findById(salva.getId()).orElseThrow();
 
-        Assertions.assertEquals(FormaPagamento.CREDITO, buscada.getFormaPagamento());
+        Assertions.assertEquals(FormaDePagamento.CREDITO, buscada.getFormaPagamento());
         Assertions.assertEquals(ContaReceber.StatusConta.PENDENTE, buscada.getStatus());
     }
 

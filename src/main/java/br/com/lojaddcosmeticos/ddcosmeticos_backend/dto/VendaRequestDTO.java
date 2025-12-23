@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaPagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
@@ -8,7 +8,7 @@ import java.util.List;
 
 public record VendaRequestDTO(
         @NotNull(message = "A forma de pagamento é obrigatória")
-        FormaPagamento formaPagamento,
+        FormaDePagamento formaPagamento,
 
         @NotNull(message = "O valor total da venda é obrigatório")
         BigDecimal totalVenda,

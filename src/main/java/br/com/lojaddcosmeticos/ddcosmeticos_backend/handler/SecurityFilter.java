@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.handler; // Ou pacote .config
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.handler;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.security.JwtService;
@@ -24,12 +24,13 @@ public class SecurityFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+
         var token = this.recoverToken(request);
-        // Dentro do método doFilterInternal do SecurityFilter
+
         if (token != null) {
             var matricula = jwtService.validateToken(token);
-            if (!matricula.isEmpty()) {
-                // AJUSTE: Adicionamos .orElse(null) para manter a compatibilidade com a interface
+            // Verifica se o token é válido (retornou matrícula)
+            if (matricula != null && !matricula.isEmpty()) {
                 UserDetails user = usuarioRepository.findByMatricula(matricula).orElse(null);
 
                 if (user != null) {
@@ -38,6 +39,10 @@ public class SecurityFilter extends OncePerRequestFilter {
                 }
             }
         }
+
+        // --- CORREÇÃO CRÍTICA AQUI ---
+        // Sem essa linha, a requisição para no filtro e não chega no H2/Swagger/API
+        filterChain.doFilter(request, response);
     }
 
     private String recoverToken(HttpServletRequest request) {

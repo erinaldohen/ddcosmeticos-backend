@@ -9,14 +9,13 @@ import org.springframework.security.config.annotation.authentication.configurati
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
 @Configuration
 @EnableWebSecurity
@@ -26,22 +25,36 @@ public class SecurityConfig {
     @Autowired
     private SecurityFilter securityFilter;
 
-    /**
-     * ADICIONE ESTE BEAN: Ele ignora a segurança para recursos estáticos.
-     * É isso que resolve o Erro 403 e a Tela Branca.
-     */
-
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+                // 1. Desabilita CSRF (Essencial para H2 Console e API REST)
                 .csrf(AbstractHttpConfigurer::disable)
+
+                // 2. Define Sessão como Stateless (Não guarda estado no servidor)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                // 3. Configura Permissões de Acesso
                 .authorizeHttpRequests(auth -> auth
-                        // Liberação temporária da API para você testar sem estresse
-                        .requestMatchers("/api/v1/**").permitAll()
+                        // Documentação Swagger (Essencial liberar todas essas rotas)
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+
+                        // Banco de Dados H2
+                        .requestMatchers("/h2-console/**").permitAll()
+
+                        // Autenticação e Rotas Públicas
+                        .requestMatchers("/auth/**").permitAll()
+                        .requestMatchers("/api/v1/**").permitAll() // Apenas para testes iniciais
+
+                        // Qualquer outra requisição precisa de token
                         .anyRequest().authenticated()
                 )
-                // Adiciona seu filtro de segurança personalizado na corrente de filtros
+
+                // 4. CRÍTICO: Libera o uso de Frames para o H2 Console
+                // Sem isso, a tela do banco fica branca!
+                .headers(headers -> headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin))
+
+                // 5. Adiciona seu filtro de token
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -55,15 +68,5 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
-    }
-    @Bean
-    public WebSecurityCustomizer webSecurityCustomizer() {
-        return (web) -> web.ignoring()
-                .requestMatchers(new AntPathRequestMatcher("/v3/api-docs/**"))
-                .requestMatchers(new AntPathRequestMatcher("/swagger-ui/**"))
-                .requestMatchers(new AntPathRequestMatcher("/swagger-ui.html"))
-                .requestMatchers(new AntPathRequestMatcher("/webjars/**"))
-                .requestMatchers(new AntPathRequestMatcher("/swagger-resources/**"))
-                .requestMatchers(new AntPathRequestMatcher("/favicon.ico")); // Evita erro de ícone que trava o carregamento
     }
 }

@@ -2,15 +2,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Repository;
 
-import java.util.Optional; // Já importado anteriormente
+import java.util.Optional;
 
 @Repository
 public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
 
-    // CORREÇÃO: Alterado de UserDetails para Optional<Usuario>
+    // Método essencial usado pelo AuthorizationService
     Optional<Usuario> findByMatricula(String matricula);
-
-    boolean existsByMatricula(String matricula);
 }

@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusPrecificacao;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -31,7 +32,8 @@ public class SugestaoPreco implements Serializable {
     private BigDecimal margemProjetada;
 
     @Enumerated(EnumType.STRING)
-    private StatusSugestao status; // PENDENTE, APROVADO, REJEITADO
+    @Column(name = "status_precificacao")
+    private StatusPrecificacao statusPrecificacao; // PENDENTE, APROVADO, REJEITADO
 
     private LocalDateTime dataGeracao = LocalDateTime.now();
 

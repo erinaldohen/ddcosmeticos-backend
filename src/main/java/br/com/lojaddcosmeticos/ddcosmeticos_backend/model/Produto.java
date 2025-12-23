@@ -7,8 +7,12 @@ import org.hibernate.annotations.SQLRestriction;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
+/**
+ * Entidade Produto refatorada pela equipe de Arquitetura.
+ * Inclui suporte a controle de validade, imagem para IA e flags fiscais para o cenário híbrido.
+ */
 @Data
 @Entity
 @Table(name = "produto")
@@ -45,7 +49,10 @@ public class Produto implements Serializable {
     @Column(name = "quantidade_estoque", precision = 10, scale = 3)
     private BigDecimal quantidadeEmEstoque = BigDecimal.ZERO;
 
-    // --- CAMPOS FISCAIS (Cruciais para NFC-e em PE) ---
+    @Column(name = "estoque_minimo", precision = 10, scale = 3)
+    private BigDecimal estoqueMinimo = BigDecimal.ZERO;
+
+    // --- CAMPOS FISCAIS (Cruciais para NFC-e em PE - CNAE 4772-5/00) ---
     @Column(length = 10)
     private String ncm;
 
@@ -55,12 +62,26 @@ public class Produto implements Serializable {
     @Column(length = 1)
     private String origem = "0"; // 0-Nacional, 1-Importado
 
-    private boolean monofasico = false; // O ERRO DA LINHA 94 ERA AQUI
+    private boolean monofasico = false;
 
+    // Flag crucial para a regra de negócio de emissão parcial de NFC-e
     @Column(name = "possui_nf_entrada")
     private boolean possuiNfEntrada = false;
 
-    // Dentro de Produto.java - Adicione este campo
-    @Column(name = "estoque_minimo", precision = 10, scale = 3)
-    private BigDecimal estoqueMinimo = BigDecimal.ZERO;
+    // --- CONTROLE DE VALIDADE E LOTE (Solicitado no item 4) ---
+    @Column(name = "controla_validade")
+    private boolean controlaValidade = false;
+
+    // Quantidade de dias antes do vencimento para o sistema emitir alerta
+    @Column(name = "dias_alerta_vencimento")
+    private Integer diasParaAlertaVencimento = 30;
+
+    // Data de validade do lote mais próximo de vencer (atualizado pelo EstoqueService)
+    @Column(name = "data_validade_proxima")
+    private LocalDate dataValidadeProxima;
+
+    // --- UI/UX & INOVAÇÃO ---
+    // URL da imagem para exibição no PDV e para o algoritmo de reconhecimento visual
+    @Column(name = "url_imagem", length = 500)
+    private String urlImagem;
 }

@@ -8,5 +8,6 @@ public enum MotivoMovimentacaoDeEstoque {
     AJUSTE_PERDA,
     AJUSTE_AVARIA,
     USO_INTERNO,
-    DEVOLUCAO_CLIENTE;
+    DEVOLUCAO_CLIENTE,
+    DEVOLUCAO_AO_FORNECEDOR;
 }

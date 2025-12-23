@@ -10,6 +10,9 @@ public record VendaRequestDTO(
         @NotNull(message = "A forma de pagamento é obrigatória")
         FormaDePagamento formaPagamento,
 
+        // Adicionado para suportar a lógica do Service
+        Integer quantidadeParcelas,
+
         @NotNull(message = "O valor total da venda é obrigatório")
         BigDecimal totalVenda,
 
@@ -17,9 +20,13 @@ public record VendaRequestDTO(
 
         String clienteCpf,
         String clienteNome,
-        List<PagamentoRequestDTO> pagamentos, // Certifique-se que o tipo aqui é PagamentoRequestDTO
+
+        // Flag para a regra de emissão híbrida de NFC-e
+        boolean apenasItensComNfEntrada,
+
+        List<PagamentoRequestDTO> pagamentos,
 
         @NotEmpty(message = "A venda deve conter pelo menos um item")
-        List<ItemVendaRequestDTO> itens
+        List<ItemVendaDTO> itens // Corrigido para usar o DTO existente
 
 ) {}

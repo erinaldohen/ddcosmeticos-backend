@@ -5,6 +5,9 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -42,5 +45,17 @@ public class ProdutoController {
     @Operation(summary = "Buscar por EAN", description = "Retorna os dados do produto para venda imediata.")
     public ResponseEntity<Produto> buscarPorEan(@PathVariable String ean) {
         return ResponseEntity.ok(produtoService.buscarPorCodigoBarras(ean));
+    }
+
+    /**
+     * --- NOVO ENDPOINT ---
+     * Listar todos os produtos com paginação.
+     * Exemplo Swagger: GET /api/v1/produtos?page=0&size=10
+     */
+    @GetMapping
+    @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
+    @Operation(summary = "Listar Produtos", description = "Retorna lista paginada de produtos cadastrados.")
+    public ResponseEntity<Page<Produto>> listarProdutos(@PageableDefault(size = 20, sort = "descricao") Pageable pageable) {
+        return ResponseEntity.ok(produtoService.listarTodos(pageable));
     }
 }

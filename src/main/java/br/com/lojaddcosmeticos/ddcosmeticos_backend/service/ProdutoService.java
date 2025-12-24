@@ -7,17 +7,18 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.LoteProduto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.LoteProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import jakarta.transaction.Transactional;
 import org.springframework.beans.BeanUtils;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.LoteProdutoRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -30,34 +31,32 @@ public class ProdutoService {
     private MovimentoEstoqueRepository auditoriaRepository;
 
     @Autowired
-    private LoteProdutoRepository loteRepository; // Novo repositório para controlar validade
+    private LoteProdutoRepository loteRepository;
+
+    // Lista de NCMs comuns de cosméticos que geralmente são Monofásicos
+    private final List<String> NCMS_MONOFASICOS = Arrays.asList(
+            "3303", "3304", "3305", "3307", "3401"
+    );
 
     // =================================================================================
-    // 1. BUSCA INTELIGENTE (Prioridade EAN > Descrição)
+    // 1. BUSCA INTELIGENTE
     // =================================================================================
     public List<Produto> buscarInteligente(String termo) {
-        // Se a busca for vazia, retorna todos os ativos (limite de paginação recomendado no futuro)
         if (termo == null || termo.isBlank()) {
             return repository.findAll();
         }
-
-        // LÓGICA DE OURO: Tenta achar exato pelo EAN primeiro (Prioridade Máxima)
         var produtoPorEan = repository.findByCodigoBarras(termo);
         if (produtoPorEan.isPresent()) {
             return List.of(produtoPorEan.get());
         }
-
-        // Se não achou EAN, busca por parte do nome (ignorando maiúsculas)
         return repository.findByDescricaoContainingIgnoreCase(termo);
     }
 
     // =================================================================================
-    // 2. CADASTRO BLINDADO (Com Verificação de Inativos)
+    // 2. CADASTRO BLINDADO (COM INTELIGÊNCIA FISCAL)
     // =================================================================================
     @Transactional
     public Produto salvar(ProdutoDTO dados) {
-        // Validação: Verifica se o EAN já existe no banco INTEIRO (inclusive inativos)
-        // Isso evita erro de Constraint Unique no banco de dados.
         var existente = repository.findByEanIrrestrito(dados.codigoBarras());
 
         if (existente.isPresent()) {
@@ -65,34 +64,40 @@ public class ProdutoService {
             if (p.isAtivo()) {
                 throw new IllegalArgumentException("Já existe um produto ATIVO com este EAN: " + p.getDescricao());
             } else {
-                // Inovação: Avisa o front que o produto existe e sugere reativação
                 throw new IllegalStateException("Este produto existe mas está INATIVO (ID: " + p.getId() + "). Utilize a função de reativação.");
             }
         }
 
-        // Criação do objeto
         Produto novo = new Produto();
-        BeanUtils.copyProperties(dados, novo);
+        // Copia dados básicos
+        BeanUtils.copyProperties(dados, novo, "cst", "monofasico");
 
         // Definições Iniciais
         novo.setAtivo(true);
-        novo.setPrecoMedioPonderado(dados.precoCusto()); // No início, Médio = Custo Inicial
+        novo.setPrecoMedioPonderado(dados.precoCusto());
 
-        // Separação de Estoque Inicial (Assume-se Sem Nota se não informado o contrário no cadastro simples)
-        // Idealmente, cadastro simples gera estoque "Não Fiscal" ou zero.
-        if (dados.quantidadeEstoque() > 0) {
+        // Estoque Inicial (Gerencial)
+        if (dados.quantidadeEstoque() != null && dados.quantidadeEstoque() > 0) {
             novo.setEstoqueNaoFiscal(dados.quantidadeEstoque());
             novo.atualizarSaldoTotal();
         }
 
+        // --- APLICAÇÃO DE REGRAS FISCAIS ---
+        // Se o DTO trouxe dados manuais de CST/Monofásico, usa eles. Se não, calcula.
+        if (dados.cst() != null && !dados.cst().isBlank()) {
+            novo.setCst(dados.cst());
+            novo.setMonofasico(dados.monofasico() != null ? dados.monofasico() : false);
+        } else {
+            aplicarRegrasFiscaisAutomaticas(novo);
+        }
+
         Produto salvo = repository.save(novo);
 
-        // AUDITORIA: Se nasceu com estoque, grava o log inicial
-        if (dados.quantidadeEstoque() > 0) {
+        if (dados.quantidadeEstoque() != null && dados.quantidadeEstoque() > 0) {
             registrarAuditoria(
                     salvo, TipoMovimentoEstoque.ENTRADA, "ESTOQUE_INICIAL", "CADASTRO_SISTEMA",
                     dados.quantidadeEstoque(), dados.precoCusto(),
-                    0, dados.quantidadeEstoque(), false // false = considera sem nota no cadastro rápido
+                    0, dados.quantidadeEstoque(), false
             );
         }
 
@@ -100,40 +105,69 @@ public class ProdutoService {
     }
 
     // =================================================================================
-    // 3. ALTERAÇÃO CADASTRAL (Protege dados sensíveis)
+    // 3. ALTERAÇÃO CADASTRAL
     // =================================================================================
     @Transactional
     public Produto atualizar(Long id, ProdutoDTO dados) {
         Produto produto = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Produto não encontrado."));
 
-        // Copia dados do DTO para a Entidade, MAS...
-        // IGNORA campos que não podem ser mudados aqui: ID, Estoque (tem rota própria), Preço Médio (cálculo auto)
-        BeanUtils.copyProperties(dados, produto, "id", "ativo", "quantidadeEstoque", "estoqueFiscal", "estoqueNaoFiscal", "precoMedio");
+        // Atualiza campos permitidos (Exceto estoques e IDs)
+        produto.setDescricao(dados.descricao().toUpperCase());
+        produto.setPrecoVenda(dados.precoVenda());
+        produto.setUrlImagem(dados.urlImagem());
+
+        // Se NCM mudou, aplica regra fiscal novamente
+        boolean ncmMudou = (dados.ncm() != null && !dados.ncm().equals(produto.getNcm()));
+
+        if (dados.ncm() != null) produto.setNcm(dados.ncm());
+        if (dados.cest() != null) produto.setCest(dados.cest());
+
+        if (ncmMudou) {
+            aplicarRegrasFiscaisAutomaticas(produto);
+        }
 
         return repository.save(produto);
     }
 
     // =================================================================================
-    // 4. ENTRADA DE ESTOQUE INTELIGENTE (Fiscal, Financeiro e Validade)
+    // 4. LÓGICA FISCAL AUTOMÁTICA
+    // =================================================================================
+    private void aplicarRegrasFiscaisAutomaticas(Produto produto) {
+        if (produto.getNcm() == null || produto.getNcm().isBlank()) {
+            produto.setMonofasico(false);
+            produto.setCst("102"); // Simples Nacional padrão
+            return;
+        }
+
+        String ncmLimpo = produto.getNcm().replaceAll("[^0-9]", "");
+        boolean ehMonofasico = NCMS_MONOFASICOS.stream().anyMatch(ncmLimpo::startsWith);
+
+        if (ehMonofasico) {
+            produto.setMonofasico(true);
+            produto.setCst("060"); // ICMS cobrado anteriormente por ST
+        } else {
+            produto.setMonofasico(false);
+            produto.setCst("102"); // Tributado sem permissão de crédito
+        }
+    }
+
+    // =================================================================================
+    // 5. ENTRADA DE ESTOQUE (MANTIDA IGUAL AO SEU ORIGINAL - ESTÁ ÓTIMA)
     // =================================================================================
     @Transactional
     public void entradaEstoque(String ean, Integer qtdEntrada, BigDecimal custoEntrada,
                                String numeroNota, String lote, LocalDate validade) {
-
-        // Busca por EAN para agilidade
         Produto produto = repository.findByCodigoBarras(ean)
                 .orElseThrow(() -> new RuntimeException("Produto não encontrado: " + ean));
 
         if (qtdEntrada <= 0) throw new IllegalArgumentException("Quantidade deve ser positiva.");
 
-        // --- A. SNAPSHOT ANTES DA MUDANÇA (Para Auditoria) ---
         Integer saldoFisicoAntes = produto.getQuantidadeEmEstoque();
         Integer saldoFiscalAntes = produto.getEstoqueFiscal();
         Integer saldoNaoFiscalAntes = produto.getEstoqueNaoFiscal();
         BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
 
-        // --- B. LÓGICA HÍBRIDA (Fiscal vs Gerencial) ---
         boolean ehEntradaFiscal = (numeroNota != null && !numeroNota.isBlank());
 
         if (ehEntradaFiscal) {
@@ -141,34 +175,24 @@ public class ProdutoService {
         } else {
             produto.setEstoqueNaoFiscal(saldoNaoFiscalAntes + qtdEntrada);
         }
-        produto.atualizarSaldoTotal(); // Recalcula o total físico
+        produto.atualizarSaldoTotal();
 
-        // --- C. CÁLCULO FINANCEIRO (Preço Médio Ponderado) ---
-        // Considera o estoque FÍSICO total para valorar o patrimônio
         if (saldoFisicoAntes == 0) {
             produto.setPrecoMedioPonderado(custoEntrada);
         } else {
-            // Fórmula: ((EstoqueAtual * CustoMedio) + (QtdEntrada * CustoEntrada)) / NovoTotal
             BigDecimal valorTotalEstoque = custoMedioAtual.multiply(new BigDecimal(saldoFisicoAntes));
             BigDecimal valorTotalEntrada = custoEntrada.multiply(new BigDecimal(qtdEntrada));
-
             BigDecimal novoTotalFinanceiro = valorTotalEstoque.add(valorTotalEntrada);
-            Integer novoTotalFisico = produto.getQuantidadeEmEstoque(); // Já atualizado
+            Integer novoTotalFisico = produto.getQuantidadeEmEstoque();
 
             BigDecimal novoPMP = novoTotalFinanceiro.divide(new BigDecimal(novoTotalFisico), 4, RoundingMode.HALF_UP);
             produto.setPrecoMedioPonderado(novoPMP);
         }
 
-        // Atualiza referência de última compra
         produto.setPrecoCusto(custoEntrada);
-
-        // --- D. INTELIGÊNCIA DE REPOSIÇÃO ---
-        // Se houver histórico de vendas (vendaMediaDiaria), atualiza sugestão de estoque mínimo
         produto.recalcularEstoqueMinimoSugerido();
-
         repository.save(produto);
 
-        // --- E. REGISTRO DE LOTE E VALIDADE ---
         if (lote != null && !lote.isBlank() && validade != null) {
             LoteProduto novoLote = new LoteProduto();
             novoLote.setProduto(produto);
@@ -178,79 +202,55 @@ public class ProdutoService {
             loteRepository.save(novoLote);
         }
 
-        // --- F. AUDITORIA FINAL ---
         String motivo = ehEntradaFiscal ? "IMPORTACAO_NFE" : "ENTRADA_MANUAL";
         String docRef = ehEntradaFiscal ? numeroNota : "S/N - Ajuste";
 
-        registrarAuditoria(
-                produto, TipoMovimentoEstoque.ENTRADA, motivo, docRef,
-                qtdEntrada, custoEntrada, saldoFisicoAntes, produto.getQuantidadeEmEstoque(), ehEntradaFiscal
-        );
+        registrarAuditoria(produto, TipoMovimentoEstoque.ENTRADA, motivo, docRef,
+                qtdEntrada, custoEntrada, saldoFisicoAntes, produto.getQuantidadeEmEstoque(), ehEntradaFiscal);
     }
 
     // =================================================================================
-    // 5. GESTÃO DE ESTADO (Ativar/Desativar por EAN)
+    // 6. GESTÃO DE ESTADO
     // =================================================================================
-
     @Transactional
     public void inativarPorEan(String ean) {
         Produto p = repository.findByCodigoBarras(ean)
                 .orElseThrow(() -> new RuntimeException("Produto não encontrado: " + ean));
-        // Soft Delete (graças ao @SQLDelete na Entidade)
         repository.delete(p);
     }
 
     @Transactional
     public void reativarPorEan(String ean) {
-        // Busca Irrestrita (vê inativos)
         Produto p = repository.findByEanIrrestrito(ean)
                 .orElseThrow(() -> new RuntimeException("EAN não existe na base de dados."));
-
-        if (p.isAtivo()) {
-            throw new IllegalArgumentException("O produto já está ativo.");
-        }
+        if (p.isAtivo()) throw new IllegalArgumentException("O produto já está ativo.");
         repository.reativarProduto(p.getId());
     }
 
     // =================================================================================
-    // MÉTODOS AUXILIARES
+    // MÉTODOS AUXILIARES DE AUDITORIA
     // =================================================================================
     private void registrarAuditoria(Produto p, TipoMovimentoEstoque tipo, String motivo, String doc,
                                     Integer qtd, BigDecimal valor, Integer saldoAnt, Integer saldoAtu, boolean fiscal) {
-
-        // Chama o método completo passando null no fornecedor
         registrarAuditoriaCompleta(p, tipo, motivo, doc, qtd, valor, saldoAnt, saldoAtu, fiscal, null);
     }
 
-    // Novo Método que aceita Fornecedor (Use este na Importação de XML)
-    // Método Corrigido para as linhas 232-238
     private void registrarAuditoriaCompleta(Produto p, TipoMovimentoEstoque tipo, String motivoStr, String doc,
                                             Integer qtd, BigDecimal valor, Integer saldoAnt, Integer saldoAtu,
                                             boolean fiscal, Fornecedor fornecedor) {
-
         MovimentoEstoque log = new MovimentoEstoque();
         log.setProduto(p);
         log.setFornecedor(fornecedor);
         log.setTipoMovimentoEstoque(tipo);
 
-        // 1. CONVERSÃO DE STRING PARA ENUM (Correção do erro .setMotivo)
         MotivoMovimentacaoDeEstoque motivoEnum;
-        if ("IMPORTACAO_NFE".equals(motivoStr)) {
-            motivoEnum = MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR;
-        } else if ("ESTOQUE_INICIAL".equals(motivoStr)) {
-            motivoEnum = MotivoMovimentacaoDeEstoque.ESTOQUE_INICIAL;
-        } else {
-            motivoEnum = MotivoMovimentacaoDeEstoque.AJUSTE_MANUAL;
-        }
+        if ("IMPORTACAO_NFE".equals(motivoStr)) motivoEnum = MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR;
+        else if ("ESTOQUE_INICIAL".equals(motivoStr)) motivoEnum = MotivoMovimentacaoDeEstoque.ESTOQUE_INICIAL;
+        else motivoEnum = MotivoMovimentacaoDeEstoque.AJUSTE_MANUAL;
+
         log.setMotivoMovimentacaoDeEstoque(motivoEnum);
-
-        // 2. CONVERSÃO DE INTEGER PARA BIGDECIMAL (Correção do erro .setQuantidade)
         log.setQuantidadeMovimentada(new BigDecimal(qtd));
-
-        // 3. RENAME DE CAMPOS (Correção do erro .setValorUnitario)
         log.setCustoMovimentado(valor);
-
-        // Campos de Snapshot (Garantidos pela atualização da Entidade no Passo 2)
         log.setDocumentoReferencia(doc);
         log.setSaldoAnterior(saldoAnt);
         log.setSaldoAtual(saldoAtu);

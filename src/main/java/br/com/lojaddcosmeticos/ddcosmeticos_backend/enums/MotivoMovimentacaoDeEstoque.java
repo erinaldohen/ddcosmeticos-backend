@@ -1,13 +1,18 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
 public enum MotivoMovimentacaoDeEstoque {
+    // Entradas
+    COMPRA_FORNECEDOR,
+    DEVOLUCAO_CLIENTE,
+    AJUSTE_SOBRA,
+    ESTOQUE_INICIAL, // <--- ADICIONADO
+    AJUSTE_MANUAL,   // <--- ADICIONADO
+
+    // Saídas
     VENDA,
     CANCELAMENTO_DE_VENDA,
-    COMPRA_FORNECEDOR,
-    AJUSTE_SOBRA,
     AJUSTE_PERDA,
     AJUSTE_AVARIA,
     USO_INTERNO,
-    DEVOLUCAO_CLIENTE,
-    DEVOLUCAO_AO_FORNECEDOR;
+    DEVOLUCAO_AO_FORNECEDOR
 }

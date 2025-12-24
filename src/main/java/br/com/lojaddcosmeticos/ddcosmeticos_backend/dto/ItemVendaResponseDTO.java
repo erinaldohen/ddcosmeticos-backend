@@ -25,13 +25,24 @@ public class ItemVendaResponseDTO implements Serializable {
 
     public ItemVendaResponseDTO(ItemVenda item) {
         this.codigoBarras = item.getProduto().getCodigoBarras();
+
+        // Verifica se é getDescricao() ou getNome() dependendo da sua versão do Produto
+        // Mantive getDescricao() pois parece ser o que você está usando
         this.descricaoProduto = item.getProduto().getDescricao();
+
         this.quantidade = item.getQuantidade();
         this.precoUnitario = item.getPrecoUnitario();
-        this.descontoItem = item.getDescontoItem() != null ? item.getDescontoItem() : BigDecimal.ZERO;
-        this.valorTotalItem = item.getValorTotalItem();
 
-        // CORREÇÃO DA LINHA 37: O nome do campo na entidade é custoUnitarioHistorico
+        // --- CORREÇÃO LINHA 31 ---
+        // Como não temos o campo desconto na entidade ItemVenda, assumimos ZERO.
+        // Se você quiser desconto por item, precisará adicionar o campo na Entidade primeiro.
+        this.descontoItem = BigDecimal.ZERO;
+
+        // --- CORREÇÃO LINHA 32 ---
+        // O método que calcula (Preço x Qtde) na entidade se chama getTotalItem()
+        this.valorTotalItem = item.getTotalItem();
+
+        // O nome do campo na entidade é custoUnitarioHistorico
         this.custoUnitario = item.getCustoUnitarioHistorico();
 
         // O método getCustoTotal() na entidade calcula: quantidade * custoUnitarioHistorico

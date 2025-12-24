@@ -6,5 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface ConfiguracaoLojaRepository extends JpaRepository<ConfiguracaoLoja, Long> {
-    // Não precisa de métodos extras, pois só teremos 1 registro de configuração no banco.
+
 }

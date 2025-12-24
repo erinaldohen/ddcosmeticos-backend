@@ -36,47 +36,47 @@ public class VendaService {
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
 
-        // CORREÇÃO: Records usam acessores sem 'get' -> dto.clienteCpf()
         log.info("Processando venda PDV - Cliente CPF: {}", dto.clienteCpf());
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
         venda.setClienteCpf(dto.clienteCpf());
-        venda.setClienteNome(dto.clienteNome()); // Mapeamento adicional útil
+        venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
         venda.setFormaPagamento(dto.formaPagamento());
-
-        // Status inicial usando o Enum correto
         venda.setStatusFiscal(StatusFiscal.PENDENTE);
 
         BigDecimal totalVenda = BigDecimal.ZERO;
 
-        // Processamento dos Itens
-        // CORREÇÃO: dto.itens() retorna List<ItemVendaDTO> agora
         for (ItemVendaDTO itemDto : dto.itens()) {
             Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado: " + itemDto.getCodigoBarras()));
 
-            // Validação de Estoque (Ruptura)
-            if (produto.getQuantidadeEmEstoque().compareTo(itemDto.getQuantidade()) < 0) {
-                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao() + ". Disponível: " + produto.getQuantidadeEmEstoque());
+            // 1. Validação de Estoque (Converte Integer do Produto para BigDecimal)
+            BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null
+                    ? new BigDecimal(produto.getQuantidadeEmEstoque())
+                    : BigDecimal.ZERO;
+
+            if (estoqueAtual.compareTo(itemDto.getQuantidade()) < 0) {
+                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao() + ". Disponível: " + estoqueAtual);
             }
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
+
+            // --- CORREÇÃO LINHA 70 ---
+            // Removemos .intValue() pois a entidade ItemVenda agora usa BigDecimal
             item.setQuantidade(itemDto.getQuantidade());
+
             item.setPrecoUnitario(produto.getPrecoVenda());
 
-            // CORREÇÃO: O getter correto em ItemVenda.java não existe para 'custoUnitario',
-            // deve-se usar o setter histórico ou pegar do produto.
-            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
+            // 2. Custo Histórico (Usa o nome que você solicitou: getPrecoMedioPonderado)
+            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null
+                    ? produto.getPrecoMedioPonderado()
+                    : BigDecimal.ZERO);
 
+            // Cálculo do valor total do item (Tudo em BigDecimal agora)
             BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
-            item.setValorTotalItem(valorItem);
-
-            // CORREÇÃO: O getter getCustoTotal() do ItemVenda já calcula baseado no histórico
-            // Não precisamos setar custoTotal manualmente se ele for calculado,
-            // mas como não há field custoTotal na entidade ItemVenda (apenas método), isso está ok.
 
             venda.adicionarItem(item);
             totalVenda = totalVenda.add(valorItem);
@@ -89,17 +89,13 @@ public class VendaService {
 
         executarFluxosOperacionais(vendaSalva, dto);
 
-        // --- REGRA DE NEGÓCIO: EMISSÃO HÍBRIDA ---
-        // CORREÇÃO: Acesso ao campo boolean do record
+        // Emissão Fiscal
         boolean emitirApenasComEntrada = dto.apenasItensComNfEntrada();
-
         try {
             nfceService.emitirNfce(vendaSalva, emitirApenasComEntrada);
-            // CORREÇÃO: Usando Enum em vez de String
             vendaSalva.setStatusFiscal(StatusFiscal.APROVADA);
         } catch (Exception e) {
             log.error("Erro na emissão da NFC-e: {}", e.getMessage());
-            // CORREÇÃO: Usando Enum para contingência/erro
             vendaSalva.setStatusFiscal(StatusFiscal.ERRO_EMISSAO);
         }
 
@@ -107,26 +103,25 @@ public class VendaService {
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // Baixa de Estoque Automática
+        // Baixa de Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
 
-            // Definindo SAIDA implicitamente para a lógica do EstoqueService
+            // Passa BigDecimal direto (AjusteEstoqueDTO espera BigDecimal)
+            ajuste.setQuantidade(item.getQuantidade());
+
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
             ajuste.setTipoMovimento("SAIDA");
 
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // Integração Financeira
-        // CORREÇÃO: O método lancarReceitaDeVenda no FinanceiroService espera (Long, BigDecimal, String).
-        // Adaptamos a chamada convertendo o Enum para String.
+        // Financeiro
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda(),
-                dto.formaPagamento().name() // Convertendo Enum para String
+                dto.formaPagamento().name()
         );
     }
 
@@ -139,9 +134,6 @@ public class VendaService {
         } catch (Exception e) {
             log.warn("Venda sem usuário identificado.");
         }
-        // Retorna null ou lança exceção dependendo da sua regra de negócio.
-        // Como Venda.usuario é nullable=false, isso vai dar erro se retornar null.
-        // Idealmente, trate isso ou garanta que sempre haja usuário logado.
         return null;
     }
 

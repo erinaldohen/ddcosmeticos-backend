@@ -1,138 +1,114 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusPrecificacao;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoPrecoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class PrecificacaoService {
 
-    @Autowired private ConfiguracaoLojaRepository configRepository;
-    @Autowired private SugestaoPrecoRepository sugestaoRepository;
-    @Autowired private ProdutoRepository produtoRepository;
+    @Autowired
+    private ConfiguracaoLojaRepository configRepo;
 
-    /**
-     * Analisa se precisa sugerir novo preço após uma compra.
-     */
-    public void analisarImpactoCusto(Produto produto, BigDecimal novoCusto) {
-        // 1. Carrega configurações globais (se não tiver, usa padrão seguro)
-        ConfiguracaoLoja config = configRepository.findAll().stream().findFirst()
-                .orElse(criarConfiguracaoPadrao());
+    @Autowired
+    private ProdutoRepository produtoRepository;
 
-        // 2. Calcula qual DEVERIA ser o preço para manter a margem alvo
-        // Fórmula: Preço = Custo / (1 - (Impostos + CustosFixos + LucroAlvo))
-        BigDecimal divisor = BigDecimal.ONE.subtract(
-                (config.getPercentualImpostosVenda().add(
-                        config.getPercentualCustoFixo()).add(
-                        config.getMargemLucroAlvo()))
-                        .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP)
-        );
+    public SugestaoPrecoDTO calcularSugestao(Produto produto) {
+        // ... (Mesma lógica de cálculo anterior) ...
+        ConfiguracaoLoja config = configRepo.findById(1L).orElse(new ConfiguracaoLoja());
 
-        // Proteção contra divisão por zero
+        BigDecimal custo = produto.getPrecoMedioPonderado();
+        if (custo == null || custo.compareTo(BigDecimal.ZERO) == 0) custo = produto.getPrecoCusto();
+        if (custo == null) custo = BigDecimal.ZERO;
+
+        BigDecimal somaPercentuais = config.getPercentualImpostosVenda()
+                .add(config.getPercentualCustoFixo())
+                .add(config.getMargemLucroAlvo());
+
+        BigDecimal divisor = BigDecimal.ONE.subtract(somaPercentuais.divide(new BigDecimal(100), 4, RoundingMode.HALF_UP));
         if (divisor.compareTo(BigDecimal.ZERO) <= 0) divisor = new BigDecimal("0.1");
 
-        BigDecimal precoIdeal = novoCusto.divide(divisor, 2, RoundingMode.HALF_UP);
+        BigDecimal precoSugerido = custo.divide(divisor, 2, RoundingMode.HALF_UP);
 
-        // 3. Verifica se o preço atual está muito defasado (Ex: diferença > 5 centavos)
-        if (precoIdeal.compareTo(produto.getPrecoVenda()) > 0) {
-            gerarSugestao(produto, novoCusto, precoIdeal, config);
+        BigDecimal margemAtual = BigDecimal.ZERO;
+        String status = "SEM_PRECO";
+
+        if (produto.getPrecoVenda() != null && produto.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal percentualDespesas = config.getPercentualImpostosVenda().add(config.getPercentualCustoFixo());
+            BigDecimal valorDespesas = produto.getPrecoVenda().multiply(percentualDespesas.divide(new BigDecimal(100)));
+            BigDecimal lucroLiquido = produto.getPrecoVenda().subtract(custo).subtract(valorDespesas);
+
+            margemAtual = lucroLiquido.divide(produto.getPrecoVenda(), 4, RoundingMode.HALF_UP).multiply(new BigDecimal(100));
+
+            if (margemAtual.compareTo(config.getMargemLucroAlvo()) >= 0) status = "LUCRO_BOM";
+            else if (margemAtual.compareTo(BigDecimal.ZERO) > 0) status = "LUCRO_BAIXO";
+            else status = "PREJUIZO";
         }
-    }
 
-    private void gerarSugestao(Produto produto, BigDecimal novoCusto, BigDecimal precoIdeal, ConfiguracaoLoja config) {
-        // Evita duplicar sugestão pendente para o mesmo produto
-        if (sugestaoRepository.existsByProdutoAndStatusPrecificacao(produto, StatusPrecificacao.PENDENTE)) {
-            return;
-        }
-
-        SugestaoPreco sugestao = new SugestaoPreco();
-        sugestao.setProduto(produto);
-        sugestao.setCustoAntigo(produto.getPrecoCustoInicial()); // Ou PMP anterior
-        sugestao.setCustoNovo(novoCusto);
-        sugestao.setPrecoVendaAtual(produto.getPrecoVenda());
-        sugestao.setPrecoVendaSugerido(precoIdeal);
-        sugestao.setStatusPrecificacao(StatusPrecificacao.PENDENTE);
-
-        // Calcula a margem atual (que caiu)
-        BigDecimal receitaLiquidaAtual = produto.getPrecoVenda().multiply(
-                BigDecimal.ONE.subtract(config.getPercentualImpostosVenda().divide(new BigDecimal(100)))
+        // Importante: retornamos o ID do produto escondido no DTO se necessário,
+        // ou o controller usa o ID da URL para achar o produto.
+        return new SugestaoPrecoDTO(
+                produto.getDescricao(),
+                custo,
+                produto.getPrecoVenda(),
+                precoSugerido,
+                margemAtual,
+                config.getMargemLucroAlvo(),
+                status
         );
-        BigDecimal lucroBrutoAtual = receitaLiquidaAtual.subtract(novoCusto);
-        // Margem = Lucro / Venda
-        BigDecimal margemAtual = lucroBrutoAtual.divide(produto.getPrecoVenda(), 4, RoundingMode.HALF_UP).multiply(new BigDecimal(100));
-
-        sugestao.setMargemAtual(margemAtual);
-        sugestao.setMargemProjetada(config.getMargemLucroAlvo());
-
-        sugestao.setMotivo(String.format("Custo subiu para R$ %s. Margem caiu para %s%%.", novoCusto, margemAtual));
-
-        sugestaoRepository.save(sugestao);
     }
 
-    private ConfiguracaoLoja criarConfiguracaoPadrao() {
-        ConfiguracaoLoja c = new ConfiguracaoLoja();
-        c.setPercentualImpostosVenda(new BigDecimal("10")); // 10% Simples
-        c.setPercentualCustoFixo(new BigDecimal("20"));     // 20% Operacional
-        c.setMargemLucroAlvo(new BigDecimal("20"));         // 20% Lucro Líquido
-        return c;
+    public List<SugestaoPrecoDTO> listarSugestoesPendentes() {
+        return produtoRepository.findAllByAtivoTrue().stream()
+                .map(this::calcularSugestao)
+                .filter(dto -> !dto.status().equals("LUCRO_BOM"))
+                .collect(Collectors.toList());
     }
 
-    // Método para o Gerente APROVAR a sugestão
-    public void aprovarSugestao(Long idSugestao) {
-        SugestaoPreco sugestao = sugestaoRepository.findById(idSugestao)
-                .orElseThrow(() -> new RuntimeException("Sugestão não encontrada"));
+    // --- MÉTODOS DE AÇÃO (Correção dos erros do Controller) ---
 
-        Produto p = sugestao.getProduto();
-        p.setPrecoVenda(sugestao.getPrecoVendaSugerido());
+    @Transactional
+    public void aprovarSugestao(Long produtoId) {
+        Produto p = produtoRepository.findById(produtoId)
+                .orElseThrow(() -> new RuntimeException("Produto não encontrado"));
+
+        // Recalcula para garantir que o valor está atualizado
+        SugestaoPrecoDTO sugestao = calcularSugestao(p);
+
+        // Aplica o preço sugerido no cadastro do produto
+        p.setPrecoVenda(sugestao.precoSugerido());
         produtoRepository.save(p);
-
-        sugestao.setStatusPrecificacao(StatusPrecificacao.APROVADO);
-        sugestaoRepository.save(sugestao);
     }
 
-    public List<SugestaoPreco> listarSugestoesPendentes() {
-        return sugestaoRepository.findByStatusPrecificacao(StatusPrecificacao.PENDENTE);
-    }
+    @Transactional
+    public void aprovarComPrecoManual(Long produtoId, BigDecimal novoPreco) {
+        Produto p = produtoRepository.findById(produtoId)
+                .orElseThrow(() -> new RuntimeException("Produto não encontrado"));
 
-    public void rejeitarSugestao(Long idSugestao) {
-        SugestaoPreco sugestao = sugestaoRepository.findById(idSugestao)
-                .orElseThrow(() -> new ResourceNotFoundException("Sugestão não encontrada"));
+        if (novoPreco == null || novoPreco.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Preço inválido");
+        }
 
-        sugestao.setStatusPrecificacao(StatusPrecificacao.REJEITADO);
-        sugestaoRepository.save(sugestao);
-    }
-
-    /**
-     * Aprovar com Preço Manual (Ex: Sistema sugeriu 121,43, mas gerente define 119,90)
-     */
-    public void aprovarComPrecoManual(Long idSugestao, BigDecimal precoManual) {
-        SugestaoPreco sugestao = sugestaoRepository.findById(idSugestao)
-                .orElseThrow(() -> new ResourceNotFoundException("Sugestão não encontrada"));
-
-        Produto p = sugestao.getProduto();
-        p.setPrecoVenda(precoManual); // Usa o preço que o gerente digitou
+        p.setPrecoVenda(novoPreco);
         produtoRepository.save(p);
+    }
 
-        sugestao.setStatusPrecificacao(StatusPrecificacao.APROVADO);
+    public void rejeitarSugestao(Long produtoId) {
+        // Lógica de rejeição:
+        // Como não temos tabela de histórico de sugestões, "Rejeitar" significa "Não fazer nada".
+        // O preço antigo se mantém. O item continuará aparecendo na lista de alertas
+        // até que o custo baixe ou o preço suba.
 
-        // Adiciona um registro no motivo para auditoria futura
-        String observacao = String.format(" | Ajustado manualmente de %s (sugerido) para %s",
-                sugestao.getPrecoVendaSugerido(), precoManual);
-
-        // Concatena sem estourar o limite do banco (segurança)
-        String novoMotivo = (sugestao.getMotivo() + observacao);
-        if (novoMotivo.length() > 500) novoMotivo = novoMotivo.substring(0, 500);
-
-        sugestao.setMotivo(novoMotivo);
-
-        sugestaoRepository.save(sugestao);
+        // Futuramente, poderíamos adicionar um campo "data_ignorar_alerta_ate" no Produto.
     }
 }

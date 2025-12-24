@@ -4,53 +4,61 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEs
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
 @Entity
+@NoArgsConstructor
 @Table(name = "movimento_estoque")
-public class MovimentoEstoque implements Serializable {
-    private static final long serialVersionUID = 1L;
+public class MovimentoEstoque {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "produto_id", nullable = false)
-    private Produto produto;
+    @Column(nullable = false)
+    private LocalDateTime dataMovimento = LocalDateTime.now();
 
-    // CORREÇÃO: Usando Enum para evitar erros de digitação ("Entrada" vs "ENTRADA")
     @Enumerated(EnumType.STRING)
-    @Column(name = "tipo_movimento", nullable = false)
+    @Column(nullable = false, name = "tipo_movimento")
     private TipoMovimentoEstoque tipoMovimentoEstoque;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "motivo_movimento")
+    @Column(nullable = false, name = "motivo_movimentacao")
     private MotivoMovimentacaoDeEstoque motivoMovimentacaoDeEstoque;
 
-    @Column(name = "quantidade_movimentada", nullable = false, precision = 10, scale = 3)
+    // Mudamos para BigDecimal para compatibilidade total
+    @Column(name = "quantidade_movimentada", precision = 10, scale = 4)
     private BigDecimal quantidadeMovimentada;
-
-    @Column(name = "data_movimento", nullable = false)
-    private LocalDateTime dataMovimento = LocalDateTime.now();
 
     @Column(name = "custo_movimentado", precision = 10, scale = 4)
     private BigDecimal custoMovimentado;
 
-    @Column(name = "id_referencia")
-    private Long idReferencia;
+    @Column(name = "documento_referencia")
+    private String documentoReferencia;
+
+    // --- CAMPOS DE AUDITORIA (SNAPSHOT) ---
+    @Column(name = "saldo_anterior")
+    private Integer saldoAnterior;
+
+    @Column(name = "saldo_atual")
+    private Integer saldoAtual;
+
+    @Column(name = "movimentacao_fiscal")
+    private boolean movimentacaoFiscal;
+
+    @ManyToOne
+    @JoinColumn(name = "produto_id", nullable = false)
+    private Produto produto;
 
     @ManyToOne
     @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
 
-    // AUDITORIA: Adicionado como nullable=true para não quebrar dados antigos.
-    // Em produção nova, passaria a ser false.
     @ManyToOne
-    @JoinColumn(name = "usuario_id", nullable = false)
+    @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 }

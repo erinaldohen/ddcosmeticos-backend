@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EntradaNFRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemEntradaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque; // Import Necessário
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
@@ -15,7 +16,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional; // Import corrigido para Spring Transaction
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -59,26 +60,28 @@ public class CustoService {
         // 2. Processamento dos Itens da NF
         for (ItemEntradaDTO itemDTO : requestDTO.getItens()) {
 
-            // CORREÇÃO AQUI: Usar .orElseThrow() para tratar o Optional retornado
             Produto produto = produtoRepository.findByCodigoBarras(itemDTO.getCodigoBarras())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado para o código de barras: " + itemDTO.getCodigoBarras()));
 
             if (itemDTO.getCustoUnitario().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new ValidationException("Custo unitário deve ser maior que zero para o produto: " + produto.getDescricao());
+                throw new ValidationException("Custo unitário deve ser maior que zero para o produto: " + produto.getDescricao()); // getDescricao OK
             }
 
             // Valores da Entrada
             BigDecimal qtdeEntrada = itemDTO.getQuantidade();
             BigDecimal custoEntradaUnitario = itemDTO.getCustoUnitario().setScale(PMP_SCALE, PMP_ROUNDING_MODE);
 
-            // PMP é recálculado APENAS se houver quantidade ou custo válido na entrada.
             if (qtdeEntrada.compareTo(BigDecimal.ZERO) <= 0 || custoEntradaUnitario.compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
 
             // 3. RECÁLCULO DO PMP (LÓGICA CRÍTICA)
-            // Trata nulos caso seja a primeira entrada
-            BigDecimal qtdeAtual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : BigDecimal.ZERO;
+
+            // --- CORREÇÃO LINHA 81: Conversão explícita de Integer para BigDecimal ---
+            BigDecimal qtdeAtual = produto.getQuantidadeEmEstoque() != null
+                    ? new BigDecimal(produto.getQuantidadeEmEstoque())
+                    : BigDecimal.ZERO;
+
             BigDecimal pmpAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
 
             // 3a. Cálculo do Valor Total do Estoque Antigo
@@ -101,20 +104,29 @@ public class CustoService {
 
             // 4. ATUALIZAÇÃO E PERSISTÊNCIA DO PRODUTO
             produto.setPrecoMedioPonderado(novoPMP);
-            produto.setQuantidadeEmEstoque(novaQtdeTotal);
+
+            // --- CORREÇÃO LINHA 104: Conversão de volta para Integer ---
+            produto.setQuantidadeEmEstoque(novaQtdeTotal.intValue());
+
             produtoRepository.save(produto);
 
             // 5. REGISTRO DE MOVIMENTO DE ESTOQUE (AUDITORIA)
             MovimentoEstoque movimento = new MovimentoEstoque();
             movimento.setProduto(produto);
-            movimento.setDataMovimento(LocalDateTime.now()); // Corrigido para setDataMovimento
-            movimento.setQuantidadeMovimentada(qtdeEntrada); // Positivo para entrada
-            movimento.setCustoMovimentado(valorTotalEntrada.setScale(PMP_SCALE, PMP_ROUNDING_MODE));
-            movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
+            movimento.setDataMovimento(LocalDateTime.now());
+            movimento.setQuantidadeMovimentada(qtdeEntrada);
+            movimento.setCustoMovimentado(valorTotalEntrada.setScale(PMP_SCALE, PMP_ROUNDING_MODE)); // Valor total movimentado
 
-            // Ajuste para ID Referencia (Long) - Usando hash simples ou 0 temporariamente pois não temos entidade NF
-            // O ideal seria criar uma entidade NotaFiscalEntrada no futuro
-            movimento.setIdReferencia(0L);
+            // Campos obrigatórios que faltavam
+            movimento.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
+            movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
+            movimento.setFornecedor(fornecedor);
+            movimento.setUsuario(operador);
+
+            // --- CORREÇÃO LINHA 117: Use setDocumentoReferencia em vez de IdReferencia ---
+            // Assumindo que o DTO tem o número da nota. Se não tiver, use "NF-ENTRADA"
+            String numeroNota = requestDTO.getNumeroNota() != null ? requestDTO.getNumeroNota() : "NF-S/N";
+            movimento.setDocumentoReferencia(numeroNota);
 
             movimentoEstoqueRepository.save(movimento);
         }

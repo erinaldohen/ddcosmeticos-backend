@@ -3,25 +3,26 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import jakarta.persistence.*;
 import lombok.Data;
 
-import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
 @Entity
-public class ConfiguracaoLoja implements Serializable {
-    private static final long serialVersionUID = 1L;
+@Table(name = "configuracao_loja")
+public class ConfiguracaoLoja {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Ex: 19% (Média de aluguel, luz, água, folha sobre o faturamento)
-    private BigDecimal percentualCustoFixo;
+    // Ex: 10% de custo fixo (Aluguel, Luz, Salários) sobre o faturamento
+    @Column(name = "percentual_custo_fixo")
+    private BigDecimal percentualCustoFixo = new BigDecimal("10.00");
 
-    // Ex: 4% a 10% (Sua faixa do Simples Nacional)
-    private BigDecimal percentualImpostosVenda;
+    // Ex: 6% de imposto (Simples Nacional)
+    @Column(name = "percentual_impostos_venda")
+    private BigDecimal percentualImpostosVenda = new BigDecimal("6.00");
 
-    // Ex: 20% (Quanto você QUER lucrar livre no bolso no mínimo)
-    private BigDecimal margemLucroAlvo;
-
-    // Singleton no banco (só teremos 1 registro)
+    // Ex: Quero ganhar 20% líquido
+    @Column(name = "margem_lucro_alvo")
+    private BigDecimal margemLucroAlvo = new BigDecimal("20.00");
 }

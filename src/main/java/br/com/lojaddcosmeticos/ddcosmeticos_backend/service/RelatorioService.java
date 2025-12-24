@@ -53,18 +53,36 @@ public class RelatorioService {
         }
 
         List<ItemInventarioDTO> itensDTO = produtos.stream()
-                .map(p -> ItemInventarioDTO.builder()
-                        .codigoBarras(p.getCodigoBarras())
-                        .descricao(p.getDescricao())
-                        .unidade(p.getUnidade())
-                        .quantidade(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : BigDecimal.ZERO)
-                        .custoUnitarioPmp(p.getPrecoMedioPonderado() != null ? p.getPrecoMedioPonderado() : BigDecimal.ZERO)
-                        .valorTotalEstoque(p.getQuantidadeEmEstoque().multiply(p.getPrecoMedioPonderado()))
-                        .statusFiscal(p.isPossuiNfEntrada() ? "FISCAL" : "GERENCIAL")
-                        .build())
+                .map(p -> {
+                    // --- CORREÇÃO DO ERRO AQUI ---
+                    // 1. Convertemos Integer para BigDecimal explicitamente
+                    BigDecimal quantidade = p.getQuantidadeEmEstoque() != null
+                            ? new BigDecimal(p.getQuantidadeEmEstoque())
+                            : BigDecimal.ZERO;
+
+                    // 2. Usamos o nome do método que você escolheu manter
+                    BigDecimal custoMedio = p.getPrecoMedioPonderado() != null
+                            ? p.getPrecoMedioPonderado()
+                            : BigDecimal.ZERO;
+
+                    // 3. Agora a multiplicação funciona (BigDecimal x BigDecimal)
+                    BigDecimal total = quantidade.multiply(custoMedio);
+
+                    return ItemInventarioDTO.builder()
+                            .codigoBarras(p.getCodigoBarras())
+                            .descricao(p.getDescricao()) // Usando getDescricao conforme sua preferência
+                            .unidade(p.getUnidade())
+                            .quantidade(quantidade) // Passamos o BigDecimal convertido
+                            .custoUnitarioPmp(custoMedio)
+                            .valorTotalEstoque(total)
+                            .statusFiscal(p.isPossuiNfEntrada() ? "FISCAL" : "GERENCIAL")
+                            .build();
+                })
                 .collect(Collectors.toList());
 
-        BigDecimal totalFinanceiro = itensDTO.stream().map(ItemInventarioDTO::valorTotalEstoque).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalFinanceiro = itensDTO.stream()
+                .map(ItemInventarioDTO::valorTotalEstoque)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return InventarioResponseDTO.builder()
                 .tipoInventario(contabil ? "CONTABIL" : "FISICO")

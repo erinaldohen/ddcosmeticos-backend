@@ -3,7 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EntradaNFRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemEntradaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque; // Import Necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
@@ -15,6 +15,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueR
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.userdetails.UserDetails; // Import necessário
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,9 +52,19 @@ public class CustoService {
     public void registrarEntradaNF(EntradaNFRequestDTO requestDTO) {
 
         // 1. Auditoria e Validação de Fornecedor
-        Usuario operador = usuarioRepository.findByMatricula(requestDTO.getMatriculaOperador())
-                .orElseThrow(() -> new ResourceNotFoundException("Operador de auditoria não encontrado: " + requestDTO.getMatriculaOperador()));
 
+        // CORREÇÃO LINHA 55: O repositório retorna UserDetails (nullable), não Optional.
+        // Removemos o .orElseThrow e tratamos manualmente.
+        UserDetails userDetails = usuarioRepository.findByMatricula(requestDTO.getMatriculaOperador());
+
+        if (userDetails == null) {
+            throw new ResourceNotFoundException("Operador de auditoria não encontrado: " + requestDTO.getMatriculaOperador());
+        }
+
+        // Cast seguro pois sabemos que nossa implementação de UserDetails é a entidade Usuario
+        Usuario operador = (Usuario) userDetails;
+
+        // FornecedorRepository provavelmente ainda retorna Optional, então mantemos o .orElseThrow
         Fornecedor fornecedor = fornecedorRepository.findByCpfOuCnpj(requestDTO.getCnpjCpfFornecedor())
                 .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado: " + requestDTO.getCnpjCpfFornecedor()));
 
@@ -64,7 +75,7 @@ public class CustoService {
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado para o código de barras: " + itemDTO.getCodigoBarras()));
 
             if (itemDTO.getCustoUnitario().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new ValidationException("Custo unitário deve ser maior que zero para o produto: " + produto.getDescricao()); // getDescricao OK
+                throw new ValidationException("Custo unitário deve ser maior que zero para o produto: " + produto.getDescricao());
             }
 
             // Valores da Entrada
@@ -75,9 +86,7 @@ public class CustoService {
                 continue;
             }
 
-            // 3. RECÁLCULO DO PMP (LÓGICA CRÍTICA)
-
-            // --- CORREÇÃO LINHA 81: Conversão explícita de Integer para BigDecimal ---
+            // 3. RECÁLCULO DO PMP
             BigDecimal qtdeAtual = produto.getQuantidadeEmEstoque() != null
                     ? new BigDecimal(produto.getQuantidadeEmEstoque())
                     : BigDecimal.ZERO;
@@ -104,8 +113,6 @@ public class CustoService {
 
             // 4. ATUALIZAÇÃO E PERSISTÊNCIA DO PRODUTO
             produto.setPrecoMedioPonderado(novoPMP);
-
-            // --- CORREÇÃO LINHA 104: Conversão de volta para Integer ---
             produto.setQuantidadeEmEstoque(novaQtdeTotal.intValue());
 
             produtoRepository.save(produto);
@@ -115,16 +122,13 @@ public class CustoService {
             movimento.setProduto(produto);
             movimento.setDataMovimento(LocalDateTime.now());
             movimento.setQuantidadeMovimentada(qtdeEntrada);
-            movimento.setCustoMovimentado(valorTotalEntrada.setScale(PMP_SCALE, PMP_ROUNDING_MODE)); // Valor total movimentado
+            movimento.setCustoMovimentado(valorTotalEntrada.setScale(PMP_SCALE, PMP_ROUNDING_MODE));
 
-            // Campos obrigatórios que faltavam
             movimento.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
             movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
             movimento.setFornecedor(fornecedor);
-            movimento.setUsuario(operador);
+            movimento.setUsuario(operador); // Agora passamos o objeto Usuario corretamente
 
-            // --- CORREÇÃO LINHA 117: Use setDocumentoReferencia em vez de IdReferencia ---
-            // Assumindo que o DTO tem o número da nota. Se não tiver, use "NF-ENTRADA"
             String numeroNota = requestDTO.getNumeroNota() != null ? requestDTO.getNumeroNota() : "NF-S/N";
             movimento.setDocumentoReferencia(numeroNota);
 

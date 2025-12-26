@@ -11,20 +11,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/admin")
-@Tag(name = "Administração", description = "Rotas administrativas e de manutenção")
+@Tag(name = "Administração", description = "Rotas administrativas")
 public class AdminController {
 
     @Autowired
     private DataSeeder dataSeeder;
 
     @PostMapping("/importar-csv")
-    @Operation(summary = "Importar Produtos CSV", description = "Processa o arquivo 'produtos.csv' na pasta resources. Pode demorar alguns minutos.")
-    public ResponseEntity<String> importarProdutosCsv() {
-        try {
-            String resultado = dataSeeder.importarProdutos();
-            return ResponseEntity.ok(resultado);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Erro na importação: " + e.getMessage());
-        }
+    @Operation(summary = "Importar Produtos CSV", description = "Processa o arquivo 'produtos.csv' na pasta resources.")
+    public ResponseEntity<String> importarProdutos() {
+        // Chama o método do seu DataSeeder atualizado
+        String resultado = dataSeeder.importarProdutos();
+        return ResponseEntity.ok(resultado);
     }
 }

@@ -1,19 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.io.Serializable;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor // Gera um construtor com TODOS os campos automaticamente
-public class LoginResponseDTO implements Serializable { // <--- Implementar
+// O Record já cria construtor, getters (sem o prefixo 'get'), equals, hashcode e toString.
+public record LoginResponseDTO(
+        String token,
+        String matricula,
+        String nome,
+        String perfil
+) implements Serializable {
+    // É boa prática manter o serialVersionUID se for implements Serializable
     private static final long serialVersionUID = 1L;
-
-    private String token;
-    private String matricula;
-    private String nome;
-    private String perfil;
 }

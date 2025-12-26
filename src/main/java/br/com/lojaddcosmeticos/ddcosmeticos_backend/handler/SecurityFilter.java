@@ -18,8 +18,11 @@ import java.io.IOException;
 @Component
 public class SecurityFilter extends OncePerRequestFilter {
 
-    @Autowired private JwtService jwtService;
-    @Autowired private UsuarioRepository usuarioRepository;
+    @Autowired
+    private JwtService jwtService;
+
+    @Autowired
+    private UsuarioRepository usuarioRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -29,9 +32,11 @@ public class SecurityFilter extends OncePerRequestFilter {
 
         if (token != null) {
             var matricula = jwtService.validateToken(token);
-            // Verifica se o token é válido (retornou matrícula)
+
             if (matricula != null && !matricula.isEmpty()) {
-                UserDetails user = usuarioRepository.findByMatricula(matricula).orElse(null);
+                // CORREÇÃO LINHA 34: Removemos o .orElse(null)
+                // O repositório já retorna UserDetails ou null diretamente.
+                UserDetails user = usuarioRepository.findByMatricula(matricula);
 
                 if (user != null) {
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
@@ -40,14 +45,14 @@ public class SecurityFilter extends OncePerRequestFilter {
             }
         }
 
-        // --- CORREÇÃO CRÍTICA AQUI ---
-        // Sem essa linha, a requisição para no filtro e não chega no H2/Swagger/API
+        // Continua o fluxo da requisição
         filterChain.doFilter(request, response);
     }
 
     private String recoverToken(HttpServletRequest request) {
         var authHeader = request.getHeader("Authorization");
         if (authHeader == null) return null;
-        return authHeader.replace("Bearer ", "");
+        // Remove 'Bearer ' e espaços extras para evitar token sujo
+        return authHeader.replace("Bearer ", "").trim();
     }
 }

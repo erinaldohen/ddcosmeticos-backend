@@ -22,6 +22,11 @@ public class Produto implements Serializable {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // --- NOVO: CONTROLE DE CONCORRÊNCIA ---
+    // O Hibernate gerencia isso automaticamente. Impede venda duplicada de saldo único.
+    @Version
+    private Long version;
+
     // AUMENTADO PARA 20 (Para garantir)
     @Column(name = "codigo_barras", unique = true, length = 20)
     private String codigoBarras;
@@ -45,15 +50,15 @@ public class Produto implements Serializable {
     @Column(name = "monofasico")
     private boolean monofasico = false;
 
-    // --- DADOS FISCAIS (AUMENTADOS PARA EVITAR ERRO 22001) ---
+    // --- DADOS FISCAIS ---
 
-    @Column(length = 20) // Era 8
+    @Column(length = 20)
     private String ncm;
 
-    @Column(length = 20) // Era 7
+    @Column(length = 20)
     private String cest;
 
-    @Column(length = 10) // Era 4
+    @Column(length = 10)
     private String cst;
 
     // --- ESTOQUES ---

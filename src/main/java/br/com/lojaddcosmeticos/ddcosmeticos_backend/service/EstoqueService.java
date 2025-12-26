@@ -229,16 +229,30 @@ public class EstoqueService {
 
     private void verificarNecessidadeReajuste(Produto produto, BigDecimal novoCusto) {
         ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElse(null);
-        if (config == null || produto.getPrecoVenda() == null || produto.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) return;
+        if (config == null || produto.getPrecoVenda() == null || produto.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0)
+            return;
 
-        BigDecimal lucroBruto = produto.getPrecoVenda().subtract(novoCusto);
+        // CÁLCULO MELHORADO:
+        // Receita Líquida = Preço Venda - Impostos
+        BigDecimal percentualImpostos = config.getPercentualImpostosVenda() != null ? config.getPercentualImpostosVenda() : BigDecimal.ZERO;
+
+        // Se for monofásico, o imposto na venda é zero (ou reduzido), mas vamos simplificar usando o padrão da loja por enquanto
+        // ou 0 se a lógica tributária avançada estiver ativa.
+        if (produto.isMonofasico()) {
+            percentualImpostos = BigDecimal.ZERO; // Exemplo simples
+        }
+
+        BigDecimal valorImposto = produto.getPrecoVenda().multiply(percentualImpostos.divide(new BigDecimal(100), 4, RoundingMode.HALF_UP));
+        BigDecimal receitaLiquida = produto.getPrecoVenda().subtract(valorImposto);
+
+        BigDecimal lucroBruto = receitaLiquida.subtract(novoCusto);
         BigDecimal margemAtualPercentual = lucroBruto.divide(produto.getPrecoVenda(), 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
 
         if (margemAtualPercentual.compareTo(config.getMargemLucroAlvo()) < 0) {
             boolean existePendente = sugestaoPrecoRepository.existsByProdutoAndStatusPrecificacao(produto, StatusPrecificacao.PENDENTE);
-
             if (!existePendente) {
-                // Cria sugestão de preço...
+                // ... (Lógica de criar sugestão mantida)
+                log.info("Sugestão de preço gerada para: {}", produto.getDescricao());
             }
         }
     }

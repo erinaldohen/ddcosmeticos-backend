@@ -49,10 +49,22 @@ public class VendaService {
         BigDecimal totalVenda = BigDecimal.ZERO;
 
         for (ItemVendaDTO itemDto : dto.itens()) {
+            // OBS: O repositório findByCodigoBarras já filtra 'ativo=true' por padrão devido ao @SQLRestriction na entidade
+            // Mas se usarmos uma query nativa ou findById, é bom garantir.
             Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
-                    .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado: " + itemDto.getCodigoBarras()));
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado ou inativo: " + itemDto.getCodigoBarras()));
 
-            // 1. Validação de Estoque (Converte Integer do Produto para BigDecimal)
+            // 1. BLINDAGEM: Verifica se o produto está ativo (Redundância de segurança)
+            if (!produto.isAtivo()) {
+                throw new ValidationException("O produto '" + produto.getDescricao() + "' está inativo e não pode ser vendido.");
+            }
+
+            // 2. BLINDAGEM FISCAL: Impede venda sem NCM (Travaria a nota fiscal)
+            if (produto.getNcm() == null || produto.getNcm().trim().isEmpty()) {
+                throw new ValidationException("ERRO FISCAL: O produto '" + produto.getDescricao() + "' não possui NCM cadastrado. Atualize o cadastro.");
+            }
+
+            // 3. Validação de Estoque
             BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null
                     ? new BigDecimal(produto.getQuantidadeEmEstoque())
                     : BigDecimal.ZERO;
@@ -63,19 +75,14 @@ public class VendaService {
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
-
-            // --- CORREÇÃO LINHA 70 ---
-            // Removemos .intValue() pois a entidade ItemVenda agora usa BigDecimal
             item.setQuantidade(itemDto.getQuantidade());
-
             item.setPrecoUnitario(produto.getPrecoVenda());
 
-            // 2. Custo Histórico (Usa o nome que você solicitou: getPrecoMedioPonderado)
+            // Custo Histórico para CMV
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null
                     ? produto.getPrecoMedioPonderado()
                     : BigDecimal.ZERO);
 
-            // Cálculo do valor total do item (Tudo em BigDecimal agora)
             BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
 
             venda.adicionarItem(item);
@@ -96,6 +103,7 @@ public class VendaService {
             vendaSalva.setStatusFiscal(StatusFiscal.APROVADA);
         } catch (Exception e) {
             log.error("Erro na emissão da NFC-e: {}", e.getMessage());
+            // Não falha a venda, apenas marca erro na nota para reenvio posterior
             vendaSalva.setStatusFiscal(StatusFiscal.ERRO_EMISSAO);
         }
 
@@ -107,10 +115,7 @@ public class VendaService {
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-
-            // Passa BigDecimal direto (AjusteEstoqueDTO espera BigDecimal)
             ajuste.setQuantidade(item.getQuantidade());
-
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
             ajuste.setTipoMovimento("SAIDA");
 

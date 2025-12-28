@@ -23,7 +23,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.test.context.support.WithMockUser;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 
 @SpringBootTest
@@ -42,7 +41,8 @@ public class VendaFinanceiroIntegrationTest {
     public void testeVendaCreditoAntecipado() {
         // --- PREPARAÇÃO DO USUÁRIO ---
         Usuario caixa = new Usuario();
-        caixa.setMatricula("caixa"); // O mesmo do @WithMockUser
+        // CORREÇÃO: Usando setMatricula pois é assim que o Usuario.java está mapeado
+        caixa.setMatricula("caixa");
         caixa.setSenha("123");
         caixa.setPerfil(PerfilDoUsuario.ROLE_USUARIO);
         caixa.setNome("Caixa Teste");
@@ -71,7 +71,7 @@ public class VendaFinanceiroIntegrationTest {
                 3,
                 new BigDecimal("300.00"),
                 BigDecimal.ZERO,
-                "00000000000", // CPF limpo
+                "00000000000",
                 "Cliente Teste",
                 false,
                 null,
@@ -86,7 +86,9 @@ public class VendaFinanceiroIntegrationTest {
         Assertions.assertEquals(7, pAtualizado.getQuantidadeEmEstoque());
 
         List<ContaReceber> recebiveis = contaReceberRepository.findByIdVendaRef(vendaSalva.getId());
-        Assertions.assertEquals(3, recebiveis.size());
+
+        // Esta asserção agora deve passar porque FinanceiroService foi corrigido para gerar N parcelas
+        Assertions.assertEquals(3, recebiveis.size(), "Deve gerar 3 parcelas no financeiro");
 
         // Valida Parcelas
         for (ContaReceber conta : recebiveis) {
@@ -94,7 +96,5 @@ public class VendaFinanceiroIntegrationTest {
             Assertions.assertTrue(new BigDecimal("100.00").compareTo(conta.getValorTotal()) == 0);
             Assertions.assertEquals(StatusConta.PENDENTE, conta.getStatus());
         }
-
-        System.out.println(">>> SUCESSO: Venda parcelada validada!");
     }
 }

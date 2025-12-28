@@ -41,9 +41,10 @@ public class DashboardIntegrationTest {
     public void testeDashboardCompleto() {
         // --- 0. PREPARAÇÃO DO USUÁRIO (Obrigatório para Venda) ---
         Usuario gerente = new Usuario();
+        // CORREÇÃO: Usando setMatricula em vez de setLogin
         gerente.setMatricula("gerente");
         gerente.setSenha("123");
-        gerente.setPerfil(PerfilDoUsuario.ROLE_ADMIN);
+        gerente.setPerfil(PerfilDoUsuario.ROLE_ADMIN); // Ajustado para Enum correto se for ROLE_GERENTE ou GERENTE
         gerente.setNome("Gerente Teste");
         usuarioRepository.save(gerente);
 
@@ -75,16 +76,11 @@ public class DashboardIntegrationTest {
         Assertions.assertEquals(2L, dashboard.quantidadeVendasHoje());
         Assertions.assertTrue(new BigDecimal("300.00").compareTo(dashboard.totalVendidoHoje()) == 0);
 
-        // Saldo do Dia (400 rec - 120 pag + 300 vendas = 580)
-        // OBS: A lógica do seu service soma Vendas + Recebiveis - Pagaveis
         BigDecimal saldoEsperado = new BigDecimal("400.00").add(new BigDecimal("300.00")).subtract(new BigDecimal("120.00"));
-        Assertions.assertTrue(saldoEsperado.compareTo(dashboard.saldoDoDia()) == 0,
-                "Saldo esperado: " + saldoEsperado + " Atual: " + dashboard.saldoDoDia());
+        Assertions.assertTrue(saldoEsperado.compareTo(dashboard.saldoDoDia()) == 0);
 
         Assertions.assertTrue(new BigDecimal("50.00").compareTo(dashboard.totalVencidoPagar()) == 0);
         Assertions.assertEquals(1L, dashboard.produtosAbaixoMinimo());
-
-        System.out.println(">>> SUCESSO: Dashboard validado!");
     }
 
     // --- MÉTODOS AUXILIARES ---
@@ -108,7 +104,7 @@ public class DashboardIntegrationTest {
         v.setDataVenda(data);
         v.setTotalVenda(total);
         v.setFormaPagamento(FormaDePagamento.DINHEIRO);
-        v.setUsuario(usuario); // Correção Principal
+        v.setUsuario(usuario);
         v.setStatusFiscal(StatusFiscal.NAO_EMITIDA);
         vendaRepository.save(v);
     }
@@ -116,7 +112,7 @@ public class DashboardIntegrationTest {
     private Fornecedor criarFornecedor() {
         Fornecedor f = new Fornecedor();
         f.setRazaoSocial("Fornecedor Teste");
-        f.setCpfOuCnpj("00000000000100"); // Apenas números
+        f.setCpfOuCnpj("00000000000100");
         f.setTipoPessoa("JURIDICA");
         f.setAtivo(true);
         return fornecedorRepository.save(f);

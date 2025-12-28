@@ -1,11 +1,16 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento; // Import Necessário
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaReceber;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor; // Import Necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +27,57 @@ public class FinanceiroService {
 
     @Autowired private ContaReceberRepository contaReceberRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
+    @Autowired private MovimentacaoCaixaRepository movimentacaoCaixaRepository;
+
+    // --- NOVO MÉTODO (Resolve o erro do PedidoCompraService) ---
+    @Transactional
+    public void lancarDespesaDeCompra(Fornecedor fornecedor, BigDecimal total, String numeroNotaFiscal,
+                                      FormaDePagamento formaPagamento, Integer parcelas, LocalDate dataVencimentoInicial) {
+
+        int qtdParcelas = (parcelas != null && parcelas > 0) ? parcelas : 1;
+        BigDecimal valorParcela = total.divide(BigDecimal.valueOf(qtdParcelas), 2, RoundingMode.DOWN);
+        BigDecimal resto = total.subtract(valorParcela.multiply(BigDecimal.valueOf(qtdParcelas)));
+
+        // Se a data de vencimento não for informada, assume 30 dias
+        LocalDate dataVenc = dataVencimentoInicial != null ? dataVencimentoInicial : LocalDate.now().plusDays(30);
+
+        for (int i = 1; i <= qtdParcelas; i++) {
+            ContaPagar conta = new ContaPagar();
+            conta.setFornecedor(fornecedor);
+
+            // Na última parcela, soma os centavos restantes
+            if (i == qtdParcelas) {
+                conta.setValorTotal(valorParcela.add(resto));
+            } else {
+                conta.setValorTotal(valorParcela);
+            }
+
+            conta.setDataEmissao(LocalDate.now());
+            conta.setStatus(StatusConta.PENDENTE);
+            conta.setDescricao("Compra NF " + numeroNotaFiscal + " - Parc " + i + "/" + qtdParcelas);
+
+            // Define vencimento (ex: 30/60/90 dias ou data fixa)
+            if (i == 1) {
+                conta.setDataVencimento(dataVenc);
+            } else {
+                conta.setDataVencimento(dataVenc.plusDays(30L * (i - 1)));
+            }
+
+            contaPagarRepository.save(conta);
+        }
+    }
+
+    // --- MÉTODOS EXISTENTES ---
+
+    @Transactional
+    public MovimentacaoCaixa registrarMovimentacaoManual(MovimentacaoDTO dto, String usuarioResponsavel) {
+        MovimentacaoCaixa movimentacao = new MovimentacaoCaixa();
+        movimentacao.setTipo(dto.tipo());
+        movimentacao.setValor(dto.valor());
+        movimentacao.setMotivo(dto.motivo());
+        movimentacao.setUsuarioResponsavel(usuarioResponsavel);
+        return movimentacaoCaixaRepository.save(movimentacao);
+    }
 
     @Transactional(readOnly = true)
     public FechamentoCaixaDTO gerarResumoFechamento(LocalDate data) {
@@ -30,22 +86,18 @@ public class FinanceiroService {
                 .filter(c -> data.equals(c.getDataVencimento()) && StatusConta.PAGO.equals(c.getStatus()))
                 .toList();
 
-        // Calcula totais individuais
         BigDecimal totalDinheiro = somarPorTipo(recebimentos, "DINHEIRO");
         BigDecimal totalPix = somarPorTipo(recebimentos, "PIX");
-        BigDecimal totalCredito = somarPorTipo(recebimentos, "CREDITO");
-        BigDecimal totalDebito = somarPorTipo(recebimentos, "DEBITO");
+        BigDecimal totalCartao = somarPorTipo(recebimentos, "CREDITO").add(somarPorTipo(recebimentos, "DEBITO"));
 
-        BigDecimal totalVendasBruto = totalDinheiro.add(totalPix).add(totalCredito).add(totalDebito);
+        BigDecimal totalVendasBruto = totalDinheiro.add(totalPix).add(totalCartao);
 
-        // Monta o MAP que o DTO exige
         Map<String, BigDecimal> mapaPagamentos = new HashMap<>();
         mapaPagamentos.put("DINHEIRO", totalDinheiro);
         mapaPagamentos.put("PIX", totalPix);
-        mapaPagamentos.put("CREDITO", totalCredito);
-        mapaPagamentos.put("DEBITO", totalDebito);
+        mapaPagamentos.put("CARTAO", totalCartao);
 
-        // 2. Saídas (Contas Pagas no dia) - Vamos considerar como "Sangrias" ou deduções
+        // 2. Saídas (Contas Pagas)
         List<ContaPagar> pagamentos = contaPagarRepository.findAll().stream()
                 .filter(c -> data.equals(c.getDataVencimento()) && StatusConta.PAGO.equals(c.getStatus()))
                 .toList();
@@ -54,23 +106,19 @@ public class FinanceiroService {
                 .map(ContaPagar::getValorTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 3. Contagem de Vendas (Aproximada pelos recebimentos únicos)
         long qtdVendas = recebimentos.stream()
                 .map(ContaReceber::getIdVendaRef)
                 .distinct()
                 .count();
 
-        // 4. Saldo Final (Apenas Dinheiro - Saídas, por exemplo, ou Total Geral - Saídas)
-        // Ajuste conforme sua regra de negócio. Aqui fiz: (Tudo que entrou) - (Tudo que saiu)
         BigDecimal saldoFinal = totalVendasBruto.subtract(totalSaidas);
 
-        // CORREÇÃO: Usando o BUILDER do Record
         return FechamentoCaixaDTO.builder()
                 .data(data)
                 .quantidadeVendas(qtdVendas)
                 .totalVendasBruto(totalVendasBruto)
-                .totalSuprimentos(BigDecimal.ZERO) // Implementar lógica de suprimento se houver
-                .totalSangrias(totalSaidas)        // Usando as contas pagas como "saída de caixa"
+                .totalSuprimentos(BigDecimal.ZERO)
+                .totalSangrias(totalSaidas)
                 .totaisPorFormaPagamento(mapaPagamentos)
                 .saldoFinalDinheiroEmEspecie(saldoFinal)
                 .build();

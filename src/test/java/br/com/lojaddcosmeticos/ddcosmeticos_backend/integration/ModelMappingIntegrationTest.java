@@ -1,7 +1,11 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PedidoCompra.StatusPedido;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
@@ -28,29 +32,28 @@ public class ModelMappingIntegrationTest {
     @Test
     @DisplayName("PRODUTO: Deve aplicar Soft Delete (@SQLDelete) e não apagar registo físico")
     public void testeProdutoSoftDelete() {
-        // 1. Criar e Persistir
         Produto p = new Produto();
         p.setCodigoBarras("789_SOFT_DELETE");
         p.setDescricao("PRODUTO APAGAVEL");
         p.setPrecoVenda(BigDecimal.TEN);
-        p.setQuantidadeEmEstoque(BigDecimal.ZERO);
-        p.setPrecoCustoInicial(BigDecimal.ZERO);
+
+        // CORREÇÃO: Estoque agora é Integer
+        p.setQuantidadeEmEstoque(0);
+
+        // CORREÇÃO: Usando setPrecoCusto em vez de setPrecoCustoInicial
+        p.setPrecoCusto(BigDecimal.ZERO);
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
 
         Produto salvo = produtoRepository.save(p);
         entityManager.flush();
         entityManager.clear();
 
-        // 2. Apagar
         produtoRepository.deleteById(salvo.getId());
         entityManager.flush();
 
-        // 3. Verificar se o JPA não encontra mais (devido ao @SQLRestriction)
         Optional<Produto> busca = produtoRepository.findById(salvo.getId());
         Assertions.assertTrue(busca.isEmpty(), "O produto não deve ser encontrado pelo Repository (Soft Delete)");
 
-        // 4. Verificar via SQL Nativo se ainda existe no banco com ativo=false
-        // CORREÇÃO: Usar 'Number' para evitar ClassCastException (H2 retorna Long)
         Number count = (Number) entityManager.getEntityManager()
                 .createNativeQuery("SELECT count(*) FROM produto WHERE id = :id AND ativo = false")
                 .setParameter("id", salvo.getId())
@@ -62,19 +65,16 @@ public class ModelMappingIntegrationTest {
     @Test
     @DisplayName("FORNECEDOR: Não deve permitir CNPJ duplicado (Constraint Unique)")
     public void testeFornecedorCnpjUnico() {
-        // Fornecedor 1
         Fornecedor f1 = new Fornecedor();
         f1.setRazaoSocial("Empresa A");
         f1.setCpfOuCnpj("00000000000100");
         fornecedorRepository.save(f1);
         entityManager.flush();
 
-        // Fornecedor 2 (Mesmo CNPJ)
         Fornecedor f2 = new Fornecedor();
         f2.setRazaoSocial("Empresa B");
-        f2.setCpfOuCnpj("00000000000100"); // Duplicado
+        f2.setCpfOuCnpj("00000000000100");
 
-        // Deve lançar exceção de integridade de dados
         Assertions.assertThrows(DataIntegrityViolationException.class, () -> {
             fornecedorRepository.save(f2);
             entityManager.flush();
@@ -84,35 +84,30 @@ public class ModelMappingIntegrationTest {
     @Test
     @DisplayName("PEDIDO COMPRA: Deve salvar ITENS em cascata (CascadeType.ALL)")
     public void testeCascadePedidoItens() {
-        // 1. Criar Produto
         Produto p = new Produto();
         p.setCodigoBarras("789_CASCADE");
         p.setDescricao("PRODUTO CASCADE");
-        p.setQuantidadeEmEstoque(BigDecimal.ZERO);
-        p.setPrecoCustoInicial(BigDecimal.ZERO);
+        p.setQuantidadeEmEstoque(0);
+        p.setPrecoCusto(BigDecimal.ZERO);
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
         p.setPrecoVenda(BigDecimal.TEN);
         entityManager.persist(p);
 
-        // 2. Criar Pedido
         PedidoCompra pedido = new PedidoCompra();
         pedido.setFornecedorNome("Fornecedor Teste");
-        pedido.setStatus(PedidoCompra.StatusPedido.EM_COTACAO);
+        pedido.setStatus(StatusPedido.EM_COTACAO);
 
-        // 3. Adicionar Item ao Pedido
         ItemPedidoCompra item = new ItemPedidoCompra();
         item.setProduto(p);
         item.setQuantidade(BigDecimal.TEN);
-        item.setPedidoCompra(pedido); // Vínculo bidirecional importante
+        item.setPedidoCompra(pedido);
 
-        pedido.getItens().add(item); // Adiciona na lista
+        pedido.getItens().add(item);
 
-        // 4. Salvar APENAS o Pedido
         PedidoCompra salvo = pedidoCompraRepository.save(pedido);
         entityManager.flush();
         entityManager.clear();
 
-        // 5. Verificar se o Item foi salvo automaticamente
         PedidoCompra buscado = pedidoCompraRepository.findById(salvo.getId()).orElseThrow();
         Assertions.assertEquals(1, buscado.getItens().size(), "O item deve ter sido salvo via cascata");
         Assertions.assertEquals("789_CASCADE", buscado.getItens().get(0).getProduto().getCodigoBarras());
@@ -122,15 +117,16 @@ public class ModelMappingIntegrationTest {
     @DisplayName("CONTA RECEBER: Deve mapear Enums internos e externos corretamente")
     public void testeMapeamentoEnums() {
         ContaReceber conta = new ContaReceber();
-        conta.setDescricao("Teste Enum");
+        // REMOVIDO: conta.setDescricao(...) não existe na entidade.
+
         conta.setValorTotal(new BigDecimal("100.00"));
         conta.setValorLiquido(new BigDecimal("95.00"));
 
-        // Testando Enum FormaPagamento (Externo)
-        conta.setFormaPagamento(FormaDePagamento.CREDITO);
+        // CORREÇÃO: Na entidade, formaPagamento é String. Convertendo Enum para String.
+        conta.setFormaPagamento(FormaDePagamento.CREDITO.name());
 
-        // Testando Enum StatusConta (Interno da classe ContaReceber)
-        conta.setStatus(ContaReceber.StatusConta.PENDENTE);
+        // CORREÇÃO: StatusConta é um Enum externo, não interno de ContaReceber
+        conta.setStatus(StatusConta.PENDENTE);
 
         ContaReceber salva = contaReceberRepository.save(conta);
         entityManager.flush();
@@ -138,8 +134,8 @@ public class ModelMappingIntegrationTest {
 
         ContaReceber buscada = contaReceberRepository.findById(salva.getId()).orElseThrow();
 
-        Assertions.assertEquals(FormaDePagamento.CREDITO, buscada.getFormaPagamento());
-        Assertions.assertEquals(ContaReceber.StatusConta.PENDENTE, buscada.getStatus());
+        Assertions.assertEquals(FormaDePagamento.CREDITO.name(), buscada.getFormaPagamento());
+        Assertions.assertEquals(StatusConta.PENDENTE, buscada.getStatus());
     }
 
     @Test
@@ -148,18 +144,21 @@ public class ModelMappingIntegrationTest {
         Produto p = new Produto();
         p.setCodigoBarras("789_DECIMAL");
         p.setDescricao("TESTE DECIMAL");
-        p.setQuantidadeEmEstoque(BigDecimal.ZERO);
-        p.setPrecoCustoInicial(BigDecimal.ZERO);
+        p.setQuantidadeEmEstoque(0);
+        p.setPrecoCusto(BigDecimal.ZERO);
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
         p.setPrecoVenda(BigDecimal.TEN);
         entityManager.persist(p);
 
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(p);
-        mov.setTipoMovimento("ENTRADA");
+
+        // CORREÇÃO: Usando Enums Corretos
+        mov.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
+        mov.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
+
         mov.setQuantidadeMovimentada(new BigDecimal("1.555"));
 
-        // Teste de precisão: 10/3 = 3.33333... deve salvar como 3.3333
         BigDecimal custoDizima = new BigDecimal("10.00").divide(new BigDecimal("3.00"), 4, java.math.RoundingMode.HALF_UP);
         mov.setCustoMovimentado(custoDizima);
 
@@ -167,14 +166,12 @@ public class ModelMappingIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        // Validação via SQL nativo
         Object result = entityManager.getEntityManager()
                 .createNativeQuery("SELECT custo_movimentado FROM movimento_estoque WHERE id = :id")
                 .setParameter("id", mov.getId())
                 .getSingleResult();
 
         BigDecimal custoSalvo = (BigDecimal) result;
-        // Espera-se 3.3333 (escala 4)
         Assertions.assertEquals(4, custoSalvo.scale(), "A escala no banco deve ser 4");
         Assertions.assertEquals(new BigDecimal("3.3333"), custoSalvo);
     }

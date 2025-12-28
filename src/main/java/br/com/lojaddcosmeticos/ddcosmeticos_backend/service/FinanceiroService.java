@@ -1,176 +1,119 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaReceber;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.LocalTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor // Gera o construtor para as variáveis 'final'
 public class FinanceiroService {
 
-    // DECLARAÇÕES OBRIGATÓRIAS PARA TIER 1
-    private final ContaReceberRepository contaReceberRepository;
-    private final ContaPagarRepository contaPagarRepository; // Resolvendo o erro de símbolo
-    private final MovimentacaoCaixaRepository movimentacaoCaixaRepository;
+    @Autowired private ContaReceberRepository contaReceberRepository;
+    @Autowired private ContaPagarRepository contaPagarRepository;
 
-    /**
-     * Lança despesa originada de uma compra de estoque.
-     */
-    @Transactional
-    public void lancarDespesaDeCompra(
-            Fornecedor fornecedor,
-            BigDecimal valorTotal,
-            String numeroNota,
-            FormaDePagamento forma,
-            int parcelas,
-            LocalDate vencimento) {
-
-        log.info("Gerando Contas a Pagar - Fornecedor: {} | NF: {}", fornecedor.getRazaoSocial(), numeroNota);
-
-        ContaPagar conta = new ContaPagar();
-        conta.setFornecedor(fornecedor);
-        conta.setValorTotal(valorTotal);
-        conta.setDescricao("Compra de Estoque - NF: " + numeroNota);
-        conta.setDataEmissao(LocalDate.now());
-        conta.setDataVencimento(vencimento);
-        conta.setCategoria("MERCADORIA_REVENDA");
-
-        if (forma == FormaDePagamento.DINHEIRO || forma == FormaDePagamento.PIX) {
-            conta.setStatus(StatusConta.PAGO);
-            conta.setDataPagamento(LocalDate.now());
-        } else {
-            conta.setStatus(StatusConta.PENDENTE);
-        }
-
-        contaPagarRepository.save(conta);
-    }
-
-    /**
-     * Registra entradas (Suprimento) ou saídas (Sangria) manuais.
-     */
-    @Transactional
-    public MovimentacaoCaixa registarMovimentacaoManual(MovimentacaoDTO dto, String usuario) {
-        MovimentacaoCaixa mov = new MovimentacaoCaixa();
-        mov.setTipo(dto.tipo());
-        mov.setValor(dto.valor());
-        mov.setMotivo(dto.motivo());
-        mov.setUsuarioResponsavel(usuario);
-        return movimentacaoCaixaRepository.save(mov);
-    }
-
-    /**
-     * Resumo de fechamento diário.
-     */
     @Transactional(readOnly = true)
     public FechamentoCaixaDTO gerarResumoFechamento(LocalDate data) {
-        var titulos = contaReceberRepository.findByDataEmissaoAndStatusNot(
-                data, StatusConta.CANCELADO);
+        // 1. Entradas (Recebimentos do dia)
+        List<ContaReceber> recebimentos = contaReceberRepository.findAll().stream()
+                .filter(c -> data.equals(c.getDataVencimento()) && StatusConta.PAGO.equals(c.getStatus()))
+                .toList();
 
-        var movs = movimentacaoCaixaRepository.findByDataHoraBetween(
-                data.atStartOfDay(), data.atTime(LocalTime.MAX));
+        // Calcula totais individuais
+        BigDecimal totalDinheiro = somarPorTipo(recebimentos, "DINHEIRO");
+        BigDecimal totalPix = somarPorTipo(recebimentos, "PIX");
+        BigDecimal totalCredito = somarPorTipo(recebimentos, "CREDITO");
+        BigDecimal totalDebito = somarPorTipo(recebimentos, "DEBITO");
 
-        BigDecimal suprimentos = somarPorTipo(movs, TipoMovimentacaoCaixa.SUPRIMENTO);
-        BigDecimal sangrias = somarPorTipo(movs, TipoMovimentacaoCaixa.SANGRIA);
+        BigDecimal totalVendasBruto = totalDinheiro.add(totalPix).add(totalCredito).add(totalDebito);
 
-        BigDecimal vendasDinheiro = titulos.stream()
-                .filter(t -> t.getFormaPagamento().equalsIgnoreCase("DINHEIRO"))
-                .map(ContaReceber::getValorTotal)
+        // Monta o MAP que o DTO exige
+        Map<String, BigDecimal> mapaPagamentos = new HashMap<>();
+        mapaPagamentos.put("DINHEIRO", totalDinheiro);
+        mapaPagamentos.put("PIX", totalPix);
+        mapaPagamentos.put("CREDITO", totalCredito);
+        mapaPagamentos.put("DEBITO", totalDebito);
+
+        // 2. Saídas (Contas Pagas no dia) - Vamos considerar como "Sangrias" ou deduções
+        List<ContaPagar> pagamentos = contaPagarRepository.findAll().stream()
+                .filter(c -> data.equals(c.getDataVencimento()) && StatusConta.PAGO.equals(c.getStatus()))
+                .toList();
+
+        BigDecimal totalSaidas = pagamentos.stream()
+                .map(ContaPagar::getValorTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // 3. Contagem de Vendas (Aproximada pelos recebimentos únicos)
+        long qtdVendas = recebimentos.stream()
+                .map(ContaReceber::getIdVendaRef)
+                .distinct()
+                .count();
+
+        // 4. Saldo Final (Apenas Dinheiro - Saídas, por exemplo, ou Total Geral - Saídas)
+        // Ajuste conforme sua regra de negócio. Aqui fiz: (Tudo que entrou) - (Tudo que saiu)
+        BigDecimal saldoFinal = totalVendasBruto.subtract(totalSaidas);
+
+        // CORREÇÃO: Usando o BUILDER do Record
         return FechamentoCaixaDTO.builder()
                 .data(data)
-                .quantidadeVendas(titulos.size())
-                .totalSuprimentos(suprimentos)
-                .totalSangrias(sangrias)
-                .saldoFinalDinheiroEmEspecie(vendasDinheiro.add(suprimentos).subtract(sangrias))
+                .quantidadeVendas(qtdVendas)
+                .totalVendasBruto(totalVendasBruto)
+                .totalSuprimentos(BigDecimal.ZERO) // Implementar lógica de suprimento se houver
+                .totalSangrias(totalSaidas)        // Usando as contas pagas como "saída de caixa"
+                .totaisPorFormaPagamento(mapaPagamentos)
+                .saldoFinalDinheiroEmEspecie(saldoFinal)
                 .build();
     }
 
-    private BigDecimal somarPorTipo(List<MovimentacaoCaixa> movs, TipoMovimentacaoCaixa tipo) {
-        return movs.stream()
-                .filter(m -> m.getTipo() == tipo)
-                .map(MovimentacaoCaixa::getValor)
+    private BigDecimal somarPorTipo(List<ContaReceber> lista, String tipo) {
+        return lista.stream()
+                .filter(c -> c.getFormaPagamento() != null &&
+                        tipo.equalsIgnoreCase(c.getFormaPagamento().toString()))
+                .map(ContaReceber::getValorTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     @Transactional
-    public void lancarReceitaDeVenda(Long vendaId, BigDecimal valorTotal, String formaPagamento) {
-        ContaReceber titulo = new ContaReceber();
-        titulo.setIdVendaRef(vendaId);
-        titulo.setValorTotal(valorTotal);
-        titulo.setValorLiquido(valorTotal);
-        titulo.setDataEmissao(LocalDate.now());
-        titulo.setFormaPagamento(formaPagamento);
-        titulo.setStatus(formaPagamento.equalsIgnoreCase("DINHEIRO") ? StatusConta.RECEBIDO : StatusConta.PENDENTE);
-        contaReceberRepository.save(titulo);
-    }
-    /**
-     * Localiza todos os títulos financeiros vinculados a uma venda e marca-os como CANCELADOS.
-     * Essencial para o processo de estorno de venda.
-     */
-    @Transactional
-    public void cancelarReceitaVenda(Long vendaId) {
-        log.info("Iniciando cancelamento financeiro da Venda #{}", vendaId);
+    public void lancarReceitaDeVenda(Long idVenda, BigDecimal total, String formaPagamento, Integer qtdParcelasInput) {
+        int parcelas = (qtdParcelasInput != null && qtdParcelasInput > 0) ? qtdParcelasInput : 1;
+        BigDecimal valorParcela = total.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.DOWN);
+        BigDecimal totalParcelado = valorParcela.multiply(BigDecimal.valueOf(parcelas));
+        BigDecimal resto = total.subtract(totalParcelado);
+        LocalDate dataBase = LocalDate.now();
 
-        // Procura os títulos (Dinheiro, Cartão, etc.) associados a este ID de venda
-        List<ContaReceber> titulos = contaReceberRepository.findByIdVendaRef(vendaId);
+        for (int i = 1; i <= parcelas; i++) {
+            ContaReceber conta = new ContaReceber();
+            conta.setIdVendaRef(idVenda);
+            conta.setDataEmissao(dataBase);
+            conta.setFormaPagamento(formaPagamento);
+            conta.setStatus(StatusConta.PENDENTE);
 
-        if (titulos.isEmpty()) {
-            log.warn("Nenhum título financeiro encontrado para cancelar na Venda #{}", vendaId);
-            return;
-        }
-
-        // Altera o status de cada título para CANCELADO
-        titulos.forEach(titulo -> {
-            titulo.setStatus(StatusConta.CANCELADO);
-            contaReceberRepository.save(titulo);
-        });
-
-        log.info("Sucesso: {} títulos da Venda #{} foram cancelados.", titulos.size(), vendaId);
-    }
-    /**
-     * Ajusta o valor dos títulos financeiros em caso de devolução parcial.
-     * Garante que o Contas a Receber reflita apenas o valor real que permaneceu na loja.
-     */
-    @Transactional
-    public void ajustarReceitaPorDevolucao(Long vendaId, BigDecimal valorAbatimento) {
-        log.info("Processando abatimento financeiro de R$ {} para a Venda #{}", valorAbatimento, vendaId);
-
-        // 1. Localiza os títulos (recebíveis) vinculados à venda original
-        List<ContaReceber> titulos = contaReceberRepository.findByIdVendaRef(vendaId);
-
-        if (titulos.isEmpty()) {
-            log.error("Tentativa de ajuste em venda sem títulos financeiros: #{}", vendaId);
-            return;
-        }
-
-        // 2. Aplica o abatimento no valor total do título
-        for (ContaReceber titulo : titulos) {
-            BigDecimal valorAtual = titulo.getValorTotal() != null ? titulo.getValorTotal() : BigDecimal.ZERO;
-            BigDecimal novoValor = valorAtual.subtract(valorAbatimento);
-
-            // Proteção: o valor não pode ser negativo (regra de negócio DD Cosméticos)
-            if (novoValor.compareTo(BigDecimal.ZERO) < 0) {
-                novoValor = BigDecimal.ZERO;
+            if (formaPagamento.equals("DINHEIRO") || formaPagamento.equals("PIX") || formaPagamento.equals("DEBITO")) {
+                conta.setDataVencimento(dataBase);
+                conta.setStatus(StatusConta.PAGO);
+            } else {
+                conta.setDataVencimento(dataBase.plusDays(30L * i));
             }
 
-            titulo.setValorTotal(novoValor);
-            titulo.setValorLiquido(novoValor); // O valor líquido é ajustado para bater com o novo total
-
-            contaReceberRepository.save(titulo);
+            if (i == parcelas) {
+                conta.setValorTotal(valorParcela.add(resto));
+                conta.setValorLiquido(valorParcela.add(resto));
+            } else {
+                conta.setValorTotal(valorParcela);
+                conta.setValorLiquido(valorParcela);
+            }
+            contaReceberRepository.save(conta);
         }
-
-        log.info("Ajuste de devolução concluído com sucesso para a Venda #{}", vendaId);
     }
 }

@@ -26,6 +26,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(Long id);
 
-    @Query("SELECT COUNT(p) FROM Produto p WHERE p.ativo = true AND p.quantidadeEmEstoque <= p.estoqueMinimo")
-    long contarProdutosAbaixoDoMinimo();
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque < p.estoqueMinimo AND p.ativo = true")
+    Long contarProdutosAbaixoDoMinimo();
 }

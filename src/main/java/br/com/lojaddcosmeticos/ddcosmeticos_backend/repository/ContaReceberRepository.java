@@ -15,18 +15,22 @@ import java.util.List;
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
     /**
-     * RESOLVE O ERRO: Soma o faturamento total em um intervalo de datas.
-     * COALESCE garante que retorne 0 em vez de null caso não haja vendas no período.
+     * Soma o valor total das contas a receber que VENCEM no período informado.
+     * Usado para projeção de fluxo de caixa (O que vai entrar?).
+     *
+     * @param inicio Data inicial do vencimento
+     * @param fim Data final do vencimento
+     * @return Soma total ou 0
      */
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
-            "WHERE c.dataEmissao BETWEEN :inicio AND :fim " +
+            "WHERE c.dataVencimento BETWEEN :inicio AND :fim " +
             "AND c.status <> 'CANCELADO'")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio,
                                         @Param("fim") LocalDate fim);
 
-    // Outros métodos necessários para o FinanceiroService e RelatorioService
-    List<ContaReceber> findByDataEmissaoAndStatusNot(LocalDate data, StatusConta status);
-    // No arquivo ContaReceberRepository.java
-    List<ContaReceber> findByIdVendaRef(Long vendaId);
+    // Listar contas por data de emissão (ex: Relatório de vendas do dia)
+    List<ContaReceber> findByDataEmissaoAndStatusNot(LocalDate dataEmissao, StatusConta status);
 
+    // Buscar contas vinculadas a uma venda específica
+    List<ContaReceber> findByIdVendaRef(Long idVendaRef);
 }

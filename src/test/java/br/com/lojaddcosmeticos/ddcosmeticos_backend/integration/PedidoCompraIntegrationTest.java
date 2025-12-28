@@ -34,63 +34,54 @@ public class PedidoCompraIntegrationTest {
         Produto p = new Produto();
         p.setCodigoBarras("789_PERFUME_SP");
         p.setDescricao("PERFUME IMPORTADO 100ML");
+        // CORREÇÃO: Estoque Integer
+        p.setQuantidadeEmEstoque(0);
         p.setAtivo(true);
         produtoRepository.save(p);
 
         // 2. Monta o Pedido vindo de SÃO PAULO
         PedidoCompraDTO dto = new PedidoCompraDTO();
         dto.setFornecedorNome("Distribuidora Paulista");
-        dto.setUfOrigem("SP"); // Origem 7%
-        dto.setUfDestino("PE"); // Destino 20.5% (Interna)
+        dto.setUfOrigem("SP");
+        dto.setUfDestino("PE");
 
         ItemCompraDTO item = new ItemCompraDTO();
         item.setCodigoBarras("789_PERFUME_SP");
-        item.setQuantidade(new BigDecimal("10")); // 10 unidades
-        item.setPrecoUnitario(new BigDecimal("100.00")); // R$ 100 cada
-        item.setMva(new BigDecimal("60.00")); // MVA 60% (Alta!)
-
+        item.setQuantidade(new BigDecimal("10"));
+        item.setPrecoUnitario(new BigDecimal("100.00"));
+        item.setMva(new BigDecimal("60.00"));
         dto.setItens(List.of(item));
 
         // 3. Executa Simulação
         PedidoCompra pedidoSalvo = pedidoService.criarSimulacao(dto);
 
-        // 4. Validações Matemáticas (O momento da verdade)
-
-        // Valor Produtos: 10 * 100 = 1000
+        // 4. Validações
         Assertions.assertEquals(0, new BigDecimal("1000.00").compareTo(pedidoSalvo.getTotalProdutos()), "Total produtos incorreto");
 
-        // Cálculo do Imposto Esperado (Unitário):
-        // Base ST = 100 * 1.60 = 160
-        // Débito PE = 160 * 0.205 = 32.80
-        // Crédito SP = 100 * 0.07 = 7.00
-        // ST a Pagar = 32.80 - 7.00 = 25.80 por unidade
-        // Total ST (10 un) = 258.00
-
+        // Cálculo esperado:
+        // Base ST = 100 * 1.60 = 160 -> Débito = 32.80 -> Crédito 7.00 -> ST = 25.80 unit
+        // Total ST = 258.00
         BigDecimal impostoEsperado = new BigDecimal("258.00");
         BigDecimal impostoCalculado = pedidoSalvo.getTotalImpostosEstimados();
 
-        // Margem de erro de 0.01 centavo devido a arredondamento
         Assertions.assertTrue(impostoCalculado.subtract(impostoEsperado).abs().doubleValue() < 0.1,
                 "Erro no cálculo do imposto. Esperado: 258.00, Veio: " + impostoCalculado);
 
-        // O Custo Final deve incluir o imposto
         Assertions.assertTrue(pedidoSalvo.getTotalFinal().compareTo(new BigDecimal("1258.00")) >= 0,
                 "O total final deve somar produtos + impostos");
-
-        System.out.println(">>> TESTE SP->PE SUCESSO: Imposto calculado R$ " + impostoCalculado);
     }
 
     @Test
     @DisplayName("Cenário PE -> PE: Imposto deve ser ZERO (Compra Local)")
     public void testeSimulacaoCompraLocal() {
-        // 1. Cria Produto
         Produto p = new Produto();
         p.setCodigoBarras("789_SHAMPOO_LOCAL");
         p.setDescricao("SHAMPOO RECIFE");
+        // CORREÇÃO: Estoque Integer
+        p.setQuantidadeEmEstoque(0);
         p.setAtivo(true);
         produtoRepository.save(p);
 
-        // 2. Monta Pedido PE -> PE
         PedidoCompraDTO dto = new PedidoCompraDTO();
         dto.setFornecedorNome("Atacado Recife");
         dto.setUfOrigem("PE");
@@ -100,20 +91,15 @@ public class PedidoCompraIntegrationTest {
         item.setCodigoBarras("789_SHAMPOO_LOCAL");
         item.setQuantidade(new BigDecimal("10"));
         item.setPrecoUnitario(new BigDecimal("50.00"));
-        item.setMva(new BigDecimal("50.00")); // MVA existe, mas não deve ser usada se for interno
+        item.setMva(new BigDecimal("50.00"));
 
         dto.setItens(List.of(item));
 
-        // 3. Executa
         PedidoCompra pedidoSalvo = pedidoService.criarSimulacao(dto);
 
-        // 4. Validações
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(pedidoSalvo.getTotalImpostosEstimados()),
-                "Compra interna (PE->PE) não deve ter ST de entrada calculada pelo sistema");
-
+                "Compra interna não deve ter ST");
         Assertions.assertEquals(0, pedidoSalvo.getTotalProdutos().compareTo(pedidoSalvo.getTotalFinal()),
-                "Na compra interna, Total Final deve ser igual ao Total Produtos");
-
-        System.out.println(">>> TESTE PE->PE SUCESSO: Imposto ZERO confirmado.");
+                "Total Final deve ser igual ao Total Produtos");
     }
 }

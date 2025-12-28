@@ -5,5 +5,6 @@ public enum StatusFiscal {
     APROVADA,
     REJEITADA,
     CANCELADA,
+    NAO_EMITIDA,
     ERRO_EMISSAO;
 }

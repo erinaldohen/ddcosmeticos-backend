@@ -12,10 +12,13 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository; // Import adicionado
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,10 +34,16 @@ public class VendaService {
     @Autowired private EstoqueService estoqueService;
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
+    @Autowired private UsuarioRepository usuarioRepository; // Injeção nova
 
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
+
+        // Proteção extra: Se mesmo buscando no banco não achar, lança erro antes de tentar salvar
+        if (usuarioLogado == null) {
+            throw new ValidationException("Erro crítico: Nenhum usuário identificado para vincular à venda.");
+        }
 
         log.info("Processando venda PDV - Cliente CPF: {}", dto.clienteCpf());
 
@@ -63,19 +72,14 @@ public class VendaService {
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
-
-            // --- CORREÇÃO LINHA 70 ---
-            // Removemos .intValue() pois a entidade ItemVenda agora usa BigDecimal
             item.setQuantidade(itemDto.getQuantidade());
-
             item.setPrecoUnitario(produto.getPrecoVenda());
 
-            // 2. Custo Histórico (Usa o nome que você solicitou: getPrecoMedioPonderado)
+            // 2. Custo Histórico
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null
                     ? produto.getPrecoMedioPonderado()
                     : BigDecimal.ZERO);
 
-            // Cálculo do valor total do item (Tudo em BigDecimal agora)
             BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
 
             venda.adicionarItem(item);
@@ -107,32 +111,51 @@ public class VendaService {
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-
-            // Passa BigDecimal direto (AjusteEstoqueDTO espera BigDecimal)
             ajuste.setQuantidade(item.getQuantidade());
-
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
-            ajuste.setTipoMovimento("SAIDA");
+            ajuste.setTipoMovimento("SAIDA"); // Mantido para compatibilidade
 
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // Financeiro
+        // CORREÇÃO AQUI: Passando a quantidade de parcelas!
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda(),
-                dto.formaPagamento().name()
+                dto.formaPagamento().name(),
+                dto.quantidadeParcelas() // <--- O PULO DO GATO ESTÁ AQUI
         );
     }
 
+    /**
+     * Tenta recuperar a entidade Usuario completa.
+     * Funciona tanto com JWT real quanto com @WithMockUser nos testes.
+     */
     private Usuario capturarUsuarioLogado() {
         try {
-            var auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth != null && auth.getPrincipal() instanceof Usuario) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth == null) return null;
+
+            // Caso 1: O Principal já é a entidade Usuario (Produção/JWT customizado)
+            if (auth.getPrincipal() instanceof Usuario) {
                 return (Usuario) auth.getPrincipal();
             }
+
+            // Caso 2: O Principal é um UserDetails do Spring ou String (Testes/@WithMockUser)
+            String login = null;
+            if (auth.getPrincipal() instanceof UserDetails) {
+                login = ((UserDetails) auth.getPrincipal()).getUsername();
+            } else if (auth.getPrincipal() instanceof String) {
+                login = (String) auth.getPrincipal();
+            }
+
+            if (login != null) {
+                // Busca no banco pelo login
+                return usuarioRepository.findByMatricula(login).orElse(null);
+            }
+
         } catch (Exception e) {
-            log.warn("Venda sem usuário identificado.");
+            log.warn("Erro ao identificar usuário logado", e);
         }
         return null;
     }

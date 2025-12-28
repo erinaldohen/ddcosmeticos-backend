@@ -44,25 +44,22 @@ public class RecebimentoPedidoTest {
         f.setRazaoSocial("Natura Distribuidora");
         f.setCpfOuCnpj("12345678000100");
         f.setTipoPessoa("JURIDICA");
-        f.setAtivo(true); // Garante que está ativo
+        f.setAtivo(true);
         fornecedorRepository.save(f);
 
         Produto p = new Produto();
         p.setCodigoBarras("789_KAIK_AVENTURA");
         p.setDescricao("PERFUME KAIK");
-        p.setQuantidadeEmEstoque(BigDecimal.ZERO); // Ou setQuantidadeEstoque se tiver renomeado
+        p.setQuantidadeEmEstoque(0);
         p.setPrecoVenda(new BigDecimal("150.00"));
         p.setAtivo(true);
         p.setPossuiNfEntrada(true);
 
-        // --- CORREÇÃO: Inicializar custos para evitar NullPointerException ---
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
-        p.setPrecoCustoInicial(BigDecimal.ZERO);
-        // --------------------------------------------------------------------
-
+        p.setPrecoCusto(BigDecimal.ZERO);
         produtoRepository.save(p);
 
-        // 2. Criação do Pedido (Simulação SP->PE)
+        // 2. Criação do Pedido
         PedidoCompraDTO dto = new PedidoCompraDTO();
         dto.setFornecedorNome("Natura Distribuidora");
         dto.setUfOrigem("SP");
@@ -71,43 +68,40 @@ public class RecebimentoPedidoTest {
         ItemCompraDTO item = new ItemCompraDTO();
         item.setCodigoBarras("789_KAIK_AVENTURA");
         item.setQuantidade(new BigDecimal("10"));
-        item.setPrecoUnitario(new BigDecimal("80.00")); // Preço Tabela
-        item.setMva(new BigDecimal("50.00")); // MVA gera imposto
+        item.setPrecoUnitario(new BigDecimal("80.00"));
+        item.setMva(new BigDecimal("50.00"));
         dto.setItens(List.of(item));
 
         PedidoCompra pedidoSalvo = pedidoService.criarSimulacao(dto);
         Long idPedido = pedidoSalvo.getId();
 
-        // Verifica status inicial
+        // CORREÇÃO: Acessando o Enum através da classe PedidoCompra
         Assertions.assertEquals(PedidoCompra.StatusPedido.EM_COTACAO, pedidoSalvo.getStatus());
 
-        // 3. AÇÃO: Receber Mercadoria (O "Botão Mágico")
-        // Simula recebimento 30 dias após hoje
+        // 3. AÇÃO: Receber Mercadoria
         pedidoService.receberMercadoria(idPedido, "NF-555", LocalDate.now().plusDays(30));
 
-        // 4. Validações Pós-Recebimento
+        // 4. Validações
 
         // A. Status do Pedido
         PedidoCompra pedidoAtualizado = pedidoRepository.findById(idPedido).get();
+        // CORREÇÃO: Acessando o Enum através da classe PedidoCompra
         Assertions.assertEquals(PedidoCompra.StatusPedido.CONCLUIDO, pedidoAtualizado.getStatus());
 
         // B. Estoque Atualizado
         Produto produtoEstoque = produtoRepository.findByCodigoBarras("789_KAIK_AVENTURA").get();
-        // 0 + 10 = 10
-        Assertions.assertEquals(0, new BigDecimal("10.000").compareTo(produtoEstoque.getQuantidadeEmEstoque()));
+        Assertions.assertEquals(10, produtoEstoque.getQuantidadeEmEstoque());
 
         // C. Financeiro Gerado
         List<ContaPagar> contas = contaPagarRepository.findAll();
         Assertions.assertFalse(contas.isEmpty(), "Deve ter gerado contas a pagar");
-        // O teste original validava size=1, mas dependendo da lógica pode gerar parcelas ou consolidado.
-        // Ajustamos para verificar se existe pelo menos uma conta vinculada ao fornecedor.
 
         ContaPagar conta = contas.stream()
-                .filter(c -> c.getDescricao().contains("NF-555"))
+                .filter(c -> c.getDescricao() != null && c.getDescricao().contains("NF-555"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Conta não encontrada"));
 
-        // O valor deve ser o total final do pedido (que inclui impostos)
+        // O valor deve ser o total final do pedido
         Assertions.assertEquals(0, pedidoAtualizado.getTotalFinal().compareTo(conta.getValorTotal()));
         Assertions.assertEquals("Natura Distribuidora", conta.getFornecedor().getRazaoSocial());
 

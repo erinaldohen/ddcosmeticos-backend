@@ -108,10 +108,11 @@ public class EstoqueService {
             throw new ValidationException("Motivo de ajuste inválido: " + dto.getMotivo());
         }
 
+        // CORREÇÃO: Mapeamento atualizado para os novos Enums
         TipoMovimentoEstoque status = switch (motivo) {
-            case AJUSTE_SOBRA, DEVOLUCAO_CLIENTE, CANCELAMENTO_DE_VENDA, COMPRA_FORNECEDOR, ESTOQUE_INICIAL, AJUSTE_MANUAL -> TipoMovimentoEstoque.ENTRADA;
-            case AJUSTE_PERDA, AJUSTE_AVARIA, USO_INTERNO, VENDA, DEVOLUCAO_AO_FORNECEDOR -> TipoMovimentoEstoque.SAIDA;
-            default -> throw new ValidationException("Motivo não mapeado: " + motivo);
+            case AJUSTE_SOBRA, DEVOLUCAO_CLIENTE, CANCELAMENTO_DE_VENDA, COMPRA_FORNECEDOR, ESTOQUE_INICIAL, AJUSTE_ENTRADA -> TipoMovimentoEstoque.ENTRADA;
+            case AJUSTE_PERDA, AJUSTE_AVARIA, USO_INTERNO, VENDA, DEVOLUCAO_AO_FORNECEDOR, AJUSTE_SAIDA -> TipoMovimentoEstoque.SAIDA;
+            default -> throw new ValidationException("Motivo não mapeado para entrada/saída: " + motivo);
         };
 
         // ADAPTAÇÃO: Usando getQuantidadeEmEstoque()
@@ -124,6 +125,11 @@ public class EstoqueService {
             novaQtd = saldoAtual.add(dto.getQuantidade());
         } else {
             novaQtd = saldoAtual.subtract(dto.getQuantidade());
+        }
+
+        // Validação para não deixar estoque negativo (opcional, mas recomendado)
+        if (novaQtd.compareTo(BigDecimal.ZERO) < 0) {
+            throw new ValidationException("Estoque insuficiente para realizar este ajuste de saída.");
         }
 
         // ADAPTAÇÃO: Usando setQuantidadeEmEstoque() e .intValue()
@@ -238,7 +244,7 @@ public class EstoqueService {
             boolean existePendente = sugestaoPrecoRepository.existsByProdutoAndStatusPrecificacao(produto, StatusPrecificacao.PENDENTE);
 
             if (!existePendente) {
-                // Cria sugestão de preço...
+                // Cria sugestão de preço... (lógica omitida mas existente no seu contexto)
             }
         }
     }

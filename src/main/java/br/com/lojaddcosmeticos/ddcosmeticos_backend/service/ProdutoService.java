@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -12,75 +13,87 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
+import java.math.BigDecimal;
+import java.util.List;
 
 @Slf4j
 @Service
 public class ProdutoService {
 
-    @Autowired
-    private ProdutoRepository produtoRepository;
+    @Autowired private ProdutoRepository produtoRepository;
 
-    /**
-     * Busca produto por código de barras com CACHE.
-     * Ideal para o PDV onde a velocidade é crítica.
-     */
+    // --- MÉTODOS DE LEITURA ---
+
     @Transactional(readOnly = true)
     @Cacheable(value = "produtos", key = "#codigoBarras")
     public Produto buscarPorCodigoBarras(String codigoBarras) {
-        log.debug("Buscando produto por código de barras: {}", codigoBarras);
         return produtoRepository.findByCodigoBarras(codigoBarras)
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado com código: " + codigoBarras));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + codigoBarras));
     }
 
-    /**
-     * Busca por ID padrão.
-     */
     @Transactional(readOnly = true)
     public Produto buscarPorId(Long id) {
         return produtoRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado com ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto ID " + id + " não encontrado"));
     }
 
-    /**
-     * Lista todos os produtos com paginação.
-     */
     @Transactional(readOnly = true)
     public Page<Produto> listarTodos(Pageable pageable) {
         return produtoRepository.findAll(pageable);
     }
 
-    /**
-     * Salva ou Atualiza um produto.
-     * IMPORTANTE: Remove o item do cache para evitar dados obsoletos (preço/estoque antigo).
-     */
+    @Transactional(readOnly = true)
+    public List<Produto> buscarInteligente(String termo) {
+        if (termo == null || termo.isBlank()) {
+            return produtoRepository.findAll();
+        }
+        return produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo);
+    }
+
+    // --- MÉTODOS DE ESCRITA ---
+
     @Transactional
     @CacheEvict(value = "produtos", key = "#produto.codigoBarras")
     public Produto salvar(Produto produto) {
-        log.info("Salvando produto: {}", produto.getDescricao());
         return produtoRepository.save(produto);
     }
 
-    /**
-     * Exclusão lógica ou física (dependendo da sua regra).
-     * Também limpa o cache.
-     */
     @Transactional
-    @CacheEvict(value = "produtos", key = "#codigoBarras") // Assume que temos o código ao deletar
-    public void excluir(String codigoBarras) {
-        Produto produto = buscarPorCodigoBarras(codigoBarras);
-        produto.setAtivo(false); // Soft Delete preferencial
+    @CacheEvict(value = "produtos", allEntries = true) // Limpa tudo pois o EAN pode mudar
+    public Produto atualizar(Long id, ProdutoDTO dados) {
+        Produto produto = buscarPorId(id);
+
+        // Atualiza campos (Mapper manual simples)
+        produto.setDescricao(dados.descricao());
+        produto.setPrecoVenda(dados.precoVenda());
+        produto.setPrecoCusto(dados.precoCusto());
+        produto.setEstoqueMinimo(dados.estoqueMinimo());
+        produto.setNcm(dados.ncm());
+
+        // Se mudar o código de barras, validar duplicidade
+        if (!produto.getCodigoBarras().equals(dados.codigoBarras())) {
+            if (produtoRepository.existsByCodigoBarras(dados.codigoBarras())) {
+                throw new IllegalStateException("Já existe outro produto com este código de barras.");
+            }
+            produto.setCodigoBarras(dados.codigoBarras());
+        }
+
+        return produtoRepository.save(produto);
+    }
+
+    @Transactional
+    @CacheEvict(value = "produtos", key = "#ean")
+    public void inativarPorEan(String ean) {
+        Produto produto = buscarPorCodigoBarras(ean);
+        produto.setAtivo(false);
         produtoRepository.save(produto);
     }
 
-    // Sobrecarga para deletar por ID se necessário, limpando todo o cache de produtos por segurança
-    // ou busque o código de barras antes para limpar específico.
     @Transactional
-    @CacheEvict(value = "produtos", allEntries = true)
-    public void excluirPorId(Long id) {
-        if (!produtoRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Produto não encontrado para exclusão.");
-        }
-        produtoRepository.deleteById(id);
+    @CacheEvict(value = "produtos", key = "#ean")
+    public void reativarPorEan(String ean) {
+        Produto produto = buscarPorCodigoBarras(ean);
+        produto.setAtivo(true);
+        produtoRepository.save(produto);
     }
 }

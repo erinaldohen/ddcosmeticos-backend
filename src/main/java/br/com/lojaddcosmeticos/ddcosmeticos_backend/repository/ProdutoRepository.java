@@ -12,8 +12,6 @@ import java.util.Optional;
 @Repository
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
-    Optional<Produto> findByCodigoBarras(String codigoBarras);
-
     // CORREÇÃO: Mudado de 'Nome' para 'Descricao'
     List<Produto> findByDescricaoContainingIgnoreCase(String descricao);
 
@@ -28,4 +26,12 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque < p.estoqueMinimo AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
+
+    Optional<Produto> findByCodigoBarras(String codigoBarras);
+
+    // Busca Inteligente: Procura por parte do nome OU código exato, ignorando maiúsculas/minúsculas
+    List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
+
+    // Método auxiliar para checar duplicidade
+    boolean existsByCodigoBarras(String codigoBarras);
 }

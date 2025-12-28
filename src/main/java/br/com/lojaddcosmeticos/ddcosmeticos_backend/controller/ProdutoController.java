@@ -1,13 +1,16 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoPrecoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-// AJUSTADO PARA 'service' (SINGULAR)
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService; // INJETADO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.PrecificacaoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.services.integracao.CosmosService; // Esse geralmente mantemos em services/integracao, verifique sua pasta
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+// CORREÇÃO: service (singular)
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -22,19 +25,13 @@ import java.util.List;
 @RequestMapping("/api/v1/produtos")
 public class ProdutoController {
 
-    @Autowired
-    private ProdutoService service;
+    @Autowired private ProdutoService service;
+    @Autowired private ProdutoRepository repository;
+    @Autowired private CosmosService cosmosService;
+    @Autowired private PrecificacaoService precificacaoService;
+    @Autowired private EstoqueService estoqueService; // Novo: Para movimentação
 
-    @Autowired
-    private ProdutoRepository repository;
-
-    @Autowired
-    private CosmosService cosmosService;
-
-    @Autowired
-    private PrecificacaoService precificacaoService;
-
-    // --- 1. LISTAGEM E BUSCA UNIFICADA ---
+    // --- 1. LISTAGEM ---
     @GetMapping
     public ResponseEntity<List<Produto>> listar(@RequestParam(required = false) String termo) {
         return ResponseEntity.ok(service.buscarInteligente(termo));
@@ -58,25 +55,34 @@ public class ProdutoController {
         return ResponseEntity.ok(criticos);
     }
 
-    // --- 4. CADASTRO DE PRODUTO ---
+    // --- 4. CADASTRO ---
     @PostMapping
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
-            return ResponseEntity.status(HttpStatus.CREATED).body(service.salvar(dados));
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
+            // Mapeamento DTO -> Entidade
+            Produto novoProduto = new Produto();
+            novoProduto.setCodigoBarras(dados.codigoBarras());
+            novoProduto.setDescricao(dados.descricao());
+            novoProduto.setPrecoVenda(dados.precoVenda());
+            novoProduto.setPrecoCusto(dados.precoCusto());
+            novoProduto.setEstoqueMinimo(dados.estoqueMinimo());
+            novoProduto.setNcm(dados.ncm());
+            novoProduto.setQuantidadeEmEstoque(0); // Inicia zerado
+            novoProduto.setAtivo(true);
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(service.salvar(novoProduto));
+        } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
-    // --- 5. ATUALIZAR DADOS ---
+    // --- 5. ATUALIZAR ---
     @PutMapping("/{id}")
     public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody @Valid ProdutoDTO dados) {
         return ResponseEntity.ok(service.atualizar(id, dados));
     }
 
-    // --- 6. ENTRADA DE ESTOQUE ---
+    // --- 6. ENTRADA DE ESTOQUE (Delegando para EstoqueService) ---
     @PostMapping("/estoque")
     public ResponseEntity<?> adicionarEstoque(
             @RequestParam String ean,
@@ -91,21 +97,27 @@ public class ProdutoController {
         }
 
         try {
-            service.entradaEstoque(ean, qtd, custo, numeroNota, lote, validade);
+            // Monta o DTO que o EstoqueService espera
+            EstoqueRequestDTO request = new EstoqueRequestDTO();
+            request.setCodigoBarras(ean);
+            request.setQuantidade(BigDecimal.valueOf(qtd));
+            request.setPrecoCusto(custo);
+            request.setNumeroNotaFiscal(numeroNota);
+            // Definimos boleto/prazo padrão caso seja uma entrada avulsa rápida
+            request.setFormaPagamento(FormaDePagamento.DINHEIRO);
+
+            estoqueService.registrarEntrada(request);
+
             return ResponseEntity.ok().build();
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body("Erro ao dar entrada: " + e.getMessage());
         }
     }
 
     // --- 7. INTELIGÊNCIA DE PREÇO ---
-
     @GetMapping("/{id}/sugestao-preco")
     public ResponseEntity<SugestaoPrecoDTO> obterSugestao(@PathVariable Long id) {
-        // Busca o produto
         var produto = repository.findById(id).orElseThrow(() -> new RuntimeException("Produto não encontrado"));
-
-        // AGORA VAI FUNCIONAR: O método existe na classe PrecificacaoService importada acima
         return ResponseEntity.ok(precificacaoService.calcularSugestao(produto));
     }
 
@@ -118,7 +130,6 @@ public class ProdutoController {
     }
 
     // --- 8. GESTÃO DE ATIVAÇÃO ---
-
     @DeleteMapping("/{ean}")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         service.inativarPorEan(ean);

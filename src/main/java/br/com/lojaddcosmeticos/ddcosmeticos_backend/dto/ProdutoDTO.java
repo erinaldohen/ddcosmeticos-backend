@@ -14,7 +14,6 @@ public record ProdutoDTO(
         @Size(max = 20, message = "Código de barras muito longo")
         String codigoBarras,
 
-        // UNIFICADO: Removemos 'nome' e tornamos 'descricao' obrigatória
         @NotBlank(message = "A descrição do produto é obrigatória")
         String descricao,
 
@@ -29,6 +28,10 @@ public record ProdutoDTO(
         // Pode ser nulo se não houver controle de estoque inicial
         @PositiveOrZero
         Integer quantidadeEstoque,
+
+        // --- CORREÇÃO: Campo adicionado para resolver o erro na linha 68 ---
+        @PositiveOrZero
+        Integer estoqueMinimo,
 
         // --- DADOS FISCAIS ---
         @Size(max = 8, message = "NCM deve ter no máximo 8 dígitos")

@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.services.integracao;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao; // CORREÇÃO: 'service' no singular
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoExternoDTO;
 import org.springframework.stereotype.Service;

@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
@@ -12,10 +13,12 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository; // Import adicionado
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -23,7 +26,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
 
 @Slf4j
 @Service
@@ -34,18 +40,12 @@ public class VendaService {
     @Autowired private EstoqueService estoqueService;
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
-    @Autowired private UsuarioRepository usuarioRepository; // Injeção nova
+    @Autowired private UsuarioRepository usuarioRepository;
 
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
-
-        // Proteção extra: Se mesmo buscando no banco não achar, lança erro antes de tentar salvar
-        if (usuarioLogado == null) {
-            throw new ValidationException("Erro crítico: Nenhum usuário identificado para vincular à venda.");
-        }
-
-        log.info("Processando venda PDV - Cliente CPF: {}", dto.clienteCpf());
+        if (usuarioLogado == null) throw new ValidationException("Usuário não identificado.");
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
@@ -59,31 +59,20 @@ public class VendaService {
 
         for (ItemVendaDTO itemDto : dto.itens()) {
             Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
-                    .orElseThrow(() -> new ResourceNotFoundException("Produto não cadastrado: " + itemDto.getCodigoBarras()));
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
 
-            // 1. Validação de Estoque (Converte Integer do Produto para BigDecimal)
-            BigDecimal estoqueAtual = produto.getQuantidadeEmEstoque() != null
-                    ? new BigDecimal(produto.getQuantidadeEmEstoque())
-                    : BigDecimal.ZERO;
-
-            if (estoqueAtual.compareTo(itemDto.getQuantidade()) < 0) {
-                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao() + ". Disponível: " + estoqueAtual);
+            if (BigDecimal.valueOf(produto.getQuantidadeEmEstoque()).compareTo(itemDto.getQuantidade()) < 0) {
+                throw new ValidationException("Estoque insuficiente: " + produto.getDescricao());
             }
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
             item.setQuantidade(itemDto.getQuantidade());
             item.setPrecoUnitario(produto.getPrecoVenda());
-
-            // 2. Custo Histórico
-            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null
-                    ? produto.getPrecoMedioPonderado()
-                    : BigDecimal.ZERO);
-
-            BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
+            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
             venda.adicionarItem(item);
-            totalVenda = totalVenda.add(valorItem);
+            totalVenda = totalVenda.add(item.getPrecoUnitario().multiply(item.getQuantidade()));
         }
 
         venda.setTotalVenda(totalVenda);
@@ -91,78 +80,102 @@ public class VendaService {
 
         Venda vendaSalva = vendaRepository.save(venda);
 
+        // Baixa Estoque e Gera Financeiro
         executarFluxosOperacionais(vendaSalva, dto);
 
-        // Emissão Fiscal
-        boolean emitirApenasComEntrada = dto.apenasItensComNfEntrada();
-        try {
-            nfceService.emitirNfce(vendaSalva, emitirApenasComEntrada);
-            vendaSalva.setStatusFiscal(StatusFiscal.APROVADA);
-        } catch (Exception e) {
-            log.error("Erro na emissão da NFC-e: {}", e.getMessage());
-            vendaSalva.setStatusFiscal(StatusFiscal.ERRO_EMISSAO);
-        }
+        // Emissão Fiscal (Simulada em Dev)
+        nfceService.emitirNfce(vendaSalva, dto.apenasItensComNfEntrada());
 
         return vendaRepository.save(vendaSalva);
     }
 
+    @Transactional(readOnly = true)
+    public Page<VendaResponseDTO> listarVendas(LocalDate inicio, LocalDate fim, Pageable pageable) {
+        LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
+        LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
+
+        return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable)
+                .map(v -> VendaResponseDTO.builder()
+                        .idVenda(v.getId())
+                        .dataVenda(v.getDataVenda())
+                        .valorTotal(v.getTotalVenda())
+                        .desconto(v.getDescontoTotal())
+                        .totalItens(v.getItens().size())
+                        .statusFiscal(v.getStatusFiscal())
+                        .alertas(new ArrayList<>())
+                        .build());
+    }
+
+    @Transactional
+    public void cancelarVenda(Long idVenda, String motivo) {
+        Venda venda = buscarVendaComItens(idVenda);
+
+        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) {
+            throw new ValidationException("Venda já cancelada.");
+        }
+
+        log.info("Cancelando Venda #{}. Motivo: {}", idVenda, motivo);
+
+        // 1. Estorno de Estoque (Entrada)
+        venda.getItens().forEach(item -> {
+            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
+            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
+            ajuste.setQuantidade(item.getQuantidade());
+            // Usa motivo adequado para retorno
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA.name());
+            ajuste.setTipoMovimento("ENTRADA");
+            estoqueService.realizarAjusteInventario(ajuste);
+        });
+
+        // 2. Estorno Financeiro
+        financeiroService.cancelarReceitaDeVenda(idVenda);
+
+        // 3. Atualiza Status
+        venda.setStatusFiscal(StatusFiscal.CANCELADA);
+        venda.setMotivoDoCancelamento(motivo);
+        vendaRepository.save(venda);
+    }
+
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // Baixa de Estoque
+        // Baixa Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
-            ajuste.setTipoMovimento("SAIDA"); // Mantido para compatibilidade
-
+            ajuste.setTipoMovimento("SAIDA");
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // CORREÇÃO AQUI: Passando a quantidade de parcelas!
+        // Lança Financeiro
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda(),
                 dto.formaPagamento().name(),
-                dto.quantidadeParcelas() // <--- O PULO DO GATO ESTÁ AQUI
+                dto.quantidadeParcelas()
         );
-    }
-
-    /**
-     * Tenta recuperar a entidade Usuario completa.
-     * Funciona tanto com JWT real quanto com @WithMockUser nos testes.
-     */
-    private Usuario capturarUsuarioLogado() {
-        try {
-            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth == null) return null;
-
-            // Caso 1: O Principal já é a entidade Usuario (Produção/JWT customizado)
-            if (auth.getPrincipal() instanceof Usuario) {
-                return (Usuario) auth.getPrincipal();
-            }
-
-            // Caso 2: O Principal é um UserDetails do Spring ou String (Testes/@WithMockUser)
-            String login = null;
-            if (auth.getPrincipal() instanceof UserDetails) {
-                login = ((UserDetails) auth.getPrincipal()).getUsername();
-            } else if (auth.getPrincipal() instanceof String) {
-                login = (String) auth.getPrincipal();
-            }
-
-            if (login != null) {
-                // Busca no banco pelo login
-                return usuarioRepository.findByMatricula(login).orElse(null);
-            }
-
-        } catch (Exception e) {
-            log.warn("Erro ao identificar usuário logado", e);
-        }
-        return null;
     }
 
     @Transactional(readOnly = true)
     public Venda buscarVendaComItens(Long id) {
         return vendaRepository.findByIdComItens(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+    }
+
+    private Usuario capturarUsuarioLogado() {
+        try {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth == null) return null;
+            if (auth.getPrincipal() instanceof Usuario) return (Usuario) auth.getPrincipal();
+
+            String login = null;
+            if (auth.getPrincipal() instanceof UserDetails) login = ((UserDetails) auth.getPrincipal()).getUsername();
+            else if (auth.getPrincipal() instanceof String) login = (String) auth.getPrincipal();
+
+            if (login != null) return usuarioRepository.findByMatricula(login).orElse(null);
+        } catch (Exception e) {
+            log.warn("Erro ao identificar usuário: {}", e.getMessage());
+        }
+        return null;
     }
 }

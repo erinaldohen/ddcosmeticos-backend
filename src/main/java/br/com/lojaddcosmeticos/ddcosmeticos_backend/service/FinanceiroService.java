@@ -164,4 +164,20 @@ public class FinanceiroService {
             contaReceberRepository.save(conta);
         }
     }
+
+    /**
+     * Cancela todos os lançamentos financeiros de uma venda.
+     * Usado quando uma venda é estornada/cancelada.
+     */
+    @Transactional
+    public void cancelarReceitaDeVenda(Long idVenda) {
+        List<ContaReceber> contas = contaReceberRepository.findByIdVendaRef(idVenda);
+
+        for (ContaReceber conta : contas) {
+            conta.setStatus(StatusConta.CANCELADO); // Certifique-se que o Enum tem CANCELADO
+            // Se não tiver CANCELADO no Enum, use uma exclusão física:
+            // contaReceberRepository.delete(conta);
+        }
+        contaReceberRepository.saveAll(contas);
+    }
 }

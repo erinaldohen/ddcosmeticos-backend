@@ -1,6 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -25,7 +27,10 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     long contarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // RESOLVE O ERRO DA LINHA 109/121: Carrega a venda com os itens (JOIN FETCH)
+    // Busca otimizada com JOIN FETCH para trazer os itens numa única query (Performance)
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.id = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
+
+    // Filtro por período para o histórico de vendas
+    Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 }

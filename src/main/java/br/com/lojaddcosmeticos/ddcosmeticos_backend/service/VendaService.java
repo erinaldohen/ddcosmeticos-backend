@@ -30,7 +30,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -56,19 +55,22 @@ public class VendaService {
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
 
-        // Compatibilidade: DTO traz 'clienteDocumento', Entidade usa 'setClienteCpf'
+        // Uso do método de compatibilidade (setClienteCpf mapeia para clienteDocumento na entidade)
         venda.setClienteCpf(dto.clienteDocumento());
-
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
         venda.setFormaPagamento(dto.formaPagamento());
 
-        // Busca Cliente no banco se houver documento
+        // Performance: Busca otimizada apenas se o documento for informado
         if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
+            // Sanitização extra para garantir apenas números
             String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
             clienteRepository.findByDocumento(docLimpo).ifPresent(c -> {
                 venda.setCliente(c);
-                if (venda.getClienteNome() == null) venda.setClienteNome(c.getNome());
+                // Preenche o nome se vier vazio no request
+                if (venda.getClienteNome() == null || venda.getClienteNome().isBlank()) {
+                    venda.setClienteNome(c.getNome());
+                }
             });
         }
 
@@ -86,6 +88,7 @@ public class VendaService {
         BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
+        // Validação de Crédito
         if (!isOrcamento && dto.formaPagamento() == FormaDePagamento.CREDIARIO) {
             String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
             validarCreditoDoCliente(doc, valorFinal);
@@ -188,6 +191,8 @@ public class VendaService {
                 .map(v -> VendaResponseDTO.builder()
                         .idVenda(v.getId())
                         .dataVenda(v.getDataVenda())
+                        .clienteNome(v.getClienteNome())
+                        .clienteDocumento(v.getClienteCpf())
                         .valorTotal(v.getTotalVenda())
                         .desconto(v.getDescontoTotal())
                         .totalItens(v.getItens().size())
@@ -214,6 +219,7 @@ public class VendaService {
             return;
         }
 
+        // Estorno
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -272,7 +278,7 @@ public class VendaService {
         Cliente cliente = clienteRepository.findByDocumento(documento).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
         if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
         if (contaReceberRepository.existeContaVencida(documento, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
-        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorCpf(documento);
+        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorDocumento(documento);
         if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
         if (dividaAtual.add(valorDaCompra).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de Crédito Excedido.");
     }
@@ -297,7 +303,7 @@ public class VendaService {
             if (auth.getPrincipal() instanceof UserDetails) return usuarioRepository.findByMatricula(((UserDetails) auth.getPrincipal()).getUsername()).orElse(null);
             if (auth.getPrincipal() instanceof String) return usuarioRepository.findByMatricula((String) auth.getPrincipal()).orElse(null);
         } catch (Exception e) {
-            log.warn("Erro ao identificar usuário", e);
+            log.warn("Erro ao identificar utilizador", e);
         }
         return null;
     }

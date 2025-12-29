@@ -14,62 +14,48 @@ import java.util.List;
 @Repository
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
-    // ==================================================================================
-    // SESSÃO 1: MÉTODOS LEGADOS E OPERACIONAIS
-    // ==================================================================================
     List<ContaReceber> findByIdVendaRef(Long idVendaRef);
     List<ContaReceber> findByStatus(StatusConta status);
 
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (MÓDULO FIADO)
+    // QUERIES CORRIGIDAS (clienteCpf -> clienteDocumento)
     // ==================================================================================
 
-    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT SUM(c.valorLiquido) 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
     """)
-    BigDecimal somarDividaTotalPorCpf(@Param("cpf") String cpf);
+    BigDecimal somarDividaTotalPorDocumento(@Param("documento") String documento);
 
-    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT COUNT(c) > 0 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
         AND c.dataVencimento < :hoje
     """)
-    boolean existeContaVencida(@Param("cpf") String cpf, @Param("hoje") LocalDate hoje);
+    boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
-    // ==================================================================================
-    // SESSÃO 3: RELATÓRIOS DE INADIMPLÊNCIA
-    // ==================================================================================
-
-    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT DISTINCT v.clienteDocumento 
         FROM ContaReceber c 
         JOIN Venda v ON c.idVendaRef = v.id 
         WHERE c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
     """)
-    List<String> buscarCpfsComPendencia();
+    List<String> buscarDocumentosComPendencia();
 
-    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT c 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
         ORDER BY c.dataVencimento ASC
     """)
-    List<ContaReceber> listarContasEmAberto(@Param("cpf") String cpf);
+    List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
-    // ==================================================================================
-    // SESSÃO 4: DASHBOARD
-    // ==================================================================================
-
+    // DASHBOARD
     @Query("SELECT SUM(c.valorLiquido) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

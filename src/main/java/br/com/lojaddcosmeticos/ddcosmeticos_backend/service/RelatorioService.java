@@ -153,7 +153,7 @@ public class RelatorioService {
     @Transactional(readOnly = true)
     public List<RelatorioInadimplenciaDTO> gerarRelatorioFiado() {
         List<RelatorioInadimplenciaDTO> relatorio = new ArrayList<>();
-        List<String> documentosDevedores = contaReceberRepository.buscarCpfsComPendencia(); // Note: Método no repo ainda se chama 'buscarCpfs...' mas a query foi corrigida para usar 'clienteDocumento'
+        List<String> documentosDevedores = contaReceberRepository.buscarDocumentosComPendencia(); // Note: Método no repo ainda se chama 'buscarCpfs...' mas a query foi corrigida para usar 'clienteDocumento'
 
         for (String doc : documentosDevedores) {
             if (doc == null) continue;

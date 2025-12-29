@@ -17,26 +17,12 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // ==================================================================================
     // SESSÃO 1: MÉTODOS LEGADOS E OPERACIONAIS
     // ==================================================================================
-
-    /**
-     * Busca contas de uma venda específica.
-     * Usado principalmente no cancelamento/estorno de vendas.
-     */
     List<ContaReceber> findByIdVendaRef(Long idVendaRef);
-
-    /**
-     * Busca por status genérico.
-     */
     List<ContaReceber> findByStatus(StatusConta status);
 
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (USADO NO VENDA SERVICE)
+    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (MÓDULO FIADO)
     // ==================================================================================
-
-    /**
-     * Calcula o total da dívida ATIVA (Pendente) de um cliente baseado no CPF.
-     * Faz um JOIN implícito com a tabela de Vendas para encontrar o CPF.
-     */
     @Query("""
         SELECT SUM(c.valorLiquido) 
         FROM ContaReceber c 
@@ -45,10 +31,6 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     BigDecimal somarDividaTotalPorCpf(@Param("cpf") String cpf);
 
-    /**
-     * Verifica se o cliente tem alguma conta vencida (atrasada) e não paga.
-     * Retorna TRUE se for caloteiro/atrasado.
-     */
     @Query("""
         SELECT COUNT(c) > 0 
         FROM ContaReceber c 
@@ -59,13 +41,8 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     boolean existeContaVencida(@Param("cpf") String cpf, @Param("hoje") LocalDate hoje);
 
     // ==================================================================================
-    // SESSÃO 3: MÉTODOS PARA RELATÓRIOS
+    // SESSÃO 3: RELATÓRIOS DE INADIMPLÊNCIA
     // ==================================================================================
-
-    /**
-     * Retorna lista de CPFs distintos que possuem dívidas pendentes.
-     * Usado para iterar e gerar o relatório de inadimplência.
-     */
     @Query("""
         SELECT DISTINCT v.clienteCpf 
         FROM ContaReceber c 
@@ -74,10 +51,6 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     List<String> buscarCpfsComPendencia();
 
-    /**
-     * Lista detalhada de todas as parcelas em aberto de um cliente.
-     * Usado no relatório detalhado.
-     */
     @Query("""
         SELECT c 
         FROM ContaReceber c 
@@ -86,4 +59,14 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
         ORDER BY c.dataVencimento ASC
     """)
     List<ContaReceber> listarContasEmAberto(@Param("cpf") String cpf);
+
+    // ==================================================================================
+    // SESSÃO 4: DASHBOARD (MÉTODOS QUE FALTAVAM)
+    // ==================================================================================
+
+    /**
+     * Soma valores a receber num intervalo de datas (Previsão de Fluxo).
+     */
+    @Query("SELECT SUM(c.valorLiquido) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
+    BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

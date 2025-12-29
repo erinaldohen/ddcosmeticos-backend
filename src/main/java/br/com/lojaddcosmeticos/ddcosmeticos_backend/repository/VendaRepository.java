@@ -16,21 +16,22 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    // Método necessário para a linha 42 do seu RelatorioService
-    @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    // Busca otimizada com itens
+    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
+    Optional<Venda> findByIdComItens(@Param("id") Long id);
+
+    Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
+
+    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.dataVenda BETWEEN :inicio AND :fim")
     List<Venda> buscarPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // Métodos para o Fechamento de Caixa e Dashboard
-    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    // ==================================================================================
+    // SESSÃO DASHBOARD (NOVOS)
+    // ==================================================================================
+
+    @Query("SELECT SUM(v.totalVenda) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     BigDecimal somarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
-    long contarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
-    // Busca otimizada com JOIN FETCH para trazer os itens numa única query (Performance)
-    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.id = :id")
-    Optional<Venda> findByIdComItens(@Param("id") Long id);
-
-    // Filtro por período para o histórico de vendas
-    Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
+    Long contarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

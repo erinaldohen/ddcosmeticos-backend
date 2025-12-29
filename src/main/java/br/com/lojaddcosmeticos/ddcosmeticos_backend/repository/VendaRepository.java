@@ -1,10 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import jakarta.persistence.Tuple;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -36,51 +34,59 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     List<Venda> findByStatusFiscalOrderByDataVendaDesc(StatusFiscal status);
 
-    // ==================================================================================
-    // SESSÃO RELATÓRIOS (ADICIONADA)
-    // ==================================================================================
+    // --- QUERIES DE RELATÓRIO (USANDO TUPLE PARA EVITAR ERROS) ---
 
     @Query("""
-        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
-            CAST(v.dataVenda AS LocalDate),
-            SUM(v.totalVenda),
-            COUNT(v)
-        )
+        SELECT 
+            cast(v.dataVenda as LocalDate) as data,
+            SUM(v.totalVenda) as total,
+            COUNT(v) as qtd
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
-        GROUP BY CAST(v.dataVenda AS LocalDate)
-        ORDER BY CAST(v.dataVenda AS LocalDate) ASC
+        AND v.statusFiscal NOT IN :statusExcluidos
+        GROUP BY cast(v.dataVenda as LocalDate)
+        ORDER BY cast(v.dataVenda as LocalDate) ASC
     """)
-    List<VendaDiariaDTO> relatorioVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    List<Tuple> relatorioVendasPorDia(
+            @Param("inicio") LocalDateTime inicio,
+            @Param("fim") LocalDateTime fim,
+            @Param("statusExcluidos") List<StatusFiscal> statusExcluidos
+    );
 
     @Query("""
-        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
-            v.formaPagamento,
-            SUM(v.totalVenda),
-            COUNT(v)
-        )
+        SELECT 
+            v.formaPagamento as forma,
+            SUM(v.totalVenda) as total,
+            COUNT(v) as qtd
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
+        AND v.statusFiscal NOT IN :statusExcluidos
         GROUP BY v.formaPagamento
     """)
-    List<VendaPorPagamentoDTO> relatorioVendasPorPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    List<Tuple> relatorioVendasPorPagamento(
+            @Param("inicio") LocalDateTime inicio,
+            @Param("fim") LocalDateTime fim,
+            @Param("statusExcluidos") List<StatusFiscal> statusExcluidos
+    );
 
     @Query("""
-        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
-            p.codigoBarras,
-            p.descricao,
-            SUM(i.quantidade),
-            SUM(i.precoUnitario * i.quantidade)
-        )
+        SELECT 
+            p.codigoBarras as codigo,
+            p.descricao as nome,
+            SUM(i.quantidade) as qtd,
+            SUM(i.precoUnitario * i.quantidade) as total
         FROM ItemVenda i
         JOIN i.venda v
         JOIN i.produto p
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
+        AND v.statusFiscal NOT IN :statusExcluidos
         GROUP BY p.codigoBarras, p.descricao
         ORDER BY SUM(i.quantidade) DESC
     """)
-    List<ProdutoRankingDTO> relatorioProdutosMaisVendidos(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
+    List<Tuple> relatorioProdutosMaisVendidos(
+            @Param("inicio") LocalDateTime inicio,
+            @Param("fim") LocalDateTime fim,
+            @Param("statusExcluidos") List<StatusFiscal> statusExcluidos,
+            Pageable pageable
+    );
 }

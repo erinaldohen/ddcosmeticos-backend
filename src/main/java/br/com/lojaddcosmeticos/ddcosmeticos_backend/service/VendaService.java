@@ -54,6 +54,8 @@ public class VendaService {
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
+
+        // CORREÇÃO: Usar dto.clienteDocumento()
         venda.setClienteCpf(dto.clienteDocumento());
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
@@ -63,7 +65,7 @@ public class VendaService {
             String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
             clienteRepository.findByDocumento(docLimpo).ifPresent(c -> {
                 venda.setCliente(c);
-                if (venda.getClienteNome() == null || venda.getClienteNome().isBlank()) venda.setClienteNome(c.getNome());
+                if (venda.getClienteNome() == null) venda.setClienteNome(c.getNome());
             });
         }
 
@@ -228,9 +230,12 @@ public class VendaService {
         if (documento == null || documento.isBlank()) throw new ValidationException("Documento obrigatório para Crediário.");
         Cliente cliente = clienteRepository.findByDocumento(documento).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
         if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
+
         if (contaReceberRepository.existeContaVencida(documento, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
-        // CORREÇÃO: Usando o método renomeado
+
+        // CORREÇÃO: Chama o método novo 'somarDividaTotalPorDocumento'
         BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorDocumento(documento);
+
         if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
         if (dividaAtual.add(valorDaCompra).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de Crédito Excedido.");
     }

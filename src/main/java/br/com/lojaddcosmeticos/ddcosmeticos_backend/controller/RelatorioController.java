@@ -19,7 +19,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/relatorios")
-@Tag(name = "Relatórios", description = "Relatórios Gerenciais, Fiscais e Financeiros")
+@Tag(name = "Relatórios", description = "Endpoints para relatórios gerenciais e análises")
 public class RelatorioController {
 
     @Autowired
@@ -47,12 +47,14 @@ public class RelatorioController {
     // ==================================================================================
 
     @GetMapping("/vendas")
-    @Operation(summary = "Vendas por Período", description = "Detalha faturamento, lucro, margem e gráfico de vendas por hora.")
-    public ResponseEntity<RelatorioVendasDTO> gerarRelatorioVendas(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
+    @Operation(summary = "Relatório de Vendas Consolidado", description = "Retorna faturamento, evolução diária, mix de pagamento e ranking de produtos.")
+    public ResponseEntity<RelatorioVendasDTO> obterRelatorioVendas(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
+
         return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
     }
+
 
     // ==================================================================================
     // SESSÃO 3: RELATÓRIOS FISCAIS
@@ -75,12 +77,5 @@ public class RelatorioController {
         return ResponseEntity.ok(relatorioService.gerarRelatorioFiado());
     }
 
-    @GetMapping("/vendas")
-    @Operation(summary = "Relatório de Vendas Consolidado", description = "Retorna faturamento, evolução diária, mix de pagamento e ranking de produtos.")
-    public ResponseEntity<RelatorioVendasDTO> obterRelatorioVendas(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
 
-        return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
-    }
 }

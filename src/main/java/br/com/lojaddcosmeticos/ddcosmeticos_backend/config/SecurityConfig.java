@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.handler.SecurityFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -26,11 +28,12 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
-    // AQUI O AUTOWIRED É PERMITIDO (Injeção de Campo)
     @Autowired
     private UserDetailsService userDetailsService;
 
-    // AQUI O AUTOWIRED É PROIBIDO (O @Bean já resolve tudo)
+    @Autowired
+    private SecurityFilter securityFilter;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
         return httpSecurity
@@ -38,15 +41,23 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        // Rotas Públicas
+                        // --- ROTAS PÚBLICAS (Login, Swagger, H2) ---
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/register").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                        // Rotas Privadas
+
+                        // --- LIBERAR ROTAS DE TESTE (Tributação e Fiscal) ---
+                        // Adicionado para corrigir o erro 403 no Passo 2 e 3
+                        .requestMatchers("/api/v1/tributacao/**").permitAll()
+                        .requestMatchers("/api/v1/fiscal/**").permitAll()
+
+                        // --- ROTAS PRIVADAS (Todo o resto exige Token) ---
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
+                .authenticationProvider(authenticationProvider())
+                .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 

@@ -1,5 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import org.springframework.data.domain.Page;
@@ -33,4 +36,63 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     // --- NOVO: Para buscar a fila de espera ---
     List<Venda> findByStatusFiscalOrderByDataVendaDesc(StatusFiscal status);
+
+    // ==================================================================================
+    // SESSÃO RELATÓRIOS (NOVOS)
+    // ==================================================================================
+
+    /**
+     * Agrupa vendas por dia.
+     * Nota: Filtramos statusFiscal != CANCELADA e != ORCAMENTO para não poluir o relatório.
+     * CAST(v.dataVenda AS LocalDate) converte o Timestamp para Data simples.
+     */
+    @Query("""
+        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
+            CAST(v.dataVenda AS LocalDate),
+            SUM(v.totalVenda),
+            COUNT(v)
+        )
+        FROM Venda v
+        WHERE v.dataVenda BETWEEN :inicio AND :fim
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ERRO_EMISSAO)
+        GROUP BY CAST(v.dataVenda AS LocalDate)
+        ORDER BY CAST(v.dataVenda AS LocalDate) ASC
+    """)
+    List<VendaDiariaDTO> relatorioVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    /**
+     * Agrupa por Forma de Pagamento.
+     */
+    @Query("""
+        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
+            v.formaPagamento,
+            SUM(v.totalVenda),
+            COUNT(v)
+        )
+        FROM Venda v
+        WHERE v.dataVenda BETWEEN :inicio AND :fim
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ERRO_EMISSAO)
+        GROUP BY v.formaPagamento
+    """)
+    List<VendaPorPagamentoDTO> relatorioVendasPorPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    /**
+     * Ranking de Produtos mais vendidos (Top N).
+     */
+    @Query("""
+        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
+            p.codigoBarras,
+            p.descricao,
+            SUM(i.quantidade),
+            SUM(i.precoUnitario * i.quantidade)
+        )
+        FROM ItemVenda i
+        JOIN i.venda v
+        JOIN i.produto p
+        WHERE v.dataVenda BETWEEN :inicio AND :fim
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ERRO_EMISSAO)
+        GROUP BY p.codigoBarras, p.descricao
+        ORDER BY SUM(i.quantidade) DESC
+    """)
+    List<ProdutoRankingDTO> relatorioProdutosMaisVendidos(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
 }

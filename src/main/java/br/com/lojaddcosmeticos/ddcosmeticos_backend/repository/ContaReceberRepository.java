@@ -24,7 +24,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (MÓDULO FIADO)
     // ==================================================================================
 
-    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
+    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT SUM(c.valorLiquido) 
         FROM ContaReceber c 
@@ -33,7 +33,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     BigDecimal somarDividaTotalPorCpf(@Param("cpf") String cpf);
 
-    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
+    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT COUNT(c) > 0 
         FROM ContaReceber c 
@@ -47,7 +47,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // SESSÃO 3: RELATÓRIOS DE INADIMPLÊNCIA
     // ==================================================================================
 
-    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
+    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT DISTINCT v.clienteDocumento 
         FROM ContaReceber c 
@@ -56,7 +56,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     List<String> buscarCpfsComPendencia();
 
-    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
+    // CORREÇÃO: v.clienteCpf -> v.clienteDocumento
     @Query("""
         SELECT c 
         FROM ContaReceber c 

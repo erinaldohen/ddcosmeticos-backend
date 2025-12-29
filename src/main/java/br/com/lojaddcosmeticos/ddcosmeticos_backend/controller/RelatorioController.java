@@ -74,4 +74,13 @@ public class RelatorioController {
     public ResponseEntity<List<RelatorioInadimplenciaDTO>> obterRelatorioFiado() {
         return ResponseEntity.ok(relatorioService.gerarRelatorioFiado());
     }
+
+    @GetMapping("/vendas")
+    @Operation(summary = "Relatório de Vendas Consolidado", description = "Retorna faturamento, evolução diária, mix de pagamento e ranking de produtos.")
+    public ResponseEntity<RelatorioVendasDTO> obterRelatorioVendas(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
+
+        return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
+    }
 }

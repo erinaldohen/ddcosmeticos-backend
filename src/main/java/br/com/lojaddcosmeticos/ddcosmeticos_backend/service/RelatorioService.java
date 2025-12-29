@@ -1,9 +1,13 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +16,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,17 +30,14 @@ public class RelatorioService {
     @Autowired private VendaRepository vendaRepository;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private ItemVendaRepository itemVendaRepository;
-    @Autowired private ContaReceberRepository contaReceberRepository; // Novo para o Fiado
-    @Autowired private ClienteRepository clienteRepository; // Novo para o Fiado
-    @Autowired private AuditoriaRepository auditoriaRepository; // Mantido para compatibilidade futura
+    @Autowired private ContaReceberRepository contaReceberRepository;
+    @Autowired private ClienteRepository clienteRepository;
+    @Autowired private AuditoriaRepository auditoriaRepository;
 
     // ==================================================================================
     // SESSÃO 2: RELATÓRIOS FISCAIS E DE ESTOQUE
     // ==================================================================================
 
-    /**
-     * Relatório de produtos monofásicos (Isenção de PIS/COFINS).
-     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> gerarRelatorioMonofasicos() {
         return produtoRepository.findAllByAtivoTrue().stream().map(p -> {
@@ -48,9 +50,6 @@ public class RelatorioService {
         }).collect(Collectors.toList());
     }
 
-    /**
-     * Inventário de Estoque para contabilidade ou conferência física.
-     */
     @Transactional(readOnly = true)
     public InventarioResponseDTO gerarInventarioEstoque(boolean contabil) {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
@@ -61,14 +60,8 @@ public class RelatorioService {
 
         List<ItemInventarioDTO> itensDTO = produtos.stream()
                 .map(p -> {
-                    BigDecimal quantidade = p.getQuantidadeEmEstoque() != null
-                            ? new BigDecimal(p.getQuantidadeEmEstoque())
-                            : BigDecimal.ZERO;
-
-                    BigDecimal custoMedio = p.getPrecoMedioPonderado() != null
-                            ? p.getPrecoMedioPonderado()
-                            : BigDecimal.ZERO;
-
+                    BigDecimal quantidade = p.getQuantidadeEmEstoque() != null ? new BigDecimal(p.getQuantidadeEmEstoque()) : BigDecimal.ZERO;
+                    BigDecimal custoMedio = p.getPrecoMedioPonderado() != null ? p.getPrecoMedioPonderado() : BigDecimal.ZERO;
                     BigDecimal total = quantidade.multiply(custoMedio);
 
                     return ItemInventarioDTO.builder()
@@ -97,12 +90,9 @@ public class RelatorioService {
     }
 
     // ==================================================================================
-    // SESSÃO 3: RELATÓRIOS DE PERFORMANCE (VENDAS E CURVA ABC)
+    // SESSÃO 3: RELATÓRIOS DE PERFORMANCE
     // ==================================================================================
 
-    /**
-     * Curva ABC para identificação de produtos estratégicos.
-     */
     @Transactional(readOnly = true)
     public List<ItemAbcDTO> gerarCurvaAbc() {
         List<ItemAbcDTO> listaBruta = itemVendaRepository.agruparVendasPorProduto();
@@ -116,7 +106,6 @@ public class RelatorioService {
         for (ItemAbcDTO item : listaBruta) {
             acumuladoValor = acumuladoValor.add(item.valorTotalVendido());
             double percAcumulada = acumuladoValor.divide(faturamentoTotal, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).doubleValue();
-
             String classe = percAcumulada <= 80.0 ? "A" : (percAcumulada <= 95.0 ? "B" : "C");
 
             listaEnriquecida.add(new ItemAbcDTO(item.codigoBarras(), item.nomeProduto(), item.quantidadeVendida(),
@@ -127,100 +116,67 @@ public class RelatorioService {
 
     @Transactional(readOnly = true)
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
+        // 1. Definição do Período
+        if (inicio == null) inicio = LocalDate.now().withDayOfMonth(1);
+        if (fim == null) fim = LocalDate.now();
+
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
-        List<Venda> vendas = vendaRepository.buscarPorPeriodo(dataInicio, dataFim);
+        // 2. Buscas Analíticas
+        List<VendaDiariaDTO> evolucao = vendaRepository.relatorioVendasPorDia(dataInicio, dataFim);
+        List<VendaPorPagamentoDTO> pagamentos = vendaRepository.relatorioVendasPorPagamento(dataInicio, dataFim);
+        List<ProdutoRankingDTO> topProdutos = vendaRepository.relatorioProdutosMaisVendidos(dataInicio, dataFim, PageRequest.of(0, 10));
 
-        BigDecimal totalDescontos = BigDecimal.ZERO;
-        BigDecimal totalLiquido = BigDecimal.ZERO;
-        BigDecimal custoTotalMercadoria = BigDecimal.ZERO;
+        // 3. Cálculos de Totais
+        BigDecimal faturamentoTotal = evolucao.stream().map(VendaDiariaDTO::totalVendido).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Long totalVendas = evolucao.stream().mapToLong(VendaDiariaDTO::quantidadeVendas).sum();
+        BigDecimal ticketMedio = (totalVendas > 0) ? faturamentoTotal.divide(BigDecimal.valueOf(totalVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
 
-        for (Venda venda : vendas) {
-            totalLiquido = totalLiquido.add(venda.getTotalVenda());
-            totalDescontos = totalDescontos.add(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO);
-
-            for (ItemVenda item : venda.getItens()) {
-                custoTotalMercadoria = custoTotalMercadoria.add(item.getCustoTotal() != null ? item.getCustoTotal() : BigDecimal.ZERO);
-            }
-        }
-
-        BigDecimal totalBruto = totalLiquido.add(totalDescontos);
-        BigDecimal lucroBruto = totalLiquido.subtract(custoTotalMercadoria);
-        BigDecimal margem = totalLiquido.compareTo(BigDecimal.ZERO) > 0
-                ? lucroBruto.divide(totalLiquido, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"))
-                : BigDecimal.ZERO;
-
-        Map<Integer, List<Venda>> agrupadoPorHora = vendas.stream()
-                .collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
-
-        List<VendasPorHoraDTO> vendasPorHora = new ArrayList<>();
-        for (int h = 0; h < 24; h++) {
-            List<Venda> vh = agrupadoPorHora.getOrDefault(h, new ArrayList<>());
-            BigDecimal totalH = vh.stream().map(Venda::getTotalVenda).reduce(BigDecimal.ZERO, BigDecimal::add);
-            vendasPorHora.add(new VendasPorHoraDTO(h, totalH, (long) vh.size()));
-        }
-
-        return new RelatorioVendasDTO(
-                inicio, fim, vendas.size(), totalBruto, totalDescontos,
-                totalLiquido, custoTotalMercadoria, lucroBruto, margem,
-                vendasPorHora
-        );
+        // 4. Montagem do DTO
+        return RelatorioVendasDTO.builder()
+                .dataGeracao(LocalDateTime.now())
+                .periodo(inicio.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) + " a " + fim.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")))
+                .faturamentoTotal(faturamentoTotal)
+                .totalVendasRealizadas(totalVendas)
+                .ticketMedio(ticketMedio)
+                .evolucaoDiaria(evolucao)
+                .vendasPorPagamento(pagamentos)
+                .produtosMaisVendidos(topProdutos)
+                .build();
     }
 
     // ==================================================================================
-    // SESSÃO 4: RELATÓRIOS FINANCEIROS (NOVO - FIADO)
+    // SESSÃO 4: RELATÓRIOS FINANCEIROS (FIADO)
     // ==================================================================================
 
     @Transactional(readOnly = true)
     public List<RelatorioInadimplenciaDTO> gerarRelatorioFiado() {
         List<RelatorioInadimplenciaDTO> relatorio = new ArrayList<>();
+        List<String> documentosDevedores = contaReceberRepository.buscarCpfsComPendencia(); // Note: Método no repo ainda se chama 'buscarCpfs...' mas a query foi corrigida para usar 'clienteDocumento'
 
-        // 1. Busca quem deve (CPFs únicos)
-        List<String> cpfsDevedores = contaReceberRepository.buscarCpfsComPendencia();
+        for (String doc : documentosDevedores) {
+            if (doc == null) continue;
 
-        for (String cpf : cpfsDevedores) {
-            if (cpf == null) continue;
-
-            // 2. Busca dados do cliente
-            Optional<Cliente> clienteOpt = clienteRepository.findByDocumento(cpf);
+            Optional<Cliente> clienteOpt = clienteRepository.findByDocumento(doc);
             String nome = clienteOpt.map(Cliente::getNome).orElse("Cliente Não Cadastrado");
             String telefone = clienteOpt.map(Cliente::getTelefone).orElse("-");
 
-            // 3. Busca contas
-            List<ContaReceber> contas = contaReceberRepository.listarContasEmAberto(cpf);
-
+            List<ContaReceber> contas = contaReceberRepository.listarContasEmAberto(doc);
             BigDecimal totalDevido = BigDecimal.ZERO;
             List<TituloPendenteDTO> detalhes = new ArrayList<>();
             int contasAtrasadas = 0;
 
             for (ContaReceber conta : contas) {
                 totalDevido = totalDevido.add(conta.getValorLiquido());
-
                 long diasAtraso = ChronoUnit.DAYS.between(conta.getDataVencimento(), LocalDate.now());
-                if (diasAtraso > 0) {
-                    contasAtrasadas++;
-                } else {
-                    diasAtraso = 0;
-                }
+                if (diasAtraso > 0) contasAtrasadas++;
+                else diasAtraso = 0;
 
-                detalhes.add(new TituloPendenteDTO(
-                        conta.getId(),
-                        conta.getIdVendaRef(),
-                        conta.getDataVencimento(),
-                        conta.getValorLiquido(),
-                        diasAtraso
-                ));
+                detalhes.add(new TituloPendenteDTO(conta.getId(), conta.getIdVendaRef(), conta.getDataVencimento(), conta.getValorLiquido(), diasAtraso));
             }
 
-            relatorio.add(new RelatorioInadimplenciaDTO(
-                    nome,
-                    cpf,
-                    telefone,
-                    totalDevido,
-                    contasAtrasadas,
-                    detalhes
-            ));
+            relatorio.add(new RelatorioInadimplenciaDTO(nome, doc, telefone, totalDevido, contasAtrasadas, detalhes));
         }
         return relatorio;
     }

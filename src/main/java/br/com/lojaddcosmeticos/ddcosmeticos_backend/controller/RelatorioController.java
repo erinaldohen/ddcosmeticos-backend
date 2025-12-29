@@ -55,7 +55,6 @@ public class RelatorioController {
         return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
     }
 
-
     // ==================================================================================
     // SESSÃO 3: RELATÓRIOS FISCAIS
     // ==================================================================================

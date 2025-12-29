@@ -1,59 +1,107 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import org.springframework.stereotype.Service;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
 public class CalculadoraFiscalService {
 
-    // Alíquota padrão interna de PE (Pode variar, ajustado para 2025)
-    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // 20.5%
+    // ==================================================================================
+    // MÓDULO 1: CÁLCULO DE FRONTEIRA E ST (ATUAL - USADO EM COMPRAS)
+    // ==================================================================================
 
+    // Alíquota padrão interna de PE (Ajustado)
+    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // 20.5%
     // Estados do Sul e Sudeste (Exceto ES) que pagam 7% para o Nordeste
     private static final Set<String> ESTADOS_7_PORCENTO = Set.of("SP", "MG", "RJ", "RS", "SC", "PR");
 
     /**
-     * Calcula o imposto de fronteira (ST/DIFAL) baseado nos estados.
+     * Método restaurado para corrigir o erro na linha 53 do PedidoCompraService
      */
     public BigDecimal calcularImposto(BigDecimal valorProduto, BigDecimal mvaPercentual, String ufOrigem, String ufDestino) {
-
-        // 1. Validação de Compra Interna (Mesmo Estado)
-        // Se compro de PE para vender em PE, geralmente não pago ST de entrada na barreira.
-        if (ufOrigem.equalsIgnoreCase(ufDestino)) {
+        if (ufOrigem == null || ufDestino == null || ufOrigem.equalsIgnoreCase(ufDestino)) {
             return BigDecimal.ZERO;
         }
 
-        // 2. Define Alíquota Interestadual (O que vem na Nota)
         BigDecimal aliqInterestadual = obterAliquotaInterestadual(ufOrigem, ufDestino);
-
-        // 3. Fórmula do ICMS-ST (Substituição Tributária)
-        // BaseST = Valor * (1 + MVA%)
         BigDecimal mvaDecimal = mvaPercentual.divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
         BigDecimal baseCalculoSt = valorProduto.multiply(BigDecimal.ONE.add(mvaDecimal));
 
-        // Débito (O que o estado de destino quer receber)
         BigDecimal debitoDestino = baseCalculoSt.multiply(ALIQ_INTERNA_DESTINO);
-
-        // Crédito (O que já foi pago na origem)
         BigDecimal creditoOrigem = valorProduto.multiply(aliqInterestadual);
 
-        // A Pagar = Débito - Crédito
         BigDecimal valorPagar = debitoDestino.subtract(creditoOrigem);
-
-        // Se o resultado for negativo (crédito maior que débito), imposto é zero.
         return valorPagar.max(BigDecimal.ZERO);
     }
 
     private BigDecimal obterAliquotaInterestadual(String origem, String destino) {
-        // Regra Geral: Sul/Sudeste enviando para Nordeste = 7%
-        // Demais casos (Nordeste p/ Nordeste, etc) = 12%
-        // Importados (começam com 4 na nota) = 4% (Fica para v2)
-
         if (ESTADOS_7_PORCENTO.contains(origem.toUpperCase()) && !ESTADOS_7_PORCENTO.contains(destino.toUpperCase())) {
-            return new BigDecimal("0.07"); // 7%
+            return new BigDecimal("0.07");
         }
-        return new BigDecimal("0.12"); // 12%
+        return new BigDecimal("0.12");
+    }
+
+    // ==================================================================================
+    // MÓDULO 2: SIMULAÇÃO REFORMA TRIBUTÁRIA 2026 (NOVO)
+    // ==================================================================================
+
+    private static final BigDecimal ALIQUOTA_PADRAO_IBS = new BigDecimal("0.17");
+    private static final BigDecimal ALIQUOTA_PADRAO_CBS = new BigDecimal("0.09");
+    private static final BigDecimal ALIQUOTA_SIMPLES_COMERCIO = new BigDecimal("0.04");
+
+    public BigDecimal calcularImpostosTotais(List<ItemVenda> itens) {
+        return itens.stream()
+                .map(this::calcularImpostoItem)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal calcularImpostoItem(ItemVenda item) {
+        if (item.getProduto() == null) return BigDecimal.ZERO;
+        BigDecimal valorTotal = item.getPrecoUnitario().multiply(item.getQuantidade());
+        // Simulação genérica de carga tributária atual (aprox 18%)
+        return valorTotal.multiply(new BigDecimal("0.18"));
+    }
+
+    public Map<String, BigDecimal> simularTributacao2026(BigDecimal valorVenda, boolean isMonofasico) {
+        Map<String, BigDecimal> simulacao = new HashMap<>();
+        BigDecimal baseCalculo = valorVenda;
+
+        BigDecimal valorCBS = isMonofasico ? BigDecimal.ZERO : baseCalculo.multiply(ALIQUOTA_PADRAO_CBS);
+        BigDecimal valorIBS = baseCalculo.multiply(ALIQUOTA_PADRAO_IBS);
+        BigDecimal totalNovo = valorCBS.add(valorIBS);
+
+        simulacao.put("CBS_ESTIMADO", valorCBS.setScale(2, RoundingMode.HALF_UP));
+        simulacao.put("IBS_ESTIMADO", valorIBS.setScale(2, RoundingMode.HALF_UP));
+        simulacao.put("TOTAL_IVA_DUAL", totalNovo.setScale(2, RoundingMode.HALF_UP));
+
+        return simulacao;
+    }
+
+    public String analisarCenarioMaisVantajoso(BigDecimal faturamentoMensal, BigDecimal comprasMensais) {
+        BigDecimal impostoAtual = faturamentoMensal.multiply(ALIQUOTA_SIMPLES_COMERCIO);
+
+        BigDecimal aliquotaTotalIva = ALIQUOTA_PADRAO_CBS.add(ALIQUOTA_PADRAO_IBS);
+        BigDecimal ivaVendas = faturamentoMensal.multiply(aliquotaTotalIva);
+        BigDecimal creditoCompras = comprasMensais.multiply(aliquotaTotalIva);
+        BigDecimal impostoFuturo = ivaVendas.subtract(creditoCompras).max(BigDecimal.ZERO);
+
+        StringBuilder relatorio = new StringBuilder();
+        relatorio.append("--- Análise Tributária Preliminar ---\n");
+        relatorio.append(String.format("Imposto Estimado Atual (Simples): R$ %.2f\n", impostoAtual));
+        relatorio.append(String.format("Imposto Estimado 2026 (IVA): R$ %.2f\n", impostoFuturo));
+
+        if (impostoAtual.compareTo(impostoFuturo) < 0) {
+            relatorio.append("CONCLUSÃO: O regime ATUAL (Simples) parece mais vantajoso.");
+        } else {
+            relatorio.append("CONCLUSÃO: A migração para o IVA pode gerar economia pelos créditos.");
+        }
+        return relatorio.toString();
     }
 }

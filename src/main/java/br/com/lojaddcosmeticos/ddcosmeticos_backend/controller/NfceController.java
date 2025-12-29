@@ -29,7 +29,7 @@ public class NfceController {
         // O Service já trata a exceção ResourceNotFoundException se não achar
         Venda venda = vendaService.buscarVendaComItens(idVenda);
 
-        NfceResponseDTO resultado = nfceService.emitirNfce(venda);
+        NfceResponseDTO resultado = nfceService.emitirNfce(venda,true);
 
         return ResponseEntity.ok(resultado);
     }

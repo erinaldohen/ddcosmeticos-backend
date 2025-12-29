@@ -1,12 +1,22 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import java.io.Serializable;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-public record NfceResponseDTO(
-        String xml,
-        String status,
-        String protocolo,
-        String mensagem
-) implements Serializable {
-    private static final long serialVersionUID = 1L;
+import java.time.LocalDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class NfceResponseDTO {
+    private String chaveAcesso;
+    private String numeroNota;
+    private String serie;
+    private String status;
+    private String motivo;
+    private String xml;
+    private LocalDateTime dataEmissao;
 }

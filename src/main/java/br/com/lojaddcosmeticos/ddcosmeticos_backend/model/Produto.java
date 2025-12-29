@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -22,11 +23,9 @@ public class Produto implements Serializable {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // AUMENTADO PARA 20 (Para garantir)
     @Column(name = "codigo_barras", unique = true, length = 20)
     private String codigoBarras;
 
-    // AUMENTADO PARA 500 (Algumas descrições são enormes)
     @Column(nullable = false, length = 500)
     private String descricao;
 
@@ -45,16 +44,21 @@ public class Produto implements Serializable {
     @Column(name = "monofasico")
     private boolean monofasico = false;
 
-    // --- DADOS FISCAIS (AUMENTADOS PARA EVITAR ERRO 22001) ---
+    // --- DADOS FISCAIS ---
 
-    @Column(length = 20) // Era 8
+    @Column(length = 20)
     private String ncm;
 
-    @Column(length = 20) // Era 7
+    @Column(length = 20)
     private String cest;
 
-    @Column(length = 10) // Era 4
+    @Column(length = 10)
     private String cst;
+
+    // --- NOVA LEI COMPLEMENTAR 214/2025 ---
+    @Enumerated(EnumType.STRING)
+    @Column(name = "classificacao_reforma", length = 30)
+    private TipoTributacaoReforma classificacaoReforma = TipoTributacaoReforma.PADRAO;
 
     // --- ESTOQUES ---
 

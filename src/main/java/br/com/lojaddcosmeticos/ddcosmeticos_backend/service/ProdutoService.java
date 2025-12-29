@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -20,9 +21,7 @@ public class ProdutoService {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    // ==================================================================================
-    // LEITURA (Retornando Entidade para compatibilidade com o Controller atual)
-    // ==================================================================================
+    // --- LEITURA ---
 
     @Transactional(readOnly = true)
     public Produto buscarPorId(Long id) {
@@ -39,10 +38,7 @@ public class ProdutoService {
 
     @Transactional(readOnly = true)
     public List<Produto> buscarInteligente(String termo) {
-        if (termo == null || termo.isBlank()) {
-            return produtoRepository.findAll();
-        }
-        // Busca por nome ou código de barras
+        if (termo == null || termo.isBlank()) return produtoRepository.findAll();
         return produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo);
     }
 
@@ -56,25 +52,18 @@ public class ProdutoService {
         return produtoRepository.findAll(pageable);
     }
 
-    // ==================================================================================
-    // ESCRITA (Recebendo DTO para corrigir o erro da linha 82)
-    // ==================================================================================
+    // --- ESCRITA ---
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public ProdutoDTO salvar(ProdutoDTO dto) {
-        // Validação básica de unicidade
         if (produtoRepository.existsByCodigoBarras(dto.codigoBarras())) {
             throw new IllegalArgumentException("Já existe um produto com este código de barras.");
         }
-
         Produto produto = new Produto();
         copiarDtoParaEntidade(dto, produto);
-
-        // Valores padrão para novo cadastro
         produto.setQuantidadeEmEstoque(0);
         produto.setAtivo(true);
-
         produtoRepository.save(produto);
         return new ProdutoDTO(produto);
     }
@@ -83,20 +72,13 @@ public class ProdutoService {
     @CacheEvict(value = "produtos", allEntries = true)
     public Produto atualizar(Long id, ProdutoDTO dto) {
         Produto produto = buscarPorId(id);
-
-        // Verifica se mudou o código de barras e se já existe
         if (!produto.getCodigoBarras().equals(dto.codigoBarras()) &&
                 produtoRepository.existsByCodigoBarras(dto.codigoBarras())) {
-            throw new IllegalArgumentException("Código de barras já utilizado por outro produto.");
+            throw new IllegalArgumentException("Código de barras já utilizado.");
         }
-
         copiarDtoParaEntidade(dto, produto);
         return produtoRepository.save(produto);
     }
-
-    // ==================================================================================
-    // GESTÃO DE STATUS E IMAGEM
-    // ==================================================================================
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -109,29 +91,25 @@ public class ProdutoService {
     @Transactional
     @CacheEvict(value = "produtos", key = "#ean")
     public void inativarPorEan(String ean) {
-        Produto produto = buscarPorCodigoBarras(ean);
-        produto.setAtivo(false);
-        produtoRepository.save(produto);
+        Produto p = buscarPorCodigoBarras(ean);
+        p.setAtivo(false);
+        produtoRepository.save(p);
     }
 
     @Transactional
     @CacheEvict(value = "produtos", key = "#ean")
     public void reativarPorEan(String ean) {
-        Produto produto = buscarPorCodigoBarras(ean);
-        produto.setAtivo(true);
-        produtoRepository.save(produto);
+        Produto p = buscarPorCodigoBarras(ean);
+        p.setAtivo(true);
+        produtoRepository.save(p);
     }
 
     @Transactional
     public void atualizarUrlImagem(Long id, String url) {
-        Produto produto = buscarPorId(id);
-        produto.setUrlImagem(url);
-        produtoRepository.save(produto);
+        Produto p = buscarPorId(id);
+        p.setUrlImagem(url);
+        produtoRepository.save(p);
     }
-
-    // ==================================================================================
-    // UTILITÁRIOS
-    // ==================================================================================
 
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
         produto.setCodigoBarras(dto.codigoBarras());
@@ -140,6 +118,16 @@ public class ProdutoService {
         produto.setPrecoVenda(dto.precoVenda());
         produto.setNcm(dto.ncm());
         produto.setEstoqueMinimo(dto.estoqueMinimo());
-        // Mapeie outros campos conforme necessário
+        produto.setMonofasico(dto.monofasico() != null ? dto.monofasico() : false);
+        produto.setCest(dto.cest());
+        produto.setCst(dto.cst());
+
+        // --- MAPEAMENTO DO NOVO CAMPO ---
+        if (dto.classificacaoReforma() != null) {
+            produto.setClassificacaoReforma(dto.classificacaoReforma());
+        } else {
+            // Default se o frontend não mandar nada
+            produto.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
+        }
     }
 }

@@ -12,21 +12,28 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class RelatorioService {
 
+    // ==================================================================================
+    // SESSÃO 1: DEPENDÊNCIAS
+    // ==================================================================================
     @Autowired private VendaRepository vendaRepository;
     @Autowired private ProdutoRepository produtoRepository;
-    @Autowired private AuditoriaRepository auditoriaRepository;
     @Autowired private ItemVendaRepository itemVendaRepository;
+    @Autowired private ContaReceberRepository contaReceberRepository; // Novo para o Fiado
+    @Autowired private ClienteRepository clienteRepository; // Novo para o Fiado
+    @Autowired private AuditoriaRepository auditoriaRepository; // Mantido para compatibilidade futura
 
-     /**
+    // ==================================================================================
+    // SESSÃO 2: RELATÓRIOS FISCAIS E DE ESTOQUE
+    // ==================================================================================
+
+    /**
      * Relatório de produtos monofásicos (Isenção de PIS/COFINS).
      */
     @Transactional(readOnly = true)
@@ -54,25 +61,21 @@ public class RelatorioService {
 
         List<ItemInventarioDTO> itensDTO = produtos.stream()
                 .map(p -> {
-                    // --- CORREÇÃO DO ERRO AQUI ---
-                    // 1. Convertemos Integer para BigDecimal explicitamente
                     BigDecimal quantidade = p.getQuantidadeEmEstoque() != null
                             ? new BigDecimal(p.getQuantidadeEmEstoque())
                             : BigDecimal.ZERO;
 
-                    // 2. Usamos o nome do método que você escolheu manter
                     BigDecimal custoMedio = p.getPrecoMedioPonderado() != null
                             ? p.getPrecoMedioPonderado()
                             : BigDecimal.ZERO;
 
-                    // 3. Agora a multiplicação funciona (BigDecimal x BigDecimal)
                     BigDecimal total = quantidade.multiply(custoMedio);
 
                     return ItemInventarioDTO.builder()
                             .codigoBarras(p.getCodigoBarras())
-                            .descricao(p.getDescricao()) // Usando getDescricao conforme sua preferência
+                            .descricao(p.getDescricao())
                             .unidade(p.getUnidade())
-                            .quantidade(quantidade) // Passamos o BigDecimal convertido
+                            .quantidade(quantidade)
                             .custoUnitarioPmp(custoMedio)
                             .valorTotalEstoque(total)
                             .statusFiscal(p.isPossuiNfEntrada() ? "FISCAL" : "GERENCIAL")
@@ -92,6 +95,10 @@ public class RelatorioService {
                 .itens(itensDTO)
                 .build();
     }
+
+    // ==================================================================================
+    // SESSÃO 3: RELATÓRIOS DE PERFORMANCE (VENDAS E CURVA ABC)
+    // ==================================================================================
 
     /**
      * Curva ABC para identificação de produtos estratégicos.
@@ -144,7 +151,6 @@ public class RelatorioService {
                 ? lucroBruto.divide(totalLiquido, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"))
                 : BigDecimal.ZERO;
 
-        // --- LÓGICA DO GRÁFICO POR HORA ---
         Map<Integer, List<Venda>> agrupadoPorHora = vendas.stream()
                 .collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
 
@@ -155,11 +161,67 @@ public class RelatorioService {
             vendasPorHora.add(new VendasPorHoraDTO(h, totalH, (long) vh.size()));
         }
 
-        // RETORNO COM OS 10 PARÂMETROS SINCRONIZADOS
         return new RelatorioVendasDTO(
                 inicio, fim, vendas.size(), totalBruto, totalDescontos,
                 totalLiquido, custoTotalMercadoria, lucroBruto, margem,
-                vendasPorHora // <--- A falta deste campo causava o erro na linha 33
+                vendasPorHora
         );
+    }
+
+    // ==================================================================================
+    // SESSÃO 4: RELATÓRIOS FINANCEIROS (NOVO - FIADO)
+    // ==================================================================================
+
+    @Transactional(readOnly = true)
+    public List<RelatorioInadimplenciaDTO> gerarRelatorioFiado() {
+        List<RelatorioInadimplenciaDTO> relatorio = new ArrayList<>();
+
+        // 1. Busca quem deve (CPFs únicos)
+        List<String> cpfsDevedores = contaReceberRepository.buscarCpfsComPendencia();
+
+        for (String cpf : cpfsDevedores) {
+            if (cpf == null) continue;
+
+            // 2. Busca dados do cliente
+            Optional<Cliente> clienteOpt = clienteRepository.findByCpf(cpf);
+            String nome = clienteOpt.map(Cliente::getNome).orElse("Cliente Não Cadastrado");
+            String telefone = clienteOpt.map(Cliente::getTelefone).orElse("-");
+
+            // 3. Busca contas
+            List<ContaReceber> contas = contaReceberRepository.listarContasEmAberto(cpf);
+
+            BigDecimal totalDevido = BigDecimal.ZERO;
+            List<TituloPendenteDTO> detalhes = new ArrayList<>();
+            int contasAtrasadas = 0;
+
+            for (ContaReceber conta : contas) {
+                totalDevido = totalDevido.add(conta.getValorLiquido());
+
+                long diasAtraso = ChronoUnit.DAYS.between(conta.getDataVencimento(), LocalDate.now());
+                if (diasAtraso > 0) {
+                    contasAtrasadas++;
+                } else {
+                    diasAtraso = 0;
+                }
+
+                detalhes.add(new TituloPendenteDTO(
+                        conta.getId(),
+                        conta.getIdVendaRef(),
+                        conta.getDataVencimento(),
+                        conta.getValorLiquido(),
+                        diasAtraso
+                ));
+            }
+
+            relatorio.add(new RelatorioInadimplenciaDTO(
+                    nome,
+                    cpf,
+                    telefone,
+                    totalDevido,
+                    contasAtrasadas,
+                    detalhes
+            ));
+        }
+        return relatorio;
     }
 }

@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.InventarioResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemAbcDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioInadimplenciaDTO; // Novo DTO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -17,11 +19,15 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/relatorios")
-@Tag(name = "Relatórios", description = "Relatórios Gerenciais e Fiscais")
+@Tag(name = "Relatórios", description = "Relatórios Gerenciais, Fiscais e Financeiros")
 public class RelatorioController {
 
     @Autowired
     private RelatorioService relatorioService;
+
+    // ==================================================================================
+    // SESSÃO 1: RELATÓRIOS DE ESTOQUE E CURVA ABC
+    // ==================================================================================
 
     @GetMapping("/inventario")
     @Operation(summary = "Inventário de Estoque", description = "Lista produtos, custos e valor total em estoque. Use 'contabil=true' para filtrar apenas com nota.")
@@ -36,6 +42,10 @@ public class RelatorioController {
         return ResponseEntity.ok(relatorioService.gerarCurvaAbc());
     }
 
+    // ==================================================================================
+    // SESSÃO 2: RELATÓRIOS DE VENDAS (PERFORMANCE)
+    // ==================================================================================
+
     @GetMapping("/vendas")
     @Operation(summary = "Vendas por Período", description = "Detalha faturamento, lucro, margem e gráfico de vendas por hora.")
     public ResponseEntity<RelatorioVendasDTO> gerarRelatorioVendas(
@@ -44,9 +54,24 @@ public class RelatorioController {
         return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
     }
 
+    // ==================================================================================
+    // SESSÃO 3: RELATÓRIOS FISCAIS
+    // ==================================================================================
+
     @GetMapping("/monofasicos")
     @Operation(summary = "Produtos Monofásicos", description = "Lista produtos com isenção de PIS/COFINS para conferência contábil.")
     public ResponseEntity<List<Map<String, Object>>> gerarMonofasicos() {
         return ResponseEntity.ok(relatorioService.gerarRelatorioMonofasicos());
+    }
+
+    // ==================================================================================
+    // SESSÃO 4: RELATÓRIOS FINANCEIROS (CRÉDITO E INADIMPLÊNCIA)
+    // ==================================================================================
+
+    @GetMapping("/fiado-inadimplencia")
+    @PreAuthorize("hasAnyRole('GERENTE', 'ADMIN')") // Apenas gerentes veem quem deve
+    @Operation(summary = "Relatório de Inadimplência (Fiado)", description = "Lista todos os clientes com pagamentos pendentes, total da dívida e detalhes.")
+    public ResponseEntity<List<RelatorioInadimplenciaDTO>> obterRelatorioFiado() {
+        return ResponseEntity.ok(relatorioService.gerarRelatorioFiado());
     }
 }

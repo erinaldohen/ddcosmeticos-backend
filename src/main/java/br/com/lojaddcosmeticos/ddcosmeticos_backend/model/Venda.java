@@ -4,6 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -13,6 +14,7 @@ import java.util.List;
 
 @Data
 @Entity
+@NoArgsConstructor
 @Table(name = "venda")
 public class Venda implements Serializable {
     private static final long serialVersionUID = 1L;
@@ -21,51 +23,66 @@ public class Venda implements Serializable {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @ManyToOne
+    @JoinColumn(name = "usuario_id", nullable = false)
+    private Usuario usuario;
+
+    // CORREÇÃO CRÍTICA: Mudado de "status-fiscal" para "status_fiscal"
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_fiscal", nullable = false)
+    private StatusFiscal statusFiscal = StatusFiscal.PENDENTE;
+
     @Column(name = "data_venda", nullable = false)
     private LocalDateTime dataVenda = LocalDateTime.now();
 
-    // --- NOVO CAMPO DE AUDITORIA ---
-    @ManyToOne
-    @JoinColumn(name = "usuario_id", nullable = false) // nullable=false obriga a ter usuário
-    private Usuario usuario;
+    // Snapshot do cliente (Nome e Documento no momento da venda)
+    @Column(name = "cliente_documento")
+    private String clienteDocumento;
 
-    // FINANCEIRO: Como foi pago (Vinculado ao seu Enum)
-    @Enumerated(EnumType.STRING)
-    @Column(name = "forma_pagamento", nullable = false)
-    private FormaDePagamento formaPagamento;
+    @Column(name = "cliente_nome")
+    private String clienteNome;
 
-    // TOTALIZAÇÃO
+    // Vínculo real com o cadastro (opcional)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cliente_id")
+    private Cliente cliente;
+
     @Column(name = "total_venda", nullable = false, precision = 10, scale = 2)
     private BigDecimal totalVenda = BigDecimal.ZERO;
 
     @Column(name = "desconto_total", precision = 10, scale = 2)
     private BigDecimal descontoTotal = BigDecimal.ZERO;
 
-    // CLIENTE
-    @Column(name = "cliente_cpf")
-    private String clienteCpf;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "forma_pagamento", nullable = false)
+    private FormaDePagamento formaPagamento;
 
-    @Column(name = "cliente_nome")
-    private String clienteNome;
+    private Integer quantidadeParcelas;
 
-    // GESTÃO DE ESTORNOS
-    private boolean cancelada = false;
+    @Lob
+    @Column(columnDefinition = "TEXT")
     private String motivoDoCancelamento;
 
-    // STATUS FISCAL
-    @Enumerated(EnumType.STRING)
-    @Column(name = "status-fiscal", nullable = false)
-    private StatusFiscal statusFiscal;
-
+    // XML da Nota Fiscal (para reenvio/consulta)
     @Lob
     @Column(columnDefinition = "TEXT")
     private String xmlNfce;
 
-    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ItemVenda> itens = new ArrayList<>();
 
+    // --- Métodos de Compatibilidade ---
+    // O Service chama setClienteCpf, então mapeamos para clienteDocumento
+    public void setClienteCpf(String documento) {
+        this.clienteDocumento = documento;
+    }
+
+    public String getClienteCpf() {
+        return this.clienteDocumento;
+    }
+
     public void adicionarItem(ItemVenda item) {
-        itens.add(item);
         item.setVenda(this);
+        this.itens.add(item);
     }
 }

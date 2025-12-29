@@ -183,7 +183,7 @@ public class RelatorioService {
             if (cpf == null) continue;
 
             // 2. Busca dados do cliente
-            Optional<Cliente> clienteOpt = clienteRepository.findByCpf(cpf);
+            Optional<Cliente> clienteOpt = clienteRepository.findByDocumento(cpf);
             String nome = clienteOpt.map(Cliente::getNome).orElse("Cliente Não Cadastrado");
             String telefone = clienteOpt.map(Cliente::getTelefone).orElse("-");
 

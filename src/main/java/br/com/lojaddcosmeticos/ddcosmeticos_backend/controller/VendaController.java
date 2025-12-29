@@ -99,10 +99,13 @@ public class VendaController {
                 venda.getId(),
                 venda.getDataVenda(),
                 venda.getClienteNome(),
+                venda.getClienteDocumento(), // <--- Passando o novo campo
                 venda.getTotalVenda(),
                 venda.getDescontoTotal(),
                 venda.getStatusFiscal().name(),
-                venda.getItens().stream().map(i -> i.getProduto().getDescricao()).collect(Collectors.toList())
+                venda.getItens().stream()
+                        .map(i -> i.getProduto().getDescricao())
+                        .collect(Collectors.toList())
         );
     }
 }

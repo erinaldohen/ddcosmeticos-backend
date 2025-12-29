@@ -30,15 +30,13 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class VendaService {
 
-    // ==================================================================================
-    // SESSÃO 1: DEPENDÊNCIAS
-    // ==================================================================================
     @Autowired private VendaRepository vendaRepository;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private UsuarioRepository usuarioRepository;
@@ -50,29 +48,31 @@ public class VendaService {
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
 
-    // ==================================================================================
-    // SESSÃO 2: OPERAÇÃO PRINCIPAL (REALIZAR VENDA / ORÇAMENTO / SUSPENDER)
-    // ==================================================================================
-
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
-        if (usuarioLogado == null) throw new ValidationException("Erro crítico: Nenhum usuário identificado.");
+        if (usuarioLogado == null) throw new ValidationException("Erro crítico: Nenhum utilizador identificado.");
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
-        venda.setClienteCpf(dto.clienteCpf());
-        // Se não tiver nome e for suspensão, usa um placeholder
-        venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Cliente no Balcão");
+
+        // Compatibilidade: DTO traz 'clienteDocumento', Entidade usa 'setClienteCpf'
+        venda.setClienteCpf(dto.clienteDocumento());
+
+        venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
         venda.setFormaPagamento(dto.formaPagamento());
 
-        // --- LÓGICA DE STATUS ---
-        boolean isOrcamento = Boolean.TRUE.equals(dto.ehOrcamento());
+        // Busca Cliente no banco se houver documento
+        if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
+            String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
+            clienteRepository.findByDocumento(docLimpo).ifPresent(c -> {
+                venda.setCliente(c);
+                if (venda.getClienteNome() == null) venda.setClienteNome(c.getNome());
+            });
+        }
 
-        // Se é orçamento, status ORCAMENTO. Se não, PENDENTE (venda normal).
-        // A lógica de SUSPENDER virá em um método específico ou flag, mas podemos tratar aqui se o DTO suportasse.
-        // Para simplificar, vou manter este método para Venda e Orçamento, e criar um específico para Suspender abaixo.
+        boolean isOrcamento = Boolean.TRUE.equals(dto.ehOrcamento());
         venda.setStatusFiscal(isOrcamento ? StatusFiscal.ORCAMENTO : StatusFiscal.PENDENTE);
 
         BigDecimal totalItens = processarItensDaVenda(venda, dto);
@@ -87,42 +87,39 @@ public class VendaService {
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
         if (!isOrcamento && dto.formaPagamento() == FormaDePagamento.CREDIARIO) {
-            validarCreditoDoCliente(dto.clienteCpf(), valorFinal);
+            String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
+            validarCreditoDoCliente(doc, valorFinal);
         }
 
         Venda vendaSalva = vendaRepository.save(venda);
 
         if (!isOrcamento) {
             executarFluxosOperacionais(vendaSalva, dto);
-            nfceService.emitirNfce(vendaSalva, dto.apenasItensComNfEntrada());
+            nfceService.emitirNfce(vendaSalva, Boolean.TRUE.equals(dto.apenasItensComNfEntrada()));
         }
 
         return vendaRepository.save(vendaSalva);
     }
 
-    // ==================================================================================
-    // SESSÃO 3: FILA DE ESPERA (SUSPENDER E RETOMAR) - NOVO
-    // ==================================================================================
-
     @Transactional
     public Venda suspenderVenda(VendaRequestDTO dto) {
-        // Lógica similar à venda, mas sem validar pagamento e com status EM_ESPERA
         Usuario usuarioLogado = capturarUsuarioLogado();
-
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
-        venda.setClienteCpf(dto.clienteCpf());
+        venda.setClienteCpf(dto.clienteDocumento());
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa - " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
-        // Forma de pagamento é provisória ou nula na suspensão
         venda.setFormaPagamento(dto.formaPagamento() != null ? dto.formaPagamento() : FormaDePagamento.DINHEIRO);
         venda.setStatusFiscal(StatusFiscal.EM_ESPERA);
+
+        if (dto.clienteDocumento() != null) {
+            clienteRepository.findByDocumento(dto.clienteDocumento().replaceAll("\\D", "")).ifPresent(venda::setCliente);
+        }
 
         BigDecimal totalItens = processarItensDaVenda(venda, dto);
         venda.setTotalVenda(totalItens);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
 
-        // Não executa baixa de estoque nem financeiro. Apenas salva.
         return vendaRepository.save(venda);
     }
 
@@ -133,7 +130,8 @@ public class VendaService {
                 .map(v -> VendaResponseDTO.builder()
                         .idVenda(v.getId())
                         .dataVenda(v.getDataVenda())
-                        .clienteNome(v.getClienteNome()) // Importante mostrar o nome/senha
+                        .clienteNome(v.getClienteNome())
+                        .clienteDocumento(v.getClienteCpf())
                         .valorTotal(v.getTotalVenda().subtract(v.getDescontoTotal()))
                         .totalItens(v.getItens().size())
                         .statusFiscal(v.getStatusFiscal())
@@ -142,30 +140,23 @@ public class VendaService {
                 .collect(Collectors.toList());
     }
 
-    // ==================================================================================
-    // SESSÃO 4: EFETIVAÇÃO (ORÇAMENTO OU SUSPENSA)
-    // ==================================================================================
-
     @Transactional
     public Venda efetivarVenda(Long idVendaPrevia) {
-        // Serve tanto para ORCAMENTO quanto para EM_ESPERA
         Venda venda = buscarVendaComItens(idVendaPrevia);
 
         if (venda.getStatusFiscal() != StatusFiscal.ORCAMENTO && venda.getStatusFiscal() != StatusFiscal.EM_ESPERA) {
             throw new ValidationException("Apenas orçamentos ou vendas suspensas podem ser efetivadas.");
         }
 
-        // 1. Atualiza Data para o momento real da venda
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusFiscal(StatusFiscal.PENDENTE);
 
-        // 2. Revalida Crédito (se for fiado)
         if (venda.getFormaPagamento() == FormaDePagamento.CREDIARIO) {
             BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
-            validarCreditoDoCliente(venda.getClienteCpf(), valorFinal);
+            String doc = venda.getClienteCpf() != null ? venda.getClienteCpf().replaceAll("\\D", "") : null;
+            validarCreditoDoCliente(doc, valorFinal);
         }
 
-        // 3. Executa Fluxos (Baixa Estoque e Financeiro)
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -179,19 +170,15 @@ public class VendaService {
                 venda.getId(),
                 venda.getTotalVenda().subtract(venda.getDescontoTotal()),
                 venda.getFormaPagamento().name(),
-                1
+                venda.getQuantidadeParcelas() != null ? venda.getQuantidadeParcelas() : 1
         );
 
         nfceService.emitirNfce(venda, false);
-
         return vendaRepository.save(venda);
     }
 
-    // ==================================================================================
-    // SESSÃO 5: CONSULTAS E AUXILIARES
-    // ==================================================================================
+    // --- Métodos Auxiliares ---
 
-    // (Mantido igual ao anterior, apenas para contexto de compilação)
     @Transactional(readOnly = true)
     public Page<VendaResponseDTO> listarVendas(LocalDate inicio, LocalDate fim, Pageable pageable) {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
@@ -201,7 +188,6 @@ public class VendaService {
                 .map(v -> VendaResponseDTO.builder()
                         .idVenda(v.getId())
                         .dataVenda(v.getDataVenda())
-                        .clienteNome(v.getClienteNome())
                         .valorTotal(v.getTotalVenda())
                         .desconto(v.getDescontoTotal())
                         .totalItens(v.getItens().size())
@@ -219,9 +205,8 @@ public class VendaService {
     @Transactional
     public void cancelarVenda(Long idVenda, String motivo) {
         Venda venda = buscarVendaComItens(idVenda);
-        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) throw new ValidationException("Já cancelada.");
+        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) throw new ValidationException("Venda já cancelada.");
 
-        // Se for pré-venda, só cancela status
         if (venda.getStatusFiscal() == StatusFiscal.ORCAMENTO || venda.getStatusFiscal() == StatusFiscal.EM_ESPERA) {
             venda.setStatusFiscal(StatusFiscal.CANCELADA);
             venda.setMotivoDoCancelamento(motivo);
@@ -229,7 +214,6 @@ public class VendaService {
             return;
         }
 
-        // Estornos normais...
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -244,7 +228,28 @@ public class VendaService {
         vendaRepository.save(venda);
     }
 
-    // --- Validações e Métodos Privados (Mantidos iguais) ---
+    private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
+        BigDecimal totalAcumulado = BigDecimal.ZERO;
+        for (ItemVendaDTO itemDto : dto.itens()) {
+            Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
+
+            BigDecimal estoqueAtual = BigDecimal.valueOf(produto.getQuantidadeEmEstoque());
+            if (estoqueAtual.compareTo(itemDto.getQuantidade()) < 0) {
+                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao());
+            }
+
+            ItemVenda item = new ItemVenda();
+            item.setProduto(produto);
+            item.setQuantidade(itemDto.getQuantidade());
+            item.setPrecoUnitario(produto.getPrecoVenda());
+            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
+            venda.adicionarItem(item);
+            totalAcumulado = totalAcumulado.add(item.getPrecoUnitario().multiply(item.getQuantidade()));
+        }
+        return totalAcumulado;
+    }
+
     private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
         if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
         ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElseGet(() -> {
@@ -262,35 +267,12 @@ public class VendaService {
         }
     }
 
-    private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
-        BigDecimal totalAcumulado = BigDecimal.ZERO;
-        for (ItemVendaDTO itemDto : dto.itens()) {
-            Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
-                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
-
-            // Valida se tem estoque físico, mesmo para suspensão (para não prometer o que não tem)
-            BigDecimal estoqueAtual = BigDecimal.valueOf(produto.getQuantidadeEmEstoque());
-            if (estoqueAtual.compareTo(itemDto.getQuantidade()) < 0) {
-                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao());
-            }
-
-            ItemVenda item = new ItemVenda();
-            item.setProduto(produto);
-            item.setQuantidade(itemDto.getQuantidade());
-            item.setPrecoUnitario(produto.getPrecoVenda());
-            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
-            venda.adicionarItem(item);
-            totalAcumulado = totalAcumulado.add(item.getPrecoUnitario().multiply(item.getQuantidade()));
-        }
-        return totalAcumulado;
-    }
-
-    private void validarCreditoDoCliente(String cpf, BigDecimal valorDaCompra) {
-        if (cpf == null || cpf.isBlank()) throw new ValidationException("CPF obrigatório para Crediário.");
-        Cliente cliente = clienteRepository.findByCpf(cpf).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
+    private void validarCreditoDoCliente(String documento, BigDecimal valorDaCompra) {
+        if (documento == null || documento.isBlank()) throw new ValidationException("Documento obrigatório para Crediário.");
+        Cliente cliente = clienteRepository.findByDocumento(documento).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
         if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
-        if (contaReceberRepository.existeContaVencida(cpf, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
-        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorCpf(cpf);
+        if (contaReceberRepository.existeContaVencida(documento, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
+        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorCpf(documento);
         if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
         if (dividaAtual.add(valorDaCompra).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de Crédito Excedido.");
     }

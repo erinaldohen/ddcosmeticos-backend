@@ -66,6 +66,9 @@ public class VendaCompletaResponseDTO implements Serializable {
         }
     }
 
+    public <R> VendaCompletaResponseDTO(Long id, LocalDateTime dataVenda, String clienteNome, BigDecimal totalVenda, BigDecimal descontoTotal, String name, R collect) {
+    }
+
     // Método auxiliar para o Dashboard: Calcula o Lucro Total da Venda
     public BigDecimal getLucroBrutoVenda() {
         if (itens == null) return BigDecimal.ZERO;

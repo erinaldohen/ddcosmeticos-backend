@@ -6,7 +6,9 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque; // IMPORT ADICIONADO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -31,19 +34,22 @@ import java.util.ArrayList;
 @Service
 public class VendaService {
 
-    // --- DEPENDÊNCIAS ---
+    // ==================================================================================
+    // SESSÃO 1: DEPENDÊNCIAS
+    // ==================================================================================
     @Autowired private VendaRepository vendaRepository;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private UsuarioRepository usuarioRepository;
-    @Autowired private ClienteRepository clienteRepository; // Novo: Para validação de crédito
-    @Autowired private ContaReceberRepository contaReceberRepository; // Novo: Para verificar dívidas
+    @Autowired private ClienteRepository clienteRepository;
+    @Autowired private ContaReceberRepository contaReceberRepository;
+    @Autowired private ConfiguracaoLojaRepository configuracaoLojaRepository;
 
     @Autowired private EstoqueService estoqueService;
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
 
     // ==================================================================================
-    // SESSÃO 1: OPERAÇÃO PRINCIPAL (REALIZAR VENDA)
+    // SESSÃO 2: OPERAÇÃO PRINCIPAL (REALIZAR VENDA)
     // ==================================================================================
 
     @Transactional
@@ -63,31 +69,36 @@ public class VendaService {
         // 2. Processamento de Itens e Estoque
         BigDecimal totalItens = processarItensDaVenda(venda, dto);
         venda.setTotalVenda(totalItens);
-        venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
+
+        BigDecimal desconto = dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO;
+        venda.setDescontoTotal(desconto);
+
+        // 3. Validação de Segurança (Limites de Desconto)
+        validarLimitesDeDesconto(usuarioLogado, totalItens, desconto);
 
         // O valor final a pagar (Total - Desconto)
         BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
-        // 3. Validação Financeira (NOVO: Lógica do Fiado)
+        // 4. Validação Financeira (Fiado/Crediário)
         if (dto.formaPagamento() == FormaDePagamento.CREDIARIO) {
             validarCreditoDoCliente(dto.clienteCpf(), valorFinal);
         }
 
-        // 4. Persistência
+        // 5. Persistência
         Venda vendaSalva = vendaRepository.save(venda);
 
-        // 5. Pós-Processamento (Baixa de Estoque e Geração de Títulos)
+        // 6. Pós-Processamento (Baixa de Estoque e Geração de Títulos)
         executarFluxosOperacionais(vendaSalva, dto);
 
-        // 6. Emissão Fiscal (Assíncrona/Simulada)
+        // 7. Emissão Fiscal (Simulada)
         nfceService.emitirNfce(vendaSalva, dto.apenasItensComNfEntrada());
 
         return vendaRepository.save(vendaSalva);
     }
 
     // ==================================================================================
-    // SESSÃO 2: CONSULTAS E RELATÓRIOS
+    // SESSÃO 3: CONSULTAS E RELATÓRIOS
     // ==================================================================================
 
     @Transactional(readOnly = true)
@@ -103,7 +114,7 @@ public class VendaService {
                         .desconto(v.getDescontoTotal())
                         .totalItens(v.getItens().size())
                         .statusFiscal(v.getStatusFiscal())
-                        .alertas(new ArrayList<>()) // Futuro: Alertas de margem baixa
+                        .alertas(new ArrayList<>())
                         .build());
     }
 
@@ -114,7 +125,7 @@ public class VendaService {
     }
 
     // ==================================================================================
-    // SESSÃO 3: GESTÃO E CANCELAMENTO
+    // SESSÃO 4: GESTÃO E CANCELAMENTO
     // ==================================================================================
 
     @Transactional
@@ -127,33 +138,69 @@ public class VendaService {
 
         log.info("Cancelando Venda #{}. Motivo: {}", idVenda, motivo);
 
-        // 1. Estorno de Estoque (Devolve produtos para a loja)
+        // Estorno de Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA.name());
-            ajuste.setTipoMovimento("ENTRADA");
+
+            // CORREÇÃO: Usando Enum para garantir tipo correto (ENTRADA no estoque)
+            ajuste.setTipoMovimento(TipoMovimentoEstoque.ENTRADA.name());
 
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // 2. Estorno Financeiro (Cancela parcelas/fiado)
+        // Estorno Financeiro
         financeiroService.cancelarReceitaDeVenda(idVenda);
 
-        // 3. Atualização de Status
         venda.setStatusFiscal(StatusFiscal.CANCELADA);
         venda.setMotivoDoCancelamento(motivo);
         vendaRepository.save(venda);
     }
 
     // ==================================================================================
-    // SESSÃO 4: MÉTODOS AUXILIARES PRIVADOS
+    // SESSÃO 5: VALIDAÇÕES DE SEGURANÇA
     // ==================================================================================
 
-    /**
-     * Processa cada item, valida estoque e calcula o subtotal bruto.
-     */
+    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
+        if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
+
+        // Busca configurações (se não existir, cria padrão)
+        ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElseGet(() -> {
+            ConfiguracaoLoja nova = new ConfiguracaoLoja();
+            nova.setPercentualMaximoDescontoCaixa(new BigDecimal("5.00"));
+            nova.setPercentualMaximoDescontoGerente(new BigDecimal("100.00")); // Gerente livre por padrão
+            return nova;
+        });
+
+        // Calcula percentual aplicado
+        BigDecimal percentualAplicado = descontoAplicado
+                .divide(totalVenda, 4, RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100"));
+
+        BigDecimal limitePermitido;
+
+        // Verifica Perfil
+        // Nota: Ajustado conforme o seu código original para ROLE_ADMIN/ROLE_USUARIO
+        if (usuario.getPerfil() == PerfilDoUsuario.ROLE_ADMIN || usuario.getPerfil() == PerfilDoUsuario.ROLE_USUARIO) {
+            limitePermitido = config.getPercentualMaximoDescontoGerente();
+        } else {
+            limitePermitido = config.getPercentualMaximoDescontoCaixa();
+        }
+
+        if (percentualAplicado.compareTo(limitePermitido) > 0) {
+            throw new ValidationException(String.format(
+                    "Desconto não autorizado para seu perfil. Aplicado: %.2f%% | Limite: %.2f%%",
+                    percentualAplicado, limitePermitido
+            ));
+        }
+    }
+
+    // ==================================================================================
+    // SESSÃO 6: MÉTODOS AUXILIARES PRIVADOS
+    // ==================================================================================
+
     private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
 
@@ -161,18 +208,15 @@ public class VendaService {
             Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
 
-            // Validação de Estoque Físico
             BigDecimal estoqueAtual = BigDecimal.valueOf(produto.getQuantidadeEmEstoque());
             if (estoqueAtual.compareTo(itemDto.getQuantidade()) < 0) {
-                throw new ValidationException("Estoque insuficiente para o produto: " + produto.getDescricao() +
-                        ". Disponível: " + estoqueAtual);
+                throw new ValidationException("Estoque insuficiente para: " + produto.getDescricao());
             }
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
             item.setQuantidade(itemDto.getQuantidade());
             item.setPrecoUnitario(produto.getPrecoVenda());
-            // Registra o custo do momento da venda para relatórios de lucro futuro
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
             venda.adicionarItem(item);
@@ -181,57 +225,42 @@ public class VendaService {
         return totalAcumulado;
     }
 
-    /**
-     * Valida as regras de negócio para venda fiado (Crediário).
-     */
     private void validarCreditoDoCliente(String cpf, BigDecimal valorDaCompra) {
         if (cpf == null || cpf.isBlank()) {
-            throw new ValidationException("CPF do cliente é obrigatório para venda no Crediário.");
+            throw new ValidationException("CPF obrigatório para Crediário.");
         }
 
-        // 1. Busca Cadastro
         Cliente cliente = clienteRepository.findByCpf(cpf)
-                .orElseThrow(() -> new ValidationException("Cliente não cadastrado. É necessário cadastrar o cliente antes de vender fiado."));
+                .orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
 
-        if (!cliente.isAtivo()) {
-            throw new ValidationException("Cliente bloqueado/inativo no sistema.");
-        }
+        if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
 
-        // 2. Verifica Contas Atrasadas (Bloqueio Total)
         boolean temAtraso = contaReceberRepository.existeContaVencida(cpf, LocalDate.now());
-        if (temAtraso) {
-            throw new ValidationException("VENDA BLOQUEADA: O cliente possui contas vencidas em aberto.");
-        }
+        if (temAtraso) throw new ValidationException("Venda Bloqueada: Cliente com contas vencidas.");
 
-        // 3. Verifica Limite de Crédito
         BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorCpf(cpf);
         if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
 
-        BigDecimal novoTotal = dividaAtual.add(valorDaCompra);
-
-        if (novoTotal.compareTo(cliente.getLimiteCredito()) > 0) {
-            throw new ValidationException(String.format(
-                    "LIMITE EXCEDIDO. Limite: R$ %.2f | Dívida Atual: R$ %.2f | Esta Compra: R$ %.2f",
-                    cliente.getLimiteCredito(), dividaAtual, valorDaCompra
-            ));
+        if (dividaAtual.add(valorDaCompra).compareTo(cliente.getLimiteCredito()) > 0) {
+            throw new ValidationException("Limite de Crédito Excedido.");
         }
     }
 
-    /**
-     * Efetiva a saída do estoque e o lançamento no financeiro.
-     */
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // Baixa de Estoque
+        // Baixa Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
-            ajuste.setTipoMovimento("SAIDA");
+
+            // CORREÇÃO: Usando Enum para garantir tipo correto (SAIDA do estoque)
+            ajuste.setTipoMovimento(TipoMovimentoEstoque.SAIDA.name());
+
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // Lançamento Financeiro
+        // Financeiro
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda().subtract(venda.getDescontoTotal()),
@@ -244,23 +273,15 @@ public class VendaService {
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth == null) return null;
-
-            if (auth.getPrincipal() instanceof Usuario) {
-                return (Usuario) auth.getPrincipal();
-            }
+            if (auth.getPrincipal() instanceof Usuario) return (Usuario) auth.getPrincipal();
 
             String login = null;
-            if (auth.getPrincipal() instanceof UserDetails) {
-                login = ((UserDetails) auth.getPrincipal()).getUsername();
-            } else if (auth.getPrincipal() instanceof String) {
-                login = (String) auth.getPrincipal();
-            }
+            if (auth.getPrincipal() instanceof UserDetails) login = ((UserDetails) auth.getPrincipal()).getUsername();
+            else if (auth.getPrincipal() instanceof String) login = (String) auth.getPrincipal();
 
-            if (login != null) {
-                return usuarioRepository.findByMatricula(login).orElse(null);
-            }
+            if (login != null) return usuarioRepository.findByMatricula(login).orElse(null);
         } catch (Exception e) {
-            log.warn("Erro ao identificar usuário logado", e);
+            log.warn("Erro ao identificar usuário", e);
         }
         return null;
     }

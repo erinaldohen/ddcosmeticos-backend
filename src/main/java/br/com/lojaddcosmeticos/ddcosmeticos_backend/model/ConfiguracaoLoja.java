@@ -2,11 +2,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 
 @Data
 @Entity
+@NoArgsConstructor
 @Table(name = "configuracao_loja")
 public class ConfiguracaoLoja {
 
@@ -14,15 +16,25 @@ public class ConfiguracaoLoja {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Ex: 10% de custo fixo (Aluguel, Luz, Salários) sobre o faturamento
-    @Column(name = "percentual_custo_fixo")
-    private BigDecimal percentualCustoFixo = new BigDecimal("10.00");
+    // Nome da loja para cabeçalho de cupom/relatórios
+    private String nomeFantasia;
 
-    // Ex: 6% de imposto (Simples Nacional)
-    @Column(name = "percentual_impostos_venda")
-    private BigDecimal percentualImpostosVenda = new BigDecimal("6.00");
+    private String cnpj;
 
-    // Ex: Quero ganhar 20% líquido
-    @Column(name = "margem_lucro_alvo")
-    private BigDecimal margemLucroAlvo = new BigDecimal("20.00");
+    private String endereco;
+
+    // --- PARÂMETROS DE PRECIFICAÇÃO ---
+
+    // Margem mínima desejada (ex: 30%) para alertas
+    private BigDecimal margemLucroAlvo;
+
+    // --- PARÂMETROS DE SEGURANÇA (NOVO) ---
+
+    // Desconto máximo permitido para perfil CAIXA (ex: 5%)
+    @Column(name = "max_desconto_caixa")
+    private BigDecimal percentualMaximoDescontoCaixa = new BigDecimal("5.00");
+
+    // Desconto máximo permitido para perfil GERENTE (ex: 20%)
+    @Column(name = "max_desconto_gerente")
+    private BigDecimal percentualMaximoDescontoGerente = new BigDecimal("20.00");
 }

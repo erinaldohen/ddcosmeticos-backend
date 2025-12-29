@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -29,12 +30,11 @@ public record ProdutoDTO(
         @PositiveOrZero
         Integer quantidadeEstoque,
 
-        // --- CORREÇÃO: Campo adicionado para resolver o erro na linha 68 ---
         @PositiveOrZero
         Integer estoqueMinimo,
 
         // --- DADOS FISCAIS ---
-        @Size(max = 8, message = "NCM deve ter no máximo 8 dígitos")
+        @Size(max = 20, message = "NCM deve ter no máximo 20 dígitos") // Ajustado para bater com o Model
         String ncm,
 
         String cest,
@@ -48,4 +48,23 @@ public record ProdutoDTO(
         String urlImagem,
 
         boolean ativo
-) {}
+) {
+        // --- CONSTRUTOR DE CONVERSÃO (Resolve o erro do ProdutoService) ---
+        public ProdutoDTO(Produto produto) {
+                this(
+                        produto.getId(),
+                        produto.getCodigoBarras(),
+                        produto.getDescricao(),
+                        produto.getPrecoCusto(),
+                        produto.getPrecoVenda(),
+                        produto.getQuantidadeEmEstoque(), // Mapeia 'quantidadeEmEstoque' do Model para 'quantidadeEstoque' do DTO
+                        produto.getEstoqueMinimo(),
+                        produto.getNcm(),
+                        produto.getCest(),
+                        produto.getCst(),
+                        produto.isMonofasico(),
+                        produto.getUrlImagem(),
+                        produto.isAtivo()
+                );
+        }
+}

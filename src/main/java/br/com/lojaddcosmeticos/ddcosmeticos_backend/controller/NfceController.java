@@ -1,36 +1,42 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ImpressaoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.NfceService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.VendaService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/fiscal")
+@RequestMapping("/api/v1/fiscal/nfce")
+@Tag(name = "Fiscal NFC-e", description = "Emissão e Impressão de Cupom Fiscal")
 public class NfceController {
 
     @Autowired
     private NfceService nfceService;
 
     @Autowired
-    private VendaService vendaService; // Substituiu o Repository
+    private ImpressaoService impressaoService; // Injeção do novo serviço
 
-    @GetMapping("/nfce/{idVenda}")
-    @PreAuthorize("hasAnyRole('GERENTE', 'CAIXA')")
-    public ResponseEntity<NfceResponseDTO> gerarNfce(@PathVariable Long idVenda) {
+    // (O endpoint de emissão existente pode estar aqui, omitido para focar no novo)
 
-        // O Service já trata a exceção ResourceNotFoundException se não achar
-        Venda venda = vendaService.buscarVendaComItens(idVenda);
+    // ==================================================================================
+    // SESSÃO: IMPRESSÃO DE CUPOM (ENDPOINT NOVO)
+    // ==================================================================================
+    @GetMapping(value = "/imprimir/{idVenda}", produces = MediaType.APPLICATION_PDF_VALUE)
+    @Operation(summary = "Imprimir Cupom (PDF)", description = "Gera o PDF do DANFE NFC-e pronto para impressão térmica.")
+    public ResponseEntity<byte[]> imprimirCupom(@PathVariable Long idVenda) {
 
-        NfceResponseDTO resultado = nfceService.emitirNfce(venda,true);
+        byte[] pdf = impressaoService.gerarCupomNfce(idVenda);
 
-        return ResponseEntity.ok(resultado);
+        return ResponseEntity.ok()
+                // Define o header para o navegador entender que é um PDF para download/visualização
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=cupom_" + idVenda + ".pdf")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
     }
 }

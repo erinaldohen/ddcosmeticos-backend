@@ -6,40 +6,56 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoPrecoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ArquivoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.PrecificacaoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/produtos")
+@Tag(name = "Produtos", description = "Gestão do catálogo de produtos e imagens")
 public class ProdutoController {
 
-    @Autowired private ProdutoService service;
+    @Autowired private ProdutoService produtoService;
     @Autowired private ProdutoRepository repository;
     @Autowired private CosmosService cosmosService;
     @Autowired private PrecificacaoService precificacaoService;
     @Autowired private EstoqueService estoqueService;
+    @Autowired private ArquivoService arquivoService;
 
     // ==================================================================================
     // SESSÃO 1: LEITURA E BUSCA
     // ==================================================================================
 
     @GetMapping
+    @Operation(summary = "Listar produtos", description = "Retorna todos os produtos ativos ou filtra por termo.")
     public ResponseEntity<List<Produto>> listar(@RequestParam(required = false) String termo) {
-        return ResponseEntity.ok(service.buscarInteligente(termo));
+        return ResponseEntity.ok(produtoService.buscarInteligente(termo));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Buscar produto por ID")
+    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {
+        return ResponseEntity.ok(produtoService.buscarPorId(id));
     }
 
     @GetMapping("/consulta-externa/{ean}")
+    @Operation(summary = "Consulta API Cosmos", description = "Busca dados do produto por EAN em base externa.")
     public ResponseEntity<?> consultarExterno(@PathVariable String ean) {
         return cosmosService.consultarEan(ean)
                 .map(ResponseEntity::ok)
@@ -47,6 +63,7 @@ public class ProdutoController {
     }
 
     @GetMapping("/alerta-reposicao")
+    @Operation(summary = "Alerta de Estoque Baixo")
     public ResponseEntity<List<Produto>> listarBaixoEstoque() {
         var todos = repository.findAll();
         var criticos = todos.stream()
@@ -60,27 +77,17 @@ public class ProdutoController {
     // ==================================================================================
 
     @PostMapping
-    public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
-        try {
-            Produto novoProduto = new Produto();
-            novoProduto.setCodigoBarras(dados.codigoBarras());
-            novoProduto.setDescricao(dados.descricao());
-            novoProduto.setPrecoVenda(dados.precoVenda());
-            novoProduto.setPrecoCusto(dados.precoCusto());
-            novoProduto.setEstoqueMinimo(dados.estoqueMinimo());
-            novoProduto.setNcm(dados.ncm());
-            novoProduto.setQuantidadeEmEstoque(0);
-            novoProduto.setAtivo(true);
-
-            return ResponseEntity.status(HttpStatus.CREATED).body(service.salvar(novoProduto));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+    @Operation(summary = "Cadastrar produto")
+    public ResponseEntity<ProdutoDTO> criar(@RequestBody @Valid ProdutoDTO dto) {
+        ProdutoDTO novo = produtoService.salvar(dto);
+        URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(novo.id()).toUri();
+        return ResponseEntity.created(uri).body(novo);
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody @Valid ProdutoDTO dados) {
-        return ResponseEntity.ok(service.atualizar(id, dados));
+    @Operation(summary = "Atualizar produto")
+    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody @Valid ProdutoDTO dto) {
+        return ResponseEntity.ok(produtoService.atualizar(id, dto));
     }
 
     // ==================================================================================
@@ -88,13 +95,14 @@ public class ProdutoController {
     // ==================================================================================
 
     @PostMapping("/estoque")
+    @Operation(summary = "Entrada Manual de Estoque")
     public ResponseEntity<?> adicionarEstoque(
             @RequestParam String ean,
             @RequestParam Integer qtd,
             @RequestParam BigDecimal custo,
             @RequestParam(required = false) String numeroNota,
-            @RequestParam(required = false) String lote,      // NOVO
-            @RequestParam(required = false) LocalDate validade) // NOVO
+            @RequestParam(required = false) String lote,
+            @RequestParam(required = false) LocalDate validade)
     {
         if (custo == null || custo.compareTo(BigDecimal.ZERO) < 0) {
             return ResponseEntity.badRequest().body("Custo inválido.");
@@ -106,11 +114,8 @@ public class ProdutoController {
             request.setQuantidade(BigDecimal.valueOf(qtd));
             request.setPrecoCusto(custo);
             request.setNumeroNotaFiscal(numeroNota);
-
-            // --- ATUALIZAÇÃO: Setando os dados de rastreabilidade ---
             request.setNumeroLote(lote);
             request.setDataValidade(validade);
-
             request.setFormaPagamento(FormaDePagamento.DINHEIRO);
 
             estoqueService.registrarEntrada(request);
@@ -140,14 +145,27 @@ public class ProdutoController {
     // ==================================================================================
 
     @DeleteMapping("/{ean}")
+    @Operation(summary = "Inativar produto (Soft Delete)")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
-        service.inativarPorEan(ean);
+        produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();
     }
 
-    @PatchMapping("/{ean}/ativar")
-    public ResponseEntity<Void> reativar(@PathVariable String ean) {
-        service.reativarPorEan(ean);
+    // ==================================================================================
+    // SESSÃO 5: UPLOAD DE IMAGEM
+    // ==================================================================================
+    @PostMapping(value = "/{id}/imagem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Upload de Foto", description = "Envia uma imagem (jpg/png) para o produto e atualiza a URL.")
+    public ResponseEntity<Void> uploadImagem(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        // 1. Salva o arquivo no disco
+        String nomeArquivo = arquivoService.salvarImagem(file);
+
+        // 2. Gera a URL pública para acesso (Ex: /imagens/nome-do-arquivo.jpg)
+        String urlAcesso = "/imagens/" + nomeArquivo;
+
+        // 3. Atualiza o cadastro do produto com a nova URL
+        produtoService.atualizarUrlImagem(id, urlAcesso);
+
         return ResponseEntity.ok().build();
     }
 }

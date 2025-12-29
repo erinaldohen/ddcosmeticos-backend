@@ -25,7 +25,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
-    // CORREÇÃO: Removida ambiguidade e garantida compatibilidade
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.dataVenda BETWEEN :inicio AND :fim")
     List<Venda> buscarPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
@@ -38,7 +37,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     List<Venda> findByStatusFiscalOrderByDataVendaDesc(StatusFiscal status);
 
     // ==================================================================================
-    // RELATÓRIOS (Queries JPQL Validadas)
+    // SESSÃO RELATÓRIOS (ADICIONADA)
     // ==================================================================================
 
     @Query("""
@@ -49,8 +48,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         )
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal <> 'CANCELADA'
-        AND v.statusFiscal <> 'ORCAMENTO'
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
         GROUP BY CAST(v.dataVenda AS LocalDate)
         ORDER BY CAST(v.dataVenda AS LocalDate) ASC
     """)
@@ -64,8 +62,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         )
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal <> 'CANCELADA'
-        AND v.statusFiscal <> 'ORCAMENTO'
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
         GROUP BY v.formaPagamento
     """)
     List<VendaPorPagamentoDTO> relatorioVendasPorPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
@@ -81,8 +78,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         JOIN i.venda v
         JOIN i.produto p
         WHERE v.dataVenda BETWEEN :inicio AND :fim
-        AND v.statusFiscal <> 'CANCELADA'
-        AND v.statusFiscal <> 'ORCAMENTO'
+        AND v.statusFiscal NOT IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.ORCAMENTO)
         GROUP BY p.codigoBarras, p.descricao
         ORDER BY SUM(i.quantidade) DESC
     """)

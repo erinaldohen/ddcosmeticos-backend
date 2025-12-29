@@ -11,9 +11,9 @@ import java.util.List;
 
 public record VendaRequestDTO(
 
-        // Segurança: Garante que só chegam números, evitando SQL Injection ou erros de formatação
+        // Segurança: Garante que o documento tenha apenas números
         @Pattern(regexp = "^[0-9]*$", message = "O documento deve conter apenas números")
-        String clienteDocumento, // Unificado (CPF/CNPJ)
+        String clienteDocumento,
 
         String clienteNome,
 

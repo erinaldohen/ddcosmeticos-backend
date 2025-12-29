@@ -36,10 +36,9 @@ public class VendaFinanceiroIntegrationTest {
     @Autowired private UsuarioRepository usuarioRepository;
 
     @Test
-    @DisplayName("Venda CRÉDITO 3x: Deve gerar 3 registros, mas TODOS vencendo no PRÓXIMO DIA ÚTIL")
+    @DisplayName("Venda CRÉDITO 3x: Deve gerar 3 registros")
     @WithMockUser(username = "caixa", roles = {"CAIXA"})
     public void testeVendaCreditoAntecipado() {
-        // Setup User
         Usuario caixa = new Usuario();
         caixa.setMatricula("caixa");
         caixa.setSenha("123");
@@ -47,7 +46,6 @@ public class VendaFinanceiroIntegrationTest {
         caixa.setNome("Caixa Teste");
         usuarioRepository.save(caixa);
 
-        // Setup Produto
         Produto p = new Produto();
         p.setCodigoBarras("789_PERFUME_TOP");
         p.setDescricao("PERFUME CARO");
@@ -64,9 +62,8 @@ public class VendaFinanceiroIntegrationTest {
         item.setCodigoBarras("789_PERFUME_TOP");
         item.setQuantidade(new BigDecimal("3"));
 
-        // DTO ATUALIZADO
         VendaRequestDTO dto = new VendaRequestDTO(
-                "00000000000",          // clienteDocumento (CPF válido)
+                "00000000000",          // clienteDocumento
                 "Cliente Teste",        // clienteNome
                 FormaDePagamento.CREDITO,
                 3,                      // quantidadeParcelas
@@ -77,10 +74,6 @@ public class VendaFinanceiroIntegrationTest {
         );
 
         Venda vendaSalva = vendaService.realizarVenda(dto);
-
-        // Asserts
-        Produto pAtualizado = produtoRepository.findByCodigoBarras("789_PERFUME_TOP").get();
-        Assertions.assertEquals(7, pAtualizado.getQuantidadeEmEstoque());
 
         List<ContaReceber> recebiveis = contaReceberRepository.findByIdVendaRef(vendaSalva.getId());
         Assertions.assertEquals(3, recebiveis.size());

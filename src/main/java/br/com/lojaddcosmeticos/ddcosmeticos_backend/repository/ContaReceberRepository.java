@@ -18,7 +18,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     List<ContaReceber> findByStatus(StatusConta status);
 
     // ==================================================================================
-    // QUERIES CORRIGIDAS (clienteCpf -> clienteDocumento)
+    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (Corrigido para clienteDocumento)
     // ==================================================================================
 
     @Query("""
@@ -38,6 +38,10 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
+    // ==================================================================================
+    // SESSÃO 3: RELATÓRIOS (Corrigido para clienteDocumento)
+    // ==================================================================================
+
     @Query("""
         SELECT DISTINCT v.clienteDocumento 
         FROM ContaReceber c 
@@ -55,7 +59,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
-    // DASHBOARD
+    // SESSÃO 4: DASHBOARD
     @Query("SELECT SUM(c.valorLiquido) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

@@ -23,18 +23,21 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // ==================================================================================
     // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (MÓDULO FIADO)
     // ==================================================================================
+
+    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
     @Query("""
         SELECT SUM(c.valorLiquido) 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteCpf = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
     """)
     BigDecimal somarDividaTotalPorCpf(@Param("cpf") String cpf);
 
+    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
     @Query("""
         SELECT COUNT(c) > 0 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteCpf = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
         AND c.dataVencimento < :hoje
     """)
@@ -43,30 +46,30 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // ==================================================================================
     // SESSÃO 3: RELATÓRIOS DE INADIMPLÊNCIA
     // ==================================================================================
+
+    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
     @Query("""
-        SELECT DISTINCT v.clienteCpf 
+        SELECT DISTINCT v.clienteDocumento 
         FROM ContaReceber c 
         JOIN Venda v ON c.idVendaRef = v.id 
         WHERE c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
     """)
     List<String> buscarCpfsComPendencia();
 
+    // CORREÇÃO: Alterado v.clienteCpf para v.clienteDocumento
     @Query("""
         SELECT c 
         FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteCpf = :cpf)
+        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :cpf)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
         ORDER BY c.dataVencimento ASC
     """)
     List<ContaReceber> listarContasEmAberto(@Param("cpf") String cpf);
 
     // ==================================================================================
-    // SESSÃO 4: DASHBOARD (MÉTODOS QUE FALTAVAM)
+    // SESSÃO 4: DASHBOARD
     // ==================================================================================
 
-    /**
-     * Soma valores a receber num intervalo de datas (Previsão de Fluxo).
-     */
     @Query("SELECT SUM(c.valorLiquido) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

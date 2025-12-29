@@ -27,7 +27,7 @@ public class Venda implements Serializable {
     @JoinColumn(name = "usuario_id", nullable = false)
     private Usuario usuario;
 
-    // CORREÇÃO CRÍTICA: Mudado de "status-fiscal" para "status_fiscal"
+    // --- CORREÇÃO AQUI: (status-fiscal -> status_fiscal) ---
     @Enumerated(EnumType.STRING)
     @Column(name = "status_fiscal", nullable = false)
     private StatusFiscal statusFiscal = StatusFiscal.PENDENTE;
@@ -35,14 +35,12 @@ public class Venda implements Serializable {
     @Column(name = "data_venda", nullable = false)
     private LocalDateTime dataVenda = LocalDateTime.now();
 
-    // Snapshot do cliente (Nome e Documento no momento da venda)
     @Column(name = "cliente_documento")
     private String clienteDocumento;
 
     @Column(name = "cliente_nome")
     private String clienteNome;
 
-    // Vínculo real com o cadastro (opcional)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cliente_id")
     private Cliente cliente;
@@ -63,7 +61,6 @@ public class Venda implements Serializable {
     @Column(columnDefinition = "TEXT")
     private String motivoDoCancelamento;
 
-    // XML da Nota Fiscal (para reenvio/consulta)
     @Lob
     @Column(columnDefinition = "TEXT")
     private String xmlNfce;
@@ -71,8 +68,7 @@ public class Venda implements Serializable {
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ItemVenda> itens = new ArrayList<>();
 
-    // --- Métodos de Compatibilidade ---
-    // O Service chama setClienteCpf, então mapeamos para clienteDocumento
+    // Métodos de compatibilidade usados pelo Service
     public void setClienteCpf(String documento) {
         this.clienteDocumento = documento;
     }

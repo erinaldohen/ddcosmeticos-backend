@@ -36,9 +36,10 @@ public class VendaFinanceiroIntegrationTest {
     @Autowired private UsuarioRepository usuarioRepository;
 
     @Test
-    @DisplayName("Venda CRÉDITO 3x: Deve gerar 3 registros, mas TODOS vencendo no PRÓXIMO DIA ÚTIL")
+    @DisplayName("Venda CRÉDITO 3x: Deve gerar 3 registros")
     @WithMockUser(username = "caixa", roles = {"CAIXA"})
     public void testeVendaCreditoAntecipado() {
+        // 1. Criar Usuário (necessário pois o Service busca no banco)
         Usuario caixa = new Usuario();
         caixa.setMatricula("caixa");
         caixa.setSenha("123");
@@ -46,6 +47,7 @@ public class VendaFinanceiroIntegrationTest {
         caixa.setNome("Caixa Teste");
         usuarioRepository.save(caixa);
 
+        // 2. Setup Produto
         Produto p = new Produto();
         p.setCodigoBarras("789_PERFUME_TOP");
         p.setDescricao("PERFUME CARO");
@@ -58,11 +60,12 @@ public class VendaFinanceiroIntegrationTest {
         p.setAtivo(true);
         produtoRepository.save(p);
 
+        // 3. Preparar Item
         ItemVendaDTO item = new ItemVendaDTO();
         item.setCodigoBarras("789_PERFUME_TOP");
         item.setQuantidade(new BigDecimal("3"));
 
-        // CORREÇÃO: Construtor do DTO atualizado (ordem exata do record VendaRequestDTO)
+        // 4. Criar DTO (Ordem exata do Record atualizado)
         VendaRequestDTO dto = new VendaRequestDTO(
                 "00000000000",          // clienteDocumento
                 "Cliente Teste",        // clienteNome
@@ -71,11 +74,13 @@ public class VendaFinanceiroIntegrationTest {
                 List.of(item),          // itens
                 BigDecimal.ZERO,        // descontoTotal
                 false,                  // apenasItensComNfEntrada
-                false                   // ehOrcamento
+                false                   // ehOrcamento (NOVO CAMPO)
         );
 
+        // 5. Execução
         Venda vendaSalva = vendaService.realizarVenda(dto);
 
+        // 6. Validações
         Produto pAtualizado = produtoRepository.findByCodigoBarras("789_PERFUME_TOP").get();
         Assertions.assertEquals(7, pAtualizado.getQuantidadeEmEstoque());
 

@@ -1,102 +1,120 @@
-# DD Cosméticos - Backend ERP & PDV 💄
+# DD Cosméticos - ERP & PDV Backend
 
-Sistema de gestão robusto desenvolvido especificamente para o setor de retalho de cosméticos em Recife/PE. O sistema foca em alta performance transacional, integridade fiscal (SEFAZ-PE) e inteligência de dados para tomada de decisão.
+Sistema de Gestão (ERP) e Ponto de Venda (PDV) desenvolvido para o varejo de cosméticos, com foco em alta performance, conformidade fiscal e preparação para a Reforma Tributária Brasileira (LC 214/2025).
 
-## 🚀 Stack Tecnológica
-
-* **Java 21:** Utilização de *Records* para imutabilidade e novas funcionalidades de concorrência.
-* **Spring Boot 3.4.1:** Framework base para produtividade e configuração simplificada.
-* **Spring Security + JWT:** Autenticação e autorização baseada em funções (`GERENTE` e `CAIXA`).
-* **Hibernate/JPA:** Persistência de dados com suporte a `Soft Delete` e filtros automáticos de itens ativos.
-* **MySQL 8.0:** Banco de dados relacional para armazenamento seguro e performático.
-* **SpringDoc (Swagger):** Documentação interativa da API.
+## 🚀 Status do Projeto
+**Versão:** 1.0.0 (Production-Ready)
+**Status:** Backend Operacional e Estável.
+**Cobertura Fiscal:** Híbrida (Regime Atual + Transição IBS/CBS 2026).
 
 ---
 
-## 🛠️ Funcionalidades Principais
+## 🌟 Diferenciais Técnicos & Fiscais
 
-### 1. Motor Fiscal Inteligente
+Este não é apenas um CRUD. O sistema possui um **Motor Fiscal Híbrido** que opera em duas linhas do tempo simultâneas:
 
-* **Automatização de CFOP:** O sistema analisa o **NCM** e a presença do **CEST** para decidir entre **5102** (Tributação Normal) e **5405** (Substituição Tributária).
-* **Regra Monofásica:** Identificação automática de produtos isentos de PIS/COFINS na revenda (conforme Lei 10.147/00) baseada no prefixo do NCM (3303, 3304, 3305, 3307).
+1.  **Regime Atual (2025):**
+    * Cálculo de ICMS, Substituição Tributária (ST) e Difal.
+    * Emissão de NFC-e (Nota Fiscal de Consumidor).
+    * Integração com regras de fronteira (PE, SP, MG, etc).
 
-### 2. Gestão de Stock e Custos
-
-* **PMP (Preço Médio Ponderado):** Recálculo em tempo real a cada entrada de mercadoria, garantindo a precisão do valor do inventário.
-* **Importação em Lote:** Motor de importação de CSV capaz de processar milhares de itens em blocos (*batch processing*) para evitar sobrecarga de memória.
-
-### 3. Operações de PDV
-
-* **Venda Atómica:** Processa a venda, reserva o custo médio (Snapshot), abate o stock e gera o título financeiro numa única transação.
-* **Contingência:** Suporte para gravação de vendas mesmo em caso de indisponibilidade da SEFAZ.
-
-### 4. Inteligência Financeira e Relatórios
-
-* **Projeção D+1:** Receitas de cartão são projetadas no fluxo de caixa para o próximo dia útil.
-* **Curva ABC:** Classificação de produtos (A, B, C) baseada no impacto direto no faturamento (Pareto).
-* **Fecho de Caixa:** Relatório detalhado por forma de pagamento (Dinheiro, PIX, Cartão).
+2.  **Reforma Tributária (LC 214/2025 - "Future-Proof"):**
+    * **Split Payment:** Endpoint dedicado para calcular a retenção bancária de IBS/CBS no ato da venda.
+    * **Classificação Inteligente:** Suporte a produtos da Cesta Básica (Alíquota Zero) e Redução de 60% (Higiene/Limpeza).
+    * **Transição Automática:** O sistema vira a chave fiscal automaticamente em 01/01/2026 baseada em tabela de regras temporais (`RegraTributaria`).
 
 ---
 
-## 📂 Estrutura de Pacotes
+## 🛠️ Tecnologias Utilizadas
 
-O projeto segue os princípios de **Clean Architecture**:
-
-* `config`: Configurações globais (Segurança, Swagger, CORS).
-* `controller`: Endpoints REST da aplicação.
-* `dto`: Objetos de transferência de dados (Java Records).
-* `exception`: Definição de erros customizados.
-* `handler`: Interceptadores globais (Exception Handlers, Security Filters).
-* `model`: Entidades de banco de dados.
-* `repository`: Interfaces de acesso ao banco (JPA).
-* `service`: Regras de negócio e orquestração.
+* **Java 21** (LTS)
+* **Spring Boot 3.4.1**
+* **Spring Security + JWT** (Autenticação Stateless)
+* **H2 Database** (Dev/Test) / **MySQL** (Produção)
+* **OpenPDF** (Geração de Danfe/Cupom Fiscal)
+* **Swagger/OpenAPI** (Documentação da API)
+* **Maven** (Gerenciamento de dependências)
 
 ---
 
-## ⚙️ Configuração do Ambiente
+## 📦 Funcionalidades Principais
 
-### Propriedades do Banco de Dados
+### 1. Catálogo de Produtos
+* CRUD completo com controle de Estoque Físico e Fiscal.
+* **Upload de Imagens:** Armazenamento local e serving de arquivos estáticos.
+* Precificação Inteligente (Sugestão de Preço baseada em Custo + Margem).
 
-No ficheiro `src/main/resources/application.properties`:
+### 2. Vendas & PDV
+* Fluxo de Venda Rápida (Frente de Caixa).
+* Baixa automática de estoque.
+* Geração de **PDF do Cupom Fiscal** (Pronto para impressoras térmicas 80mm).
 
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/dd_cosmeticos
-spring.datasource.username=seu_usuario
-spring.datasource.password=sua_senha
-spring.jpa.hibernate.ddl-auto=update
+### 3. Fiscal & Tributário
+* Simulador de Impacto Tributário (Simples Nacional vs IBS/CBS).
+* Emissão de NF-e (Modelo 55) para Atacado/Interestadual.
+* Cálculo automático de impostos na entrada de nota (XML).
 
-```
-
-### Inicialização
-
-1. Compile o projeto: `./mvnw clean install`
-2. Execute a aplicação: `./mvnw spring-boot:run`
-3. Execute o script SQL inicial para criar os utilizadores `GERENTE` e `CAIXA`.
-
----
-
-## 📑 Endpoints de Referência
-
-| Método | Rota | Perfil | Função |
-| --- | --- | --- | --- |
-| `POST` | `/api/v1/auth/login` | Público | Autenticação e geração de Token. |
-| `POST` | `/api/v1/produtos/importar` | GERENTE | Carga de stock via CSV. |
-| `GET` | `/api/v1/produtos/ean/{ean}` | CAIXA/GERENTE | Busca rápida para scanner. |
-| `POST` | `/api/v1/vendas` | CAIXA/GERENTE | Registo de venda e baixa de stock. |
-| `GET` | `/api/v1/relatorios/fecho-caixa` | CAIXA/GERENTE | Resumo financeiro do dia. |
-| `GET` | `/api/v1/relatorios/curva-abc` | GERENTE | Ranking de produtos por lucro. |
+### 4. Financeiro & Relatórios
+* Fluxo de Caixa Diário.
+* Contas a Pagar e Receber.
+* Dashboard Gerencial (Vendas por hora, Curva ABC, Lucratividade).
 
 ---
 
-## 📝 Documentação API (Swagger)
+## 🔌 Endpoints Importantes (Resumo)
 
-Aceda à documentação visual e teste os endpoints em tempo real:
-`http://localhost:8080/swagger-ui/index.html`
+A documentação completa está disponível no Swagger (`/swagger-ui.html`), mas aqui estão os destaques:
+
+| Módulo | Método | Rota | Descrição |
+| :--- | :--- | :--- | :--- |
+| **Auth** | `POST` | `/api/v1/auth/login` | Obter Token JWT |
+| **Fiscal** | `POST` | `/api/v1/tributacao/calcular-split-venda` | **Split Payment (LC 214)**: Calcula retenção bancária |
+| **PDV** | `GET` | `/api/v1/fiscal/nfce/imprimir/{id}` | Baixar PDF do Cupom Fiscal |
+| **Produtos** | `POST` | `/api/v1/produtos/{id}/imagem` | Upload de foto do produto |
+| **Relatórios**| `GET` | `/api/v1/relatorios/vendas/diario` | Resumo de vendas do dia |
 
 ---
 
-### Parecer da Equipa Técnica Sénior
+## ▶️ Como Rodar
 
-Este backend foi construído para ser **auditável e resiliente**. O uso de *Snapshots* de custo nos itens de venda e a automatização do CFOP garantem que a **DD Cosméticos** tenha um crescimento sustentável e livre de problemas fiscais com a SEFAZ-PE.
+### Pré-requisitos
+* JDK 21 instalado.
+* Maven instalado.
 
-**Gostaria de avançar agora para o plano de manutenção e backup do banco de dados MySQL ou prefere que eu ajude com a documentação dos campos do CSV para a sua equipa de operações?**
+### Execução (Ambiente de Desenvolvimento)
+O sistema utiliza banco H2 em memória por padrão no perfil `dev`.
+
+```bash
+# 1. Compilar e baixar dependências
+mvn clean install
+
+# 2. Rodar a aplicação
+mvn spring-boot:run
+Acesse:
+
+API: http://localhost:8080
+
+Swagger: http://localhost:8080/swagger-ui.html
+
+H2 Console: http://localhost:8080/h2-console
+
+Usuários Padrão (DataSeeder)
+Admin: admin / admin123
+
+📂 Estrutura de Pastas (Uploads)
+O sistema cria automaticamente uma pasta uploads/ na raiz para armazenar as imagens dos produtos. Certifique-se de que a aplicação tem permissão de escrita no diretório.
+
+📝 Notas de Versão
+v1.0.0: Implementação do Split Payment, Upload de Imagens, PDF Fiscal e Lógica de Transição 2026.
+
+
+---
+
+### ✅ Próximo Passo: O Frontend
+
+Agora que o Backend está devidamente documentado e estável, podemos "virar a chave" para o Frontend.
+
+**Como prefere iniciar o Frontend?**
+1.  **Escolha da Tecnologia:** Recomendo **React** (com Vite) ou **Angular**. O React costuma ser mais rápido para desenvolver telas de PDV dinâmicas.
+2.  **Estrutura do Projeto:** Criar um novo repositório ou pasta `ddcosmeticos-frontend`?
+3.  **Primeira Tela:** Focamos no **Login** ou direto no **Dashboard**?

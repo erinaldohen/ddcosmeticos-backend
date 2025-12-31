@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.infra.security;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.handler.SecurityFilter;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +39,10 @@ public class SecurityConfig {
                     // Libera Login e Swagger
                     req.requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll();
                     req.requestMatchers("/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll();
+
+                    // ---> NOVA REGRA: Libera o Status da NFe para teste <---
+                    req.requestMatchers("/api/v1/fiscal/nfe/status").permitAll();
+
                     // Bloqueia o resto
                     req.anyRequest().authenticated();
                 })

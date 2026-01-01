@@ -43,8 +43,14 @@ public class NfeController {
     }
 
     @PostMapping("/emitir/{idVenda}")
-    @Operation(summary = "Emitir Nota Fiscal Eletrônica (Modelo 55)", description = "Gera e autoriza uma NF-e para a venda especificada. Exige cliente completo.")
-    public ResponseEntity<NfceResponseDTO> emitirNfe(@PathVariable Long idVenda) {
-        return ResponseEntity.ok(nfeService.emitirNfeModelo55(idVenda));
+    public ResponseEntity<?> emitirNfe(@PathVariable Long idVenda) {
+        System.out.println("Recebida solicitação de NFe para venda ID: " + idVenda);
+        try {
+            NfceResponseDTO retorno = nfeService.emitirNfeModelo55(idVenda);
+            return ResponseEntity.ok(retorno);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body("Erro ao emitir: " + e.getMessage());
+        }
     }
 }

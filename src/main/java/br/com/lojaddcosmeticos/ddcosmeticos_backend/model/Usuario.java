@@ -5,7 +5,7 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.SQLDelete;
-import org.hibernate.annotations.SQLRestriction; // <--- NOVA ANOTAÇÃO
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -18,75 +18,53 @@ import java.util.List;
 @Entity
 @NoArgsConstructor
 @Table(name = "usuario")
-// Soft Delete no Hibernate 7+:
 @SQLDelete(sql = "UPDATE usuario SET ativo = false WHERE id = ?")
-@SQLRestriction("ativo = true") // <--- Substitui o @Where
+@SQLRestriction("ativo = true")
 public class Usuario implements UserDetails, Serializable {
-        private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "nome", nullable = false)
+    @Column(nullable = false)
     private String nome;
 
-    @Column(name = "matricula", unique = true, nullable = false)
+    @Column(unique = true, nullable = false)
     private String matricula;
 
-    @Column(name = "senha", nullable = false)
+    @Column(unique = true, nullable = false)
+    private String email;
+
+    @Column(nullable = false)
     private String senha;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "perfil", nullable = false)
-    private PerfilDoUsuario perfil;
+    @Column(nullable = false)
+    private PerfilDoUsuario perfilDoUsuario;
 
-    // Campo novo para Soft Delete
     @Column(nullable = false)
     private boolean ativo = true;
 
-    // Construtor
-    public Usuario(String nome, String matricula, String senha, PerfilDoUsuario perfil) {
+    public Usuario(String nome, String matricula, String email, String senha, PerfilDoUsuario perfilDoUsuario) {
         this.nome = nome;
         this.matricula = matricula;
+        this.email = email;
         this.senha = senha;
-        this.perfil = perfil;
+        this.perfilDoUsuario = perfilDoUsuario;
     }
-
-    // --- Métodos de UserDetails ---
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority(perfil.name()));
+        // O Spring Security gosta do prefixo ROLE_ internamente
+        // Mas no banco e no Frontend vai ficar só "ADMIN"
+        return List.of(new SimpleGrantedAuthority("ROLE_" + perfilDoUsuario.name()));
     }
 
-    @Override
-    public String getPassword() {
-        return this.senha;
-    }
-
-    @Override
-    public String getUsername() {
-        return this.matricula;
-    }
-
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
-
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return this.ativo; // O login só funciona se ativo = true
-    }
+    @Override public String getPassword() { return this.senha; }
+    @Override public String getUsername() { return this.email; }
+    @Override public boolean isAccountNonExpired() { return true; }
+    @Override public boolean isAccountNonLocked() { return true; }
+    @Override public boolean isCredentialsNonExpired() { return true; }
+    @Override public boolean isEnabled() { return this.ativo; }
 }

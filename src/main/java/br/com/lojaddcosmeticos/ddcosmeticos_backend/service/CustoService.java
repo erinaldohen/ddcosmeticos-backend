@@ -51,7 +51,7 @@ public class CustoService {
     public void registrarEntradaNF(EntradaNFRequestDTO requestDTO) {
 
         // 1. Auditoria e Validação de Fornecedor
-        Usuario operador = usuarioRepository.findByMatricula(requestDTO.getMatriculaOperador())
+        Usuario operador = usuarioRepository.findByEmail(requestDTO.getMatriculaOperador())
                 .orElseThrow(() -> new ResourceNotFoundException("Operador de auditoria não encontrado: " + requestDTO.getMatriculaOperador()));
 
         Fornecedor fornecedor = fornecedorRepository.findByCpfOuCnpj(requestDTO.getCnpjCpfFornecedor())

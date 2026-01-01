@@ -1,19 +1,20 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.RegraTributaria;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.RegraTributariaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.slf4j.Slf4j; // Importante para logs
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDate;
-import java.util.Arrays;
-import java.util.List;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Component
@@ -21,68 +22,137 @@ public class DataSeeder implements CommandLineRunner {
 
     private final UsuarioRepository usuarioRepository;
     private final ProdutoRepository produtoRepository;
-    private final RegraTributariaRepository regraRepository;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(UsuarioRepository usuarioRepository,
                       ProdutoRepository produtoRepository,
-                      RegraTributariaRepository regraRepository,
                       PasswordEncoder passwordEncoder) {
         this.usuarioRepository = usuarioRepository;
         this.produtoRepository = produtoRepository;
-        this.regraRepository = regraRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
     @Override
     public void run(String... args) throws Exception {
         carregarUsuarios();
-        carregarRegrasTributarias();
+        carregarProdutosDoCSV();
     }
 
     private void carregarUsuarios() {
-        // Verifica se já existe algum usuário, se não, cria o admin
         if (usuarioRepository.count() == 0) {
-            log.info("👤 [DataSeeder] Criando usuário ADMIN padrão...");
-            Usuario admin = new Usuario();
-            admin.setNome("Administrador");
-            admin.setMatricula("admin");
-            admin.setSenha(passwordEncoder.encode("admin123"));
-            admin.setPerfil(PerfilDoUsuario.ROLE_ADMIN);
+            Usuario admin = new Usuario(
+                    "Administrador",
+                    "admin",            // Matrícula
+                    "admin@dd.com",     // E-mail
+                    passwordEncoder.encode("123456"),
+                    PerfilDoUsuario.ADMIN
+            );
             usuarioRepository.save(admin);
-            log.info("✅ Usuário 'admin' criado com sucesso!");
-        } else {
-            log.info("ℹ️ Usuários já existem no banco. Criação pulada.");
+            log.info("✅ Usuário Admin criado: admin / 123456");
         }
     }
 
-    private void carregarRegrasTributarias() {
-        if (regraRepository.count() == 0) {
-            log.info("⚖️ [DataSeeder] Carregando regras da Reforma Tributária...");
+    private void carregarProdutosDoCSV() {
+        if (produtoRepository.count() > 0) {
+            log.info("ℹ️ Produtos já carregados. Pulando importação.");
+            return;
+        }
 
-            // FASE 1: 2026 - Teste (0.9% CBS + 0.1% IBS)
-            regraRepository.save(new RegraTributaria(2026,
-                    LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31),
-                    "0.0010", "0.0090", "1.0000"));
+        try {
+            log.info("📦 Iniciando importação de produtos.csv...");
 
-            // FASE 2: 2027 - Extinção PIS/COFINS
-            regraRepository.save(new RegraTributaria(2027,
-                    LocalDate.of(2027, 1, 1), LocalDate.of(2028, 12, 31),
-                    "0.0010", "0.0900", "1.0000"));
+            // Lê o arquivo da pasta resources
+            ClassPathResource resource = new ClassPathResource("produtos.csv");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8));
 
-            // FASE 3: 2029 - Transição Escalonada
-            regraRepository.save(new RegraTributaria(2029,
-                    LocalDate.of(2029, 1, 1), LocalDate.of(2029, 12, 31),
-                    "0.0200", "0.0900", "0.9000"));
+            String line;
+            boolean header = true;
+            int count = 0;
 
-            regraRepository.save(new RegraTributaria(2033,
-                    LocalDate.of(2033, 1, 1), LocalDate.of(2099, 12, 31),
-                    "0.1700", "0.0900", "0.0000"));
+            while ((line = reader.readLine()) != null) {
+                if (header) {
+                    header = false;
+                    continue; // Pula a primeira linha (cabeçalho)
+                }
+
+                // Divide por ponto e vírgula, mantendo colunas vazias
+                // O regex (?=(?:[^\"]*\"[^\"]*\")*[^\"]*$) garante que não quebre ; dentro de aspas
+                String[] colunas = line.split(";", -1);
+
+                if (colunas.length < 5) continue; // Linha inválida
+
+                Produto p = new Produto();
+
+                // Remove aspas extras das strings ("Valor" -> Valor)
+                p.setCodigoBarras(limparTexto(colunas[0])); // Col 0: Código
+                p.setDescricao(limparTexto(colunas[2]));    // Col 2: Descrição
+
+                // Converte Preços (Troca vírgula por ponto se necessário)
+                p.setPrecoCusto(converterValor(colunas[3]));        // Col 3: Custo
+                p.setPrecoVenda(converterValor(colunas[4]));        // Col 4: Venda
+                p.setPrecoMedioPonderado(p.getPrecoCusto());        // Inicializa médio igual ao custo
+
+                p.setUnidade(limparTexto(colunas[7]));              // Col 7: Unidade (UN, KG)
+
+                // Estoque (CSV Col 13: Qtd em Estoque)
+                // Vamos colocar no estoque NÃO fiscal inicialmente
+                Integer estoque = converterInteiro(colunas[13]);
+                p.setEstoqueNaoFiscal(estoque);
+                p.setEstoqueFiscal(0);
+                p.atualizarSaldoTotal(); // Soma os estoques
+
+                // Estoque Mínimo (Col 12)
+                p.setEstoqueMinimo(converterInteiro(colunas[12]));
+
+                // Dados Fiscais
+                if (colunas.length > 20) p.setNcm(limparTexto(colunas[20])); // Col 20: NCM
+                if (colunas.length > 22) p.setCest(limparTexto(colunas[22])); // Col 22: CEST
+
+                // Validação básica para evitar erro de duplicidade ou nulo
+                if (p.getCodigoBarras() != null && !p.getCodigoBarras().isEmpty() &&
+                        p.getDescricao() != null && !p.getDescricao().isEmpty()) {
+
+                    produtoRepository.save(p);
+                    count++;
+                }
+            }
+
+            log.info("✅ Importação concluída! {} produtos cadastrados.", count);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao importar CSV: ", e);
         }
     }
 
-    // Mantido método stub para compatibilidade se houver chamadas antigas
-    public String importarProdutos() {
-        return "Importação via API habilitada.";
+    // --- Métodos Auxiliares ---
+
+    private String limparTexto(String texto) {
+        if (texto == null) return "";
+        // Remove aspas do início e fim e espaços extras
+        return texto.replace("\"", "").trim();
+    }
+
+    private BigDecimal converterValor(String valor) {
+        try {
+            String limpo = limparTexto(valor);
+            if (limpo.isEmpty()) return BigDecimal.ZERO;
+            return new BigDecimal(limpo);
+        } catch (Exception e) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private Integer converterInteiro(String valor) {
+        try {
+            // Remove casas decimais se houver (ex: "8.000" -> "8")
+            String limpo = limparTexto(valor);
+            if (limpo.contains(".")) {
+                limpo = limpo.substring(0, limpo.indexOf("."));
+            }
+            if (limpo.isEmpty()) return 0;
+            return Integer.parseInt(limpo);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 }

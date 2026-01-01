@@ -1,7 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.integration;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FluxoCaixaDiarioDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
@@ -42,9 +41,9 @@ public class DashboardIntegrationTest {
         // --- 0. PREPARAÇÃO DO USUÁRIO (Obrigatório para Venda) ---
         Usuario gerente = new Usuario();
         // CORREÇÃO: Usando setMatricula em vez de setLogin
-        gerente.setMatricula("gerente");
+        gerente.setEmail("gerente");
         gerente.setSenha("123");
-        gerente.setPerfil(PerfilDoUsuario.ROLE_ADMIN); // Ajustado para Enum correto se for ROLE_GERENTE ou GERENTE
+        gerente.setPerfilDoUsuario(PerfilDoUsuario.ADMIN); // Ajustado para Enum correto se for ROLE_GERENTE ou GERENTE
         gerente.setNome("Gerente Teste");
         usuarioRepository.save(gerente);
 

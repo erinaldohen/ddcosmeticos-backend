@@ -10,10 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -27,26 +24,20 @@ public class AuthenticationController {
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDTO> login(@RequestBody @Valid LoginRequestDTO data) {
-        // 1. Autentica
-        var usernamePassword = new UsernamePasswordAuthenticationToken(data.getMatricula(), data.getSenha());
+        var usernamePassword = new UsernamePasswordAuthenticationToken(data.getLogin(), data.getSenha());
         Authentication auth = this.authenticationManager.authenticate(usernamePassword);
 
-        // 2. Recupera usuário
         Usuario usuario = (Usuario) auth.getPrincipal();
-
-        // 3. Gera Token
         String token = jwtService.generateToken(usuario);
 
-        // 4. Monta a resposta
+        // AGORA É DIRETO: O perfil já é "ADMIN", sem precisar limpar string
         LoginResponseDTO response = new LoginResponseDTO(
                 token,
-                usuario.getMatricula(),
+                usuario.getEmail(),
                 usuario.getNome(),
-                usuario.getPerfil().name()
+                usuario.getPerfilDoUsuario().name()
         );
 
         return ResponseEntity.ok(response);
     }
-
-    // O MÉTODO SETUP FOI DELETADO. NÃO DEVE HAVER MAIS NADA AQUI.
 }

@@ -28,10 +28,10 @@ public class SecurityFilter extends OncePerRequestFilter {
         var token = this.recoverToken(request);
 
         if (token != null) {
-            var matricula = jwtService.validateToken(token);
+            var email = jwtService.validateToken(token);
             // Verifica se o token é válido (retornou matrícula)
-            if (matricula != null && !matricula.isEmpty()) {
-                UserDetails user = usuarioRepository.findByMatricula(matricula).orElse(null);
+            if (email != null && !email.isEmpty()) {
+                UserDetails user = usuarioRepository.findByEmail(email).orElse(null);
 
                 if (user != null) {
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());

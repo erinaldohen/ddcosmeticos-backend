@@ -1,13 +1,14 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.services;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-@Service // <--- ESSA ANOTAÇÃO É OBRIGATÓRIA PARA O ERRO SUMIR
+@Service
 public class AuthorizationService implements UserDetailsService {
 
     @Autowired
@@ -15,8 +16,9 @@ public class AuthorizationService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        // O "username" do Spring Security é a nossa "matricula"
-        return repository.findByMatricula(username)
-                .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado com a matrícula: " + username));
+        // CORREÇÃO: Busca por Matrícula OU E-mail
+        // (O arquivo anterior buscava apenas por E-mail, falhando se usasse matrícula)
+        return repository.findByMatriculaOrEmail(username, username)
+                .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado: " + username));
     }
 }

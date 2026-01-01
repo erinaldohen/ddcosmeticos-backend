@@ -24,11 +24,11 @@ public class JwtService {
             Algorithm algorithm = Algorithm.HMAC256(secret);
             return JWT.create()
                     .withIssuer("ddcosmeticos-api")
-                    .withSubject(usuario.getMatricula())
+                    .withSubject(usuario.getEmail())
                     .withExpiresAt(getExpirationInstant())
 
                     // CORREÇÃO: Adicionado .name() para converter o Enum em String
-                    .withClaim("perfil", usuario.getPerfil().name())
+                    .withClaim("perfil", usuario.getPerfilDoUsuario().name())
 
                     .withClaim("nome", usuario.getNome())
                     .sign(algorithm);

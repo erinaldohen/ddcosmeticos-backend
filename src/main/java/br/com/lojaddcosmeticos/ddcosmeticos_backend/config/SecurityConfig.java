@@ -6,14 +6,18 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher; // <--- IMPORTANTE
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -26,63 +30,63 @@ import java.util.List;
 public class SecurityConfig {
 
     @Autowired
-    private SecurityFilter securityFilter;
+    private UserDetailsService userDetailsService;
+
+    @Autowired
+    private SecurityFilter securityFilter; // <--- Injetamos o filtro aqui
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        return http
-                .csrf(csrf -> csrf.disable())
-                // Configura o CORS primeiro para garantir que os headers sejam aceitos
+    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
+        return httpSecurity
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(req -> {
-                    // --- REGRAS PÚBLICAS (PermitAll) ---
-                    // 1. Libera o teste da NFe (do nosso Controller anterior)
-                    req.requestMatchers("/nfe/**").permitAll();
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(authorize -> authorize
+                        // Rotas Públicas de Autenticação
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
 
-                    // 2. Libera Login
-                    req.requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll();
+                        // CORREÇÃO: Usa AntPathRequestMatcher para o H2 funcionar no Spring Boot 3
+                        .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll()
 
-                    // 3. Libera Swagger (Documentação)
-                    req.requestMatchers("/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll();
+                        // Swagger e Documentação
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
-                    // 4. Libera Status Fiscal (se existir esse endpoint)
-                    req.requestMatchers("/api/v1/fiscal/nfe/status").permitAll();
-
-                    // --- REGRA GERAL (Authenticated) ---
-                    // Todo o resto exige token
-                    req.anyRequest().authenticated();
-                })
+                        // Qualquer outra rota precisa de login
+                        .anyRequest().authenticated()
+                )
+                // Adiciona o filtro de Token ANTES do filtro padrão de usuário/senha
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)
+                .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
                 .build();
     }
 
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-
-        // ATENÇÃO AQUI:
-        // Se você rodar o HTML de teste direto do arquivo (clicando nele), a origem será null ou file://
-        // Para o React (Vite) na porta 5173, isso aqui funciona:
-        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://192.168.0.9:5173", "http://127.0.0.1:5500"));
-        // Adicionei a porta 5500 que é padrão do "Live Server" do VSCode, caso use para testar o HTML.
-
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"));
-        configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
+    public AuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        authProvider.setUserDetailsService(userDetailsService);
+        authProvider.setPasswordEncoder(passwordEncoder());
+        return authProvider;
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {
-        return configuration.getAuthenticationManager();
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+        return authenticationConfiguration.getAuthenticationManager();
     }
 
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        // Em produção, troque "*" pelo endereço do front (ex: http://localhost:5173)
+        configuration.setAllowedOrigins(List.of("*"));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "x-auth-token"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 }

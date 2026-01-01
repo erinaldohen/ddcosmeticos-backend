@@ -11,8 +11,8 @@ import java.io.Serializable;
 public class LoginRequestDTO implements Serializable { // <--- Implementar
     private static final long serialVersionUID = 1L;
 
-    @NotBlank(message = "A matrícula é obrigatória.")
-    private String matricula;
+    @NotBlank(message = "O login é obrigatório.")
+    private String login;
 
     @NotBlank(message = "A senha é obrigatória.")
     private String senha;

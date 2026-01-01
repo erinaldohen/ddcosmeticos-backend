@@ -222,7 +222,7 @@ public class VendaService {
             return nova;
         });
         BigDecimal percentualAplicado = descontoAplicado.divide(totalVenda, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
-        BigDecimal limitePermitido = (usuario.getPerfil() == PerfilDoUsuario.ROLE_ADMIN || usuario.getPerfil() == PerfilDoUsuario.ROLE_USUARIO) ? config.getPercentualMaximoDescontoGerente() : config.getPercentualMaximoDescontoCaixa();
+        BigDecimal limitePermitido = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ADMIN || usuario.getPerfilDoUsuario() == PerfilDoUsuario.USUARIO) ? config.getPercentualMaximoDescontoGerente() : config.getPercentualMaximoDescontoCaixa();
         if (percentualAplicado.compareTo(limitePermitido) > 0) throw new ValidationException(String.format("Desconto não autorizado. Aplicado: %.2f%% | Limite: %.2f%%", percentualAplicado, limitePermitido));
     }
 
@@ -257,8 +257,8 @@ public class VendaService {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth == null) return null;
             if (auth.getPrincipal() instanceof Usuario) return (Usuario) auth.getPrincipal();
-            if (auth.getPrincipal() instanceof UserDetails) return usuarioRepository.findByMatricula(((UserDetails) auth.getPrincipal()).getUsername()).orElse(null);
-            if (auth.getPrincipal() instanceof String) return usuarioRepository.findByMatricula((String) auth.getPrincipal()).orElse(null);
+            if (auth.getPrincipal() instanceof UserDetails) return usuarioRepository.findByEmail(((UserDetails) auth.getPrincipal()).getUsername()).orElse(null);
+            if (auth.getPrincipal() instanceof String) return usuarioRepository.findByEmail((String) auth.getPrincipal()).orElse(null);
         } catch (Exception e) {
             log.warn("Erro ao identificar utilizador", e);
         }

@@ -59,8 +59,16 @@ public class EstoqueService {
         Produto produto = produtoRepository.findByCodigoBarras(entrada.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + entrada.getCodigoBarras()));
 
+        // --- ADICIONE ESTA LINHA AQUI (LINHA 61 APROXIMADAMENTE) ---
+        int qtdEntrada = entrada.getQuantidade().intValue();
+        // -----------------------------------------------------------
+
         if (entrada.getNumeroNotaFiscal() != null && !entrada.getNumeroNotaFiscal().isBlank()) {
-            produto.setPossuiNfEntrada(true);
+            int saldoFiscalAtual = produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0;
+            produto.setEstoqueFiscal(saldoFiscalAtual + qtdEntrada);
+        } else {
+            int saldoNaoFiscalAtual = produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0;
+            produto.setEstoqueNaoFiscal(saldoNaoFiscalAtual + qtdEntrada);
         }
 
         // 2. Atualiza Custo Médio e Saldo Total do Produto

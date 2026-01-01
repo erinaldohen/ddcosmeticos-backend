@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 @Entity
 @NoArgsConstructor
 @Table(name = "produto")
+// Restaura o Soft Delete (Exclusão lógica)
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true")
 public class Produto implements Serializable {
@@ -28,6 +29,12 @@ public class Produto implements Serializable {
 
     @Column(nullable = false, length = 500)
     private String descricao;
+
+    // --- NOVOS CAMPOS (Do CSV) ---
+    private String marca;
+    private String categoria;
+    private String subcategoria;
+    // -----------------------------
 
     @Column(name = "preco_custo", precision = 10, scale = 2)
     private BigDecimal precoCusto;
@@ -53,12 +60,11 @@ public class Produto implements Serializable {
     private String cest;
 
     @Column(length = 10)
-    private String cst;
+    private String cst; // <--- O CAMPO QUE FALTAVA (Restaurado)
 
-    // --- NOVA LEI COMPLEMENTAR 214/2025 ---
     @Enumerated(EnumType.STRING)
-    @Column(name = "classificacao_reforma", length = 30)
-    private TipoTributacaoReforma classificacaoReforma = TipoTributacaoReforma.PADRAO;
+    @Column(name = "classificacao_reforma")
+    private TipoTributacaoReforma classificacaoReforma;
 
     // --- ESTOQUES ---
 
@@ -102,9 +108,7 @@ public class Produto implements Serializable {
 
     @Transient
     public boolean isPossuiNfEntrada() {
+        // Se tiver estoque fiscal maior que 0, o Java entende automaticamente como TRUE
         return this.estoqueFiscal != null && this.estoqueFiscal > 0;
     }
-
-    @Transient
-    public void setPossuiNfEntrada(boolean valor) {}
 }

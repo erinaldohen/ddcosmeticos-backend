@@ -1,8 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 
@@ -11,14 +9,14 @@ import java.util.List;
 
 public record VendaRequestDTO(
 
-        // Segurança: Garante que o documento tenha apenas números
         @Pattern(regexp = "^[0-9]*$", message = "O documento deve conter apenas números")
         String clienteDocumento,
 
         String clienteNome,
 
-        @NotNull(message = "A forma de pagamento é obrigatória")
-        FormaDePagamento formaPagamento,
+        // 🚨 MUDANÇA AQUI: Deixou de ser um único Enum para ser uma Lista
+        @NotEmpty(message = "Informe pelo menos uma forma de pagamento")
+        List<PagamentoRequestDTO> pagamentos,
 
         Integer quantidadeParcelas,
 

@@ -5,6 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ import java.util.List;
 @Data
 @Entity
 @NoArgsConstructor
+@Audited
 @Table(name = "venda")
 public class Venda implements Serializable {
     private static final long serialVersionUID = 1L;

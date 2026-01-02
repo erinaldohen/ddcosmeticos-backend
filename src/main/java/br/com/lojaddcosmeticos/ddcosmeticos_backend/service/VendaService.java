@@ -51,6 +51,7 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
 
+        // Lida com múltiplos pagamentos. Define a forma principal para a entidade Venda (legado)
         if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
             venda.setFormaPagamento(dto.pagamentos().get(0).formaPagamento());
         } else {
@@ -148,7 +149,7 @@ public class VendaService {
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            // CORREÇÃO: Passa BigDecimal direto
+            // CORREÇÃO: Mantendo BigDecimal para suportar itens fracionados e precisão
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
             ajuste.setTipoMovimento(TipoMovimentoEstoque.SAIDA.name());
@@ -200,10 +201,10 @@ public class VendaService {
             return;
         }
 
+        // Estorno de Estoque usando BigDecimal
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            // CORREÇÃO: Passa BigDecimal direto
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA.name());
             ajuste.setTipoMovimento(TipoMovimentoEstoque.ENTRADA.name());
@@ -221,6 +222,7 @@ public class VendaService {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
         for (ItemVendaDTO itemDto : dto.itens()) {
             Produto produto;
+            // Prioriza busca por ID, mas mantém suporte a código de barras
             if (itemDto.getProdutoId() != null) {
                 produto = produtoRepository.findById(itemDto.getProdutoId())
                         .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.getProdutoId()));
@@ -229,11 +231,12 @@ public class VendaService {
                         .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado Código: " + itemDto.getCodigoBarras()));
             }
 
+            // Conversão segura do Integer do DTO para o BigDecimal da Entidade
             BigDecimal qtdItem = BigDecimal.valueOf(itemDto.getQuantidade());
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
-            item.setQuantidade(qtdItem); // BigDecimal na entidade
+            item.setQuantidade(qtdItem);
             item.setPrecoUnitario(itemDto.getPrecoUnitario() != null ? itemDto.getPrecoUnitario() : produto.getPrecoVenda());
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
@@ -279,16 +282,17 @@ public class VendaService {
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
+        // Baixa de estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            // CORREÇÃO: Passa BigDecimal direto
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
             ajuste.setTipoMovimento(TipoMovimentoEstoque.SAIDA.name());
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
+        // Lançamento de receitas individuais para cada forma de pagamento enviada pelo PDV
         for (PagamentoRequestDTO pag : dto.pagamentos()) {
             financeiroService.lancarReceitaDeVenda(
                     venda.getId(),
@@ -313,7 +317,7 @@ public class VendaService {
             }
 
             if (identificador != null) {
-                // CORREÇÃO: Usa o método que existe no repositório
+                // Utiliza a busca flexível por Matrícula ou E-mail definida no UsuarioRepository
                 return usuarioRepository.findByMatriculaOrEmail(identificador, identificador)
                         .orElse(null);
             }

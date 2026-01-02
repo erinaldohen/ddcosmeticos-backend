@@ -1,13 +1,10 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import jakarta.persistence.Tuple;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
@@ -19,8 +16,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -28,112 +24,117 @@ import java.util.stream.Collectors;
 public class RelatorioService {
 
     @Autowired private VendaRepository vendaRepository;
-    @Autowired private ProdutoRepository produtoRepository;
-    @Autowired private ItemVendaRepository itemVendaRepository;
-    @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ClienteRepository clienteRepository;
-    @Autowired private AuditoriaRepository auditoriaRepository;
 
     private static final List<StatusFiscal> STATUS_IGNORADOS = List.of(
             StatusFiscal.CANCELADA, StatusFiscal.ORCAMENTO, StatusFiscal.ERRO_EMISSAO
     );
 
-    // --- MÉTODOS DE RELATÓRIO DE VENDAS ---
-
     @Transactional(readOnly = true)
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
-        if (inicio == null) inicio = LocalDate.now().withDayOfMonth(1);
+        if (inicio == null) inicio = LocalDate.now().minusDays(30);
         if (fim == null) fim = LocalDate.now();
+
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
-        // 1. Converter Tuples para DTOs
+        // 1. Evolução Diária
         List<VendaDiariaDTO> evolucao = vendaRepository.relatorioVendasPorDia(dataInicio, dataFim, STATUS_IGNORADOS).stream()
                 .map(t -> new VendaDiariaDTO(
-                        t.get(0, LocalDate.class),
+                        converterParaLocalDate(t.get(0)),
                         converterParaBigDecimal(t.get(1)),
-                        t.get(2, Long.class)
+                        ((Number) t.get(2)).longValue()
                 )).collect(Collectors.toList());
 
-        List<VendaPorPagamentoDTO> pagamentos = vendaRepository.relatorioVendasPorPagamento(dataInicio, dataFim, STATUS_IGNORADOS).stream()
-                .map(t -> new VendaPorPagamentoDTO(
-                        t.get(0, FormaDePagamento.class),
-                        converterParaBigDecimal(t.get(1)),
-                        t.get(2, Long.class)
-                )).collect(Collectors.toList());
+        BigDecimal faturamentoTotal = evolucao.stream().map(VendaDiariaDTO::getTotalVendido).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Long totalVendas = evolucao.stream().mapToLong(VendaDiariaDTO::getQuantidadeVendas).sum();
 
+        // 2. Ranking de Produtos (Top 10)
         List<ProdutoRankingDTO> topProdutos = vendaRepository.relatorioProdutosMaisVendidos(dataInicio, dataFim, STATUS_IGNORADOS, PageRequest.of(0, 10)).stream()
                 .map(t -> new ProdutoRankingDTO(
-                        t.get(0, String.class),
-                        t.get(1, String.class),
-                        t.get(2, Long.class),
+                        (String) t.get(0),
+                        (String) t.get(1),
+                        ((Number) t.get(2)).longValue(),
                         converterParaBigDecimal(t.get(3))
                 )).collect(Collectors.toList());
 
-        // 2. Calcular Totais
-        BigDecimal faturamentoTotal = evolucao.stream()
-                .map(VendaDiariaDTO::getTotalVendido)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        Long totalVendas = evolucao.stream()
-                .mapToLong(VendaDiariaDTO::getQuantidadeVendas)
-                .sum();
-
-        BigDecimal ticketMedio = (totalVendas > 0)
-                ? faturamentoTotal.divide(BigDecimal.valueOf(totalVendas), 2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
+        // 3. Vendas por Forma de Pagamento
+        List<VendaPorPagamentoDTO> pagamentos = vendaRepository.relatorioVendasPorPagamento(dataInicio, dataFim, STATUS_IGNORADOS).stream()
+                .map(t -> new VendaPorPagamentoDTO(
+                        (FormaDePagamento) t.get(0),
+                        converterParaBigDecimal(t.get(1)),
+                        ((Number) t.get(2)).longValue()
+                )).collect(Collectors.toList());
 
         return RelatorioVendasDTO.builder()
-                .dataGeracao(LocalDateTime.now())
-                .periodo(inicio.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) + " a " + fim.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")))
                 .faturamentoTotal(faturamentoTotal)
                 .totalVendasRealizadas(totalVendas)
-                .ticketMedio(ticketMedio)
+                .ticketMedio(totalVendas > 0 ? faturamentoTotal.divide(BigDecimal.valueOf(totalVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO)
                 .evolucaoDiaria(evolucao)
                 .vendasPorPagamento(pagamentos)
                 .produtosMaisVendidos(topProdutos)
                 .build();
     }
 
-    // Método auxiliar seguro para conversão numérica do banco
+    /**
+     * Implementação Analítica da Curva ABC
+     * Classifica os produtos em A (80% do faturamento), B (15%) e C (5%)
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> gerarCurvaAbc() {
+        LocalDateTime inicio = LocalDateTime.now().minusYears(1); // Analisa o último ano
+        LocalDateTime fim = LocalDateTime.now();
+
+        // Pega uma amostra maior de produtos para classificar
+        List<Tuple> ranking = vendaRepository.relatorioProdutosMaisVendidos(inicio, fim, STATUS_IGNORADOS, PageRequest.of(0, 100));
+
+        BigDecimal faturamentoTotal = ranking.stream()
+                .map(t -> converterParaBigDecimal(t.get(3)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        List<Map<String, Object>> curvaAbc = new ArrayList<>();
+        BigDecimal acumulado = BigDecimal.ZERO;
+
+        for (Tuple t : ranking) {
+            BigDecimal totalProduto = converterParaBigDecimal(t.get(3));
+            acumulado = acumulado.add(totalProduto);
+
+            BigDecimal percentualParticipacao = faturamentoTotal.compareTo(BigDecimal.ZERO) > 0
+                    ? totalProduto.multiply(new BigDecimal("100")).divide(faturamentoTotal, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+
+            BigDecimal percentualAcumulado = faturamentoTotal.compareTo(BigDecimal.ZERO) > 0
+                    ? acumulado.multiply(new BigDecimal("100")).divide(faturamentoTotal, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+
+            String classe = "C";
+            if (percentualAcumulado.compareTo(new BigDecimal("80")) <= 0) classe = "A";
+            else if (percentualAcumulado.compareTo(new BigDecimal("95")) <= 0) classe = "B";
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("nome", t.get(1));
+            item.put("codigo", t.get(0));
+            item.put("total", totalProduto);
+            item.put("qtd", t.get(2));
+            item.put("classe", classe);
+            item.put("participacao", percentualParticipacao);
+
+            curvaAbc.add(item);
+        }
+
+        return curvaAbc;
+    }
+
     private BigDecimal converterParaBigDecimal(Object valor) {
         if (valor == null) return BigDecimal.ZERO;
+        if (valor instanceof BigDecimal) return (BigDecimal) valor;
         return new BigDecimal(valor.toString());
     }
 
-    // --- OUTROS MÉTODOS MANTIDOS (Resumidos para caber) ---
-
-    @Transactional(readOnly = true)
-    public List<Map<String, Object>> gerarRelatorioMonofasicos() {
-        return produtoRepository.findAllByAtivoTrue().stream().map(p -> {
-            Map<String, Object> map = new HashMap<>();
-            map.put("codigo", p.getCodigoBarras());
-            map.put("produto", p.getDescricao());
-            map.put("status", p.isMonofasico() ? "MONOFÁSICO (ISENTO)" : "TRIBUTADO NORMAL");
-            return map;
-        }).collect(Collectors.toList());
-    }
-
-    @Transactional(readOnly = true)
-    public InventarioResponseDTO gerarInventarioEstoque(boolean contabil) {
-        // Implementação simplificada para compilar - use a original se precisar
-        return InventarioResponseDTO.builder().dataGeracao(LocalDateTime.now()).itens(new ArrayList<>()).build();
-    }
-
-    @Transactional(readOnly = true)
-    public List<ItemAbcDTO> gerarCurvaAbc() {
-        return itemVendaRepository.agruparVendasPorProduto(); // Simplificado
-    }
-
-    @Transactional(readOnly = true)
-    public List<RelatorioInadimplenciaDTO> gerarRelatorioFiado() {
-        List<RelatorioInadimplenciaDTO> relatorio = new ArrayList<>();
-        List<String> docs = contaReceberRepository.buscarDocumentosComPendencia();
-        for (String doc : docs) {
-            if(doc == null) continue;
-            BigDecimal divida = contaReceberRepository.somarDividaTotalPorDocumento(doc);
-            relatorio.add(new RelatorioInadimplenciaDTO("Cliente", doc, "", divida, 1, new ArrayList<>()));
-        }
-        return relatorio;
+    private LocalDate converterParaLocalDate(Object valor) {
+        if (valor == null) return null;
+        if (valor instanceof java.sql.Date) return ((java.sql.Date) valor).toLocalDate();
+        if (valor instanceof java.util.Date) return ((java.util.Date) valor).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        if (valor instanceof LocalDate) return (LocalDate) valor;
+        return null;
     }
 }

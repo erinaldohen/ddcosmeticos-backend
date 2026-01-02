@@ -10,7 +10,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -21,31 +20,23 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
 
+    // Listagem Geral de Vendas
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
-    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens WHERE v.dataVenda BETWEEN :inicio AND :fim")
-    List<Venda> buscarPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
-    @Query("SELECT SUM(v.totalVenda) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
-    BigDecimal somarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
-    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
-    Long contarVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
+    // Vendas Suspensas
     List<Venda> findByStatusFiscalOrderByDataVendaDesc(StatusFiscal status);
 
-    // --- QUERIES DE RELATÓRIO (USANDO TUPLE PARA EVITAR ERROS) ---
-
+    // Query unificada para Relatórios e Dashboard (Performance com Tuple)
     @Query("""
         SELECT 
-            cast(v.dataVenda as LocalDate) as data,
-            SUM(v.totalVenda) as total,
+            CAST(v.dataVenda AS date) as data,
+            SUM(v.totalVenda - v.descontoTotal) as total,
             COUNT(v) as qtd
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
         AND v.statusFiscal NOT IN :statusExcluidos
-        GROUP BY cast(v.dataVenda as LocalDate)
-        ORDER BY cast(v.dataVenda as LocalDate) ASC
+        GROUP BY CAST(v.dataVenda AS date)
+        ORDER BY CAST(v.dataVenda AS date) ASC
     """)
     List<Tuple> relatorioVendasPorDia(
             @Param("inicio") LocalDateTime inicio,
@@ -56,7 +47,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("""
         SELECT 
             v.formaPagamento as forma,
-            SUM(v.totalVenda) as total,
+            SUM(v.totalVenda - v.descontoTotal) as total,
             COUNT(v) as qtd
         FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim
@@ -89,4 +80,15 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
             @Param("statusExcluidos") List<StatusFiscal> statusExcluidos,
             Pageable pageable
     );
+
+    @Query("""
+    SELECT 
+        SUM(i.precoUnitario * i.quantidade) as faturamento,
+        SUM(i.custoUnitarioHistorico * i.quantidade) as custoTotal,
+        SUM((i.precoUnitario - i.custoUnitarioHistorico) * i.quantidade) as lucroBruto
+    FROM ItemVenda i JOIN i.venda v
+    WHERE v.dataVenda BETWEEN :inicio AND :fim
+    AND v.statusFiscal NOT IN :statusExcluidos
+""")
+    Tuple resumoLucratividade(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("statusExcluidos") List<StatusFiscal> statusExcluidos);
 }

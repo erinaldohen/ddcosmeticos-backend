@@ -42,8 +42,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
-    // ✅ ESTA É A VERSÃO CORRETA (A antiga foi removida)
-    // A ordem dos campos aqui DEVE ser a mesma do record ProdutoListagemDTO
     @Query("""
        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO(
            p.id, 
@@ -61,12 +59,12 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<ProdutoListagemDTO> findAllResumo();
 
     @Query("""
-   SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO(
-       p.id, p.descricao, p.precoVenda, p.urlImagem, 
-       p.quantidadeEmEstoque, p.ativo, p.codigoBarras, p.marca, p.ncm
-   ) 
-   FROM Produto p 
-   WHERE p.codigoBarras = :termo OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))
-""")
+       SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO(
+           p.id, p.descricao, p.precoVenda, p.urlImagem, 
+           p.quantidadeEmEstoque, p.ativo, p.codigoBarras, p.marca, p.ncm
+       ) 
+       FROM Produto p 
+       WHERE p.codigoBarras = :termo OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))
+    """)
     List<ProdutoListagemDTO> buscarPorTermo(@Param("termo") String termo);
 }

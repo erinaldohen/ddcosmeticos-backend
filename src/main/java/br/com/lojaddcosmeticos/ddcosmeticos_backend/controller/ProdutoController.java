@@ -1,9 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoPrecoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity; // <--- Import Novo
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*; // Importa todos os DTOs (incluindo HistoricoProdutoDTO)
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -14,7 +12,10 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.persistence.EntityManager; // <--- Import Novo
 import jakarta.validation.Valid;
+import org.hibernate.envers.AuditReader; // <--- Import Novo
+import org.hibernate.envers.AuditReaderFactory; // <--- Import Novo
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,8 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
+import java.util.ArrayList; // <--- Import Novo
+import java.util.Date; // <--- Import Novo
 import java.util.List;
 
 @RestController
@@ -39,6 +42,8 @@ public class ProdutoController {
     @Autowired private EstoqueService estoqueService;
     @Autowired private ArquivoService arquivoService;
 
+    @Autowired private EntityManager entityManager; // <--- ADICIONADO: Necessário para o Envers
+
     // ==================================================================================
     // SESSÃO 1: LEITURA E BUSCA (MÉTODO UNIFICADO)
     // ==================================================================================
@@ -48,10 +53,8 @@ public class ProdutoController {
         List<ProdutoListagemDTO> resultado;
 
         if (busca != null && !busca.isBlank()) {
-            // Se o usuário digitou algo ou escaneou um código, filtra no banco
             resultado = repository.buscarPorTermo(busca);
         } else {
-            // Se não tem busca, traz a lista completa resumida
             resultado = repository.findAllResumo();
         }
 
@@ -167,18 +170,38 @@ public class ProdutoController {
     @PostMapping(value = "/{id}/imagem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload de Foto", description = "Envia uma imagem (jpg/png) para o produto e atualiza a URL.")
     public ResponseEntity<Void> uploadImagem(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
-        // 1. Salva o arquivo no disco
         String nomeArquivo = arquivoService.salvarImagem(file);
-
-        // 2. Gera a URL pública para acesso (Ex: /imagens/nome-do-arquivo.jpg)
         String urlAcesso = "/imagens/" + nomeArquivo;
-
-        // 3. Atualiza o cadastro do produto com a nova URL
         produtoService.atualizarUrlImagem(id, urlAcesso);
-
         return ResponseEntity.ok().build();
     }
 
+    // ==================================================================================
+    // SESSÃO 6: AUDITORIA E HISTÓRICO
+    // ==================================================================================
 
+    @GetMapping("/{id}/historico")
+    @Operation(summary = "Histórico de Alterações", description = "Lista quem alterou o produto e quando.")
+    public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
+        AuditReader reader = AuditReaderFactory.get(entityManager);
 
+        // Busca todas as revisões do Produto com aquele ID
+        List<Number> revisions = reader.getRevisions(Produto.class, id);
+        List<HistoricoProdutoDTO> historico = new ArrayList<>();
+
+        for (Number rev : revisions) {
+            Produto pAntigo = reader.find(Produto.class, id, rev);
+            CustomRevisionEntity info = reader.findRevision(CustomRevisionEntity.class, rev);
+
+            historico.add(new HistoricoProdutoDTO(
+                    new Date(info.getTimestamp()), // Converte long para Date
+                    info.getUsuarioResponsavel(),
+                    pAntigo.getPrecoVenda(),
+                    pAntigo.getQuantidadeEmEstoque(),
+                    pAntigo.getDescricao()
+            ));
+        }
+
+        return ResponseEntity.ok(historico);
+    }
 }

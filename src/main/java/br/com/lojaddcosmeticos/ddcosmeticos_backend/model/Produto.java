@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
+import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -13,6 +14,7 @@ import java.math.BigDecimal;
 @Data
 @Entity
 @NoArgsConstructor
+@Audited
 @Table(name = "produto")
 // Restaura o Soft Delete (Exclusão lógica)
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")

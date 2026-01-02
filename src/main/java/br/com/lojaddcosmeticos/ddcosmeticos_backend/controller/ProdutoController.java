@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoPrecoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
@@ -39,13 +40,22 @@ public class ProdutoController {
     @Autowired private ArquivoService arquivoService;
 
     // ==================================================================================
-    // SESSÃO 1: LEITURA E BUSCA
+    // SESSÃO 1: LEITURA E BUSCA (MÉTODO UNIFICADO)
     // ==================================================================================
 
     @GetMapping
-    @Operation(summary = "Listar produtos", description = "Retorna todos os produtos ativos ou filtra por termo.")
-    public ResponseEntity<List<Produto>> listar(@RequestParam(required = false) String termo) {
-        return ResponseEntity.ok(produtoService.buscarInteligente(termo));
+    public ResponseEntity<List<ProdutoListagemDTO>> listar(@RequestParam(required = false) String busca) {
+        List<ProdutoListagemDTO> resultado;
+
+        if (busca != null && !busca.isBlank()) {
+            // Se o usuário digitou algo ou escaneou um código, filtra no banco
+            resultado = repository.buscarPorTermo(busca);
+        } else {
+            // Se não tem busca, traz a lista completa resumida
+            resultado = repository.findAllResumo();
+        }
+
+        return ResponseEntity.ok(resultado);
     }
 
     @GetMapping("/{id}")
@@ -168,4 +178,7 @@ public class ProdutoController {
 
         return ResponseEntity.ok().build();
     }
+
+
+
 }

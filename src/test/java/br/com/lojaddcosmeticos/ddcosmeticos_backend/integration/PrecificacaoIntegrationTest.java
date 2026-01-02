@@ -94,7 +94,7 @@ public class PrecificacaoIntegrationTest {
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
         p.setPrecoCusto(BigDecimal.ZERO);
         p.setAtivo(true);
-        p.setPossuiNfEntrada(true);
+        p.isPossuiNfEntrada();
         return produtoRepository.save(p);
     }
 

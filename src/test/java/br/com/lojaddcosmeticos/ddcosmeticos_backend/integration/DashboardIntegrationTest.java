@@ -9,6 +9,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,36 +29,57 @@ public class DashboardIntegrationTest {
 
     @Autowired private DashboardService dashboardService;
     @Autowired private VendaRepository vendaRepository;
+    @Autowired private ItemVendaRepository itemVendaRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private FornecedorRepository fornecedorRepository;
     @Autowired private UsuarioRepository usuarioRepository;
+    @Autowired private MovimentoEstoqueRepository movimentoEstoqueRepository;
+
+    // --- CORREÇÃO: Limpar o banco antes do teste ---
+    @BeforeEach
+    void limparBanco() {
+        // A ordem importa por causa das chaves estrangeiras (Foreign Keys)
+        itemVendaRepository.deleteAll();
+        movimentoEstoqueRepository.deleteAll();
+        contaPagarRepository.deleteAll();
+        contaReceberRepository.deleteAll();
+        vendaRepository.deleteAll();
+
+        produtoRepository.deleteAll(); // <--- Remove os 184 produtos do CSV para não interferir na contagem
+
+        fornecedorRepository.deleteAll();
+        usuarioRepository.deleteAll();
+    }
+    // -----------------------------------------------
 
     @Test
     @DisplayName("Dashboard CEO: Deve calcular vendas, financeiro e alertas corretamente")
     @WithMockUser(username = "gerente", roles = {"GERENTE"})
     public void testeDashboardCompleto() {
-        // --- 0. PREPARAÇÃO DO USUÁRIO (Obrigatório para Venda) ---
+        // 0. PREPARAÇÃO DO USUÁRIO
         Usuario gerente = new Usuario();
-        // CORREÇÃO: Usando setMatricula em vez de setLogin
-        gerente.setEmail("gerente");
+        gerente.setMatricula("gerente_mat");
+        gerente.setEmail("gerente@teste.com");
         gerente.setSenha("123");
-        gerente.setPerfilDoUsuario(PerfilDoUsuario.ADMIN); // Ajustado para Enum correto se for ROLE_GERENTE ou GERENTE
+        gerente.setPerfilDoUsuario(PerfilDoUsuario.ADMIN);
         gerente.setNome("Gerente Teste");
         usuarioRepository.save(gerente);
 
-        // --- CENÁRIO ---
         LocalDate hoje = LocalDate.now();
 
         // 1. Produtos
+        // PROD_OK: Estoque 10, Minimo 5 -> OK (Não gera alerta)
         criarProduto("PROD_OK", new BigDecimal("100.00"), 10, 5);
+
+        // PROD_BAIXO: Estoque 2, Minimo 5 -> ALERTA (Gera 1 alerta)
         criarProduto("PROD_BAIXO", new BigDecimal("50.00"), 2, 5);
 
-        // 2. Vendas (Vinculando Usuário)
+        // 2. Vendas
         criarVenda(hoje.atTime(10, 0), new BigDecimal("100.00"), gerente);
         criarVenda(hoje.atTime(15, 30), new BigDecimal("200.00"), gerente);
-        criarVenda(hoje.minusDays(1).atTime(12, 0), new BigDecimal("5000.00"), gerente); // Ontem
+        criarVenda(hoje.minusDays(1).atTime(12, 0), new BigDecimal("5000.00"), gerente);
 
         // 3. Financeiro
         Fornecedor f = criarFornecedor();
@@ -79,6 +101,8 @@ public class DashboardIntegrationTest {
         Assertions.assertTrue(saldoEsperado.compareTo(dashboard.saldoDoDia()) == 0);
 
         Assertions.assertTrue(new BigDecimal("50.00").compareTo(dashboard.totalVencidoPagar()) == 0);
+
+        // AGORA VAI PASSAR: Só existe 1 produto no banco inteiro com estoque baixo (o PROD_BAIXO)
         Assertions.assertEquals(1L, dashboard.produtosAbaixoMinimo());
     }
 
@@ -89,12 +113,13 @@ public class DashboardIntegrationTest {
         p.setCodigoBarras(codigo);
         p.setDescricao("Teste " + codigo);
         p.setPrecoVenda(preco);
+        p.setEstoqueFiscal(estoque);
+        p.setEstoqueNaoFiscal(0);
         p.setQuantidadeEmEstoque(estoque);
         p.setEstoqueMinimo(minimo);
         p.setAtivo(true);
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
         p.setPrecoCusto(BigDecimal.ZERO);
-        p.setPossuiNfEntrada(true);
         produtoRepository.save(p);
     }
 

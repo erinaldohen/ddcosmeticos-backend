@@ -53,7 +53,7 @@ public class RecebimentoPedidoTest {
         p.setQuantidadeEmEstoque(0);
         p.setPrecoVenda(new BigDecimal("150.00"));
         p.setAtivo(true);
-        p.setPossuiNfEntrada(true);
+        p.isPossuiNfEntrada();
 
         p.setPrecoMedioPonderado(BigDecimal.ZERO);
         p.setPrecoCusto(BigDecimal.ZERO);

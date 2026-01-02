@@ -3,11 +3,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.envers.Audited;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
 @Entity
+@Audited
 @Table(name = "conta_pagar")
 public class ContaPagar {
 

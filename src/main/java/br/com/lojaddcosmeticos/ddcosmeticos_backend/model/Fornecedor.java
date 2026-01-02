@@ -5,11 +5,13 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import lombok.Data;
+import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
 
 @Data
 @Entity
+@Audited
 @Table(name = "fornecedor", indexes = {
         @Index(name = "idx_fornecedor_nome", columnList = "nome_fantasia")
 })

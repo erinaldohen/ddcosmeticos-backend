@@ -3,12 +3,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 
 @Data
 @Entity
 @NoArgsConstructor
+@Audited
 @Table(name = "item_venda")
 public class ItemVenda {
 

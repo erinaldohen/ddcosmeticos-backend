@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Data
+@Audited
 @Entity
 public class PedidoCompra implements Serializable {
     private static final long serialVersionUID = 1L;

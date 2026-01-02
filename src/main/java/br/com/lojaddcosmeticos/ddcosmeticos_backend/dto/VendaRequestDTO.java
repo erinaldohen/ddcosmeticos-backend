@@ -7,6 +7,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
 
+// Usando Record (Java 16+) que gera getters automáticos, ex: dto.pagamentos()
 public record VendaRequestDTO(
 
         @Pattern(regexp = "^[0-9]*$", message = "O documento deve conter apenas números")
@@ -14,7 +15,7 @@ public record VendaRequestDTO(
 
         String clienteNome,
 
-        // 🚨 MUDANÇA AQUI: Deixou de ser um único Enum para ser uma Lista
+        // ALTERAÇÃO CRÍTICA: Mudou de "FormaDePagamento formaPagamento" para Lista
         @NotEmpty(message = "Informe pelo menos uma forma de pagamento")
         List<PagamentoRequestDTO> pagamentos,
 

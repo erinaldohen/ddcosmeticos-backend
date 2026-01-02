@@ -1,7 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.annotation.PostConstruct;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -10,48 +12,47 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
-/**
- * Serviço responsável por manipular arquivos físicos (Uploads).
- */
 @Service
 public class ArquivoService {
 
-    // Define a pasta raiz onde as imagens serão salvas
-    private final Path diretorioUploads = Paths.get("uploads");
+    // Se não houver nada no application.properties, usa "./uploads" por padrão
+    @Value("${app.upload.dir:./uploads}")
+    private String uploadDir;
 
-    // Construtor: Cria a pasta 'uploads' se ela não existir ao iniciar a aplicação
-    public ArquivoService() {
+    private Path diretorioPath;
+
+    @PostConstruct // Executa logo após a injeção de dependência do Spring
+    public void init() {
         try {
-            Files.createDirectories(diretorioUploads);
+            this.diretorioPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+            Files.createDirectories(this.diretorioPath);
         } catch (IOException e) {
-            throw new RuntimeException("Não foi possível criar o diretório de uploads.", e);
+            throw new RuntimeException("Erro ao criar pasta de uploads em: " + uploadDir, e);
         }
     }
 
-    /**
-     * Salva um arquivo no disco e retorna o nome gerado.
-     * @param arquivo O arquivo recebido via upload.
-     * @return O nome do arquivo salvo (com UUID para ser único).
-     */
     public String salvarImagem(MultipartFile arquivo) {
+        if (arquivo.isEmpty()) {
+            throw new RuntimeException("Arquivo vazio.");
+        }
+
         try {
-            if (arquivo.isEmpty()) {
-                throw new RuntimeException("Arquivo vazio. Por favor envie uma imagem válida.");
-            }
+            // Limpa o nome do arquivo para evitar ataques de Path Traversal (../)
+            String nomeOriginal = arquivo.getOriginalFilename();
+            if (nomeOriginal == null) nomeOriginal = "imagem";
 
-            // Gera um nome único para evitar que uma imagem sobrescreva outra com o mesmo nome
-            // Exemplo: "ab12-cd34-ef56_foto-produto.jpg"
-            String nomeArquivo = UUID.randomUUID().toString() + "_" + arquivo.getOriginalFilename();
+            String extensao = "";
+            int i = nomeOriginal.lastIndexOf('.');
+            if (i > 0) extensao = nomeOriginal.substring(i);
 
-            // Define o caminho completo do arquivo
-            Path destino = diretorioUploads.resolve(nomeArquivo);
+            String nomeGerado = UUID.randomUUID().toString() + extensao;
+            Path destino = this.diretorioPath.resolve(nomeGerado);
 
-            // Copia os bytes do arquivo para o disco (substituindo se existir conflito, o que é raro com UUID)
             Files.copy(arquivo.getInputStream(), destino, StandardCopyOption.REPLACE_EXISTING);
 
-            return nomeArquivo;
+            return nomeGerado;
         } catch (IOException e) {
-            throw new RuntimeException("Erro crítico ao salvar arquivo no servidor.", e);
+            throw new RuntimeException("Erro ao salvar arquivo físico.", e);
         }
     }
 }

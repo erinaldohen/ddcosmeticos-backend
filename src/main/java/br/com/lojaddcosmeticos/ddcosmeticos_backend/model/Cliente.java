@@ -3,6 +3,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.envers.Audited;
+
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -10,6 +12,7 @@ import java.time.LocalDateTime;
 @Data
 @Entity
 @NoArgsConstructor
+@Audited
 @Table(name = "cliente")
 public class Cliente implements Serializable {
     private static final long serialVersionUID = 1L;

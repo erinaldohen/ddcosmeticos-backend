@@ -48,6 +48,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
 
+                        // --- ADICIONE ESTA LINHA AQUI ---
+                        .requestMatchers("/api/fiscal/**").permitAll() // Libera tudo de fiscal para teste
+                        // --------------------------------
+
                         // 2. Libere os Produtos DEPOIS
                         .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/produtos/**").permitAll()

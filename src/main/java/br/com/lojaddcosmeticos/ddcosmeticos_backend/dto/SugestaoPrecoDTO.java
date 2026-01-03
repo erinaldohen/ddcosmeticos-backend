@@ -1,12 +1,36 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
-import java.math.BigDecimal;
 
-public record SugestaoPrecoDTO(
-        String produto,
-        BigDecimal custoMedio,
-        BigDecimal precoAtual,
-        BigDecimal precoSugerido,
-        BigDecimal margemAtualPercentual,
-        BigDecimal margemAlvoPercentual,
-        String status // LUCRO_BOM, PREJUIZO, etc.
-) {}
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusPrecificacao;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class SugestaoPrecoDTO {
+
+    private Long id;
+    private Long produtoId;
+    private String nomeProduto;
+
+    private BigDecimal custoBase;
+    private BigDecimal precoVendaAtual;
+    private BigDecimal precoVendaSugerido;
+
+    private BigDecimal margemAtualPercentual;
+    private BigDecimal margemSugeridaPercentual;
+
+    private LocalDateTime dataSugestao;
+
+    // Aqui está o segredo: O campo no DTO chama-se 'status' para o frontend,
+    // mas recebe o valor de 'statusPrecificacao' da entidade.
+    private StatusPrecificacao status;
+
+    private String observacao;
+}

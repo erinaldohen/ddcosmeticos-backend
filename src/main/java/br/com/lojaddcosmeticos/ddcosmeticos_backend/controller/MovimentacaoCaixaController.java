@@ -25,7 +25,7 @@ public class MovimentacaoCaixaController {
 
         String usuario = (principal != null) ? principal.getName() : "SISTEMA_LOCAL";
 
-        // CORREÇÃO: 'registrar' em vez de 'registar'
+        // Agora o método 'registrarMovimentacaoManual' existe no service
         return ResponseEntity.ok(financeiroService.registrarMovimentacaoManual(dto, usuario));
     }
 }

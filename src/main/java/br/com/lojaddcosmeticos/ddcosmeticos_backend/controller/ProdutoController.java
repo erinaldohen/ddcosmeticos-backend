@@ -140,9 +140,9 @@ public class ProdutoController {
     }
 
     @GetMapping("/{id}/sugestao-preco")
-    public ResponseEntity<SugestaoPrecoDTO> obterSugestao(@PathVariable Long id) {
-        var produto = repository.findById(id).orElseThrow(() -> new RuntimeException("Produto não encontrado"));
-        return ResponseEntity.ok(precificacaoService.calcularSugestao(produto));
+    public ResponseEntity<SugestaoPrecoDTO> obterSugestao(@PathVariable String codigoBarras) {
+        var produto = repository.findByCodigoBarras(codigoBarras).orElseThrow(() -> new RuntimeException("Produto não encontrado"));
+        return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
     }
 
     @PatchMapping("/{id}/definir-preco")

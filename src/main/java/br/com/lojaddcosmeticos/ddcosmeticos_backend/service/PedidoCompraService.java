@@ -107,14 +107,13 @@ public class PedidoCompraService {
             );
         }
 
-        // CORREÇÃO: Chama o Financeiro com a Nova Assinatura
+        // CORREÇÃO: Chama o Financeiro com a assinatura correta (Produto ID null pois é geral, Fornecedor ID)
         financeiroService.lancarDespesaDeCompra(
-                fornecedor,
+                null, // Produto ID (não se aplica a pedido global)
+                fornecedor.getId(),
                 pedido.getTotalFinal(),
-                numeroNotaFiscal,
-                FormaDePagamento.BOLETO,
-                1,
-                dataVencimento // <--- PASSA A DATA QUE VEIO DO CONTROLLER
+                1, // Parcelas (padrão 1, pode melhorar se o DTO tiver)
+                "NF: " + numeroNotaFiscal // Observação
         );
 
         pedido.setStatus(PedidoCompra.StatusPedido.CONCLUIDO);

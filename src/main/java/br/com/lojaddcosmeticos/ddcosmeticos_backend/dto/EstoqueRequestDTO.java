@@ -1,8 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -11,23 +12,28 @@ import java.time.LocalDate;
 @Data
 public class EstoqueRequestDTO {
 
-    @NotNull(message = "O código de barras é obrigatório")
+    @NotBlank(message = "O código de barras é obrigatório")
     private String codigoBarras;
 
-    @NotNull @Positive
-    private BigDecimal quantidade;
-
-    @NotNull @Positive
-    private BigDecimal precoCusto;
-
-    private String numeroNotaFiscal;
+    // Agora suporta ID ou CNPJ
+    private Long fornecedorId;
     private String fornecedorCnpj;
 
-    // --- NOVOS CAMPOS PARA RASTREABILIDADE ---
+    @NotNull(message = "A quantidade é obrigatória")
+    @DecimalMin(value = "0.0001", message = "Quantidade deve ser maior que zero")
+    private BigDecimal quantidade;
+
+    @NotNull(message = "O preço de custo é obrigatório")
+    @DecimalMin(value = "0.01", message = "Preço de custo inválido")
+    private BigDecimal precoCusto;
+
+    // Dados Fiscais / Rastreabilidade
+    private String numeroNotaFiscal;
     private String numeroLote;
     private LocalDate dataValidade;
+    private LocalDate dataFabricacao;
 
-    // Dados para gerar conta a pagar
+    // Dados Financeiros
     private FormaDePagamento formaPagamento;
     private Integer quantidadeParcelas;
     private LocalDate dataVencimentoBoleto;

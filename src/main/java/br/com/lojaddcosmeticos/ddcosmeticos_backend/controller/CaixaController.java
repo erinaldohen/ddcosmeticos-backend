@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService; // CORREÇÃO: Import do serviço correto
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,7 +18,7 @@ import java.time.LocalDate;
 public class CaixaController {
 
     @Autowired
-    private FinanceiroService financeiroService; // CORREÇÃO: Alterado de RelatorioService para FinanceiroService
+    private FinanceiroService financeiroService;
 
     @GetMapping("/fechamento")
     @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
@@ -26,7 +26,6 @@ public class CaixaController {
     public ResponseEntity<FechamentoCaixaDTO> obterFechamento(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
 
-        // CORREÇÃO DA LINHA 29: Chamada ao método consolidado no FinanceiroService
         return ResponseEntity.ok(financeiroService.gerarResumoFechamento(data));
     }
 }

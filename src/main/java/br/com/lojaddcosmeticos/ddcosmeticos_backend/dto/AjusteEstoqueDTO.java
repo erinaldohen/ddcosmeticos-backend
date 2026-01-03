@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque; // Import Necessário
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -15,20 +16,13 @@ public class AjusteEstoqueDTO implements Serializable {
     @NotBlank(message = "O código de barras é obrigatório")
     private String codigoBarras;
 
-    @NotNull(message = "A quantidade é obrigatória")
+    @NotNull(message = "A quantidade do ajuste é obrigatória")
     @Positive(message = "A quantidade deve ser maior que zero")
     private BigDecimal quantidade;
 
-    /**
-     * Campo principal da nova lógica.
-     * Deve receber valores como: "AJUSTE_SOBRA", "AJUSTE_PERDA", "USO_INTERNO".
-     */
-    @NotBlank(message = "O motivo do ajuste é obrigatório (ex: AJUSTE_SOBRA, AJUSTE_PERDA)")
-    private String motivo;
+    // --- CORREÇÃO: Alterado de String para Enum ---
+    @NotNull(message = "O motivo do ajuste é obrigatório")
+    private MotivoMovimentacaoDeEstoque motivo;
 
-    /**
-     * @deprecated O sistema agora calcula Entrada/Saída automaticamente baseado no motivo.
-     * Mantido apenas para não quebrar integrações antigas, mas pode ser enviado como nulo.
-     */
-    private String tipoMovimento;
+    private String observacao;
 }

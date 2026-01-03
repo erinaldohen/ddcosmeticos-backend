@@ -22,22 +22,22 @@ public class SugestaoPreco implements Serializable {
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
-    private BigDecimal custoAntigo;
-    private BigDecimal custoNovo;
+    // Renomeado para bater com o Service (custoBase)
+    private BigDecimal custoBase;
 
     private BigDecimal precoVendaAtual;
     private BigDecimal precoVendaSugerido;
 
-    private BigDecimal margemAtual;
-    private BigDecimal margemProjetada;
+    private BigDecimal margemAtualPercentual;
+    private BigDecimal margemSugeridaPercentual;
 
-    // --- CORREÇÃO: Campo renomeado para evitar erro de propriedade ---
     @Enumerated(EnumType.STRING)
     @Column(name = "status_precificacao")
     private StatusPrecificacao statusPrecificacao;
 
-    private LocalDateTime dataGeracao = LocalDateTime.now();
+    private LocalDateTime dataSugestao = LocalDateTime.now();
+    private LocalDateTime dataAprovacao;
 
     @Column(columnDefinition = "TEXT")
-    private String motivo;
+    private String observacao;
 }

@@ -51,7 +51,6 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
 
-        // Lida com múltiplos pagamentos. Define a forma principal para a entidade Venda (legado)
         if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
             venda.setFormaPagamento(dto.pagamentos().get(0).formaPagamento());
         } else {
@@ -92,7 +91,11 @@ public class VendaService {
 
         if (!isOrcamento) {
             executarFluxosOperacionais(vendaSalva, dto);
-            nfceService.emitirNfce(vendaSalva, Boolean.TRUE.equals(dto.apenasItensComNfEntrada()));
+            try {
+                nfceService.emitirNfce(vendaSalva, Boolean.TRUE.equals(dto.apenasItensComNfEntrada()));
+            } catch (Exception e) {
+                log.error("Erro ao emitir NFC-e, mas venda foi salva", e);
+            }
         }
 
         return vendaRepository.save(vendaSalva);
@@ -149,18 +152,20 @@ public class VendaService {
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            // CORREÇÃO: Mantendo BigDecimal para suportar itens fracionados e precisão
             ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
-            ajuste.setTipoMovimento(TipoMovimentoEstoque.SAIDA.name());
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
+            ajuste.setObservacao("Efetivação Venda #" + venda.getId());
             estoqueService.realizarAjusteInventario(ajuste);
         });
+
+        Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
 
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda().subtract(venda.getDescontoTotal()),
                 venda.getFormaPagamento().name(),
-                venda.getQuantidadeParcelas() != null ? venda.getQuantidadeParcelas() : 1
+                venda.getQuantidadeParcelas() != null ? venda.getQuantidadeParcelas() : 1,
+                clienteId
         );
 
         nfceService.emitirNfce(venda, false);
@@ -201,17 +206,14 @@ public class VendaService {
             return;
         }
 
-        // Estorno de Estoque usando BigDecimal
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA.name());
-            ajuste.setTipoMovimento(TipoMovimentoEstoque.ENTRADA.name());
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
+            ajuste.setObservacao("Estorno Venda #" + idVenda);
             estoqueService.realizarAjusteInventario(ajuste);
         });
-
-        financeiroService.cancelarReceitaDeVenda(idVenda);
 
         venda.setStatusFiscal(StatusFiscal.CANCELADA);
         venda.setMotivoDoCancelamento(motivo);
@@ -222,7 +224,7 @@ public class VendaService {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
         for (ItemVendaDTO itemDto : dto.itens()) {
             Produto produto;
-            // Prioriza busca por ID, mas mantém suporte a código de barras
+
             if (itemDto.getProdutoId() != null) {
                 produto = produtoRepository.findById(itemDto.getProdutoId())
                         .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.getProdutoId()));
@@ -231,7 +233,7 @@ public class VendaService {
                         .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado Código: " + itemDto.getCodigoBarras()));
             }
 
-            // Conversão segura do Integer do DTO para o BigDecimal da Entidade
+            // CORREÇÃO: Conversão explícita de Integer para BigDecimal
             BigDecimal qtdItem = BigDecimal.valueOf(itemDto.getQuantidade());
 
             ItemVenda item = new ItemVenda();
@@ -282,23 +284,24 @@ public class VendaService {
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // Baixa de estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA.name());
-            ajuste.setTipoMovimento(TipoMovimentoEstoque.SAIDA.name());
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
+            ajuste.setObservacao("Venda #" + venda.getId());
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
-        // Lançamento de receitas individuais para cada forma de pagamento enviada pelo PDV
+        Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
+
         for (PagamentoRequestDTO pag : dto.pagamentos()) {
             financeiroService.lancarReceitaDeVenda(
                     venda.getId(),
                     pag.valor(),
                     pag.formaPagamento().name(),
-                    dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1
+                    dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1,
+                    clienteId
             );
         }
     }
@@ -317,7 +320,6 @@ public class VendaService {
             }
 
             if (identificador != null) {
-                // Utiliza a busca flexível por Matrícula ou E-mail definida no UsuarioRepository
                 return usuarioRepository.findByMatriculaOrEmail(identificador, identificador)
                         .orElse(null);
             }

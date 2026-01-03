@@ -34,6 +34,11 @@ public record ProdutoDTO(
 
         @Size(max = 20, message = "NCM deve ter no máximo 20 dígitos")
         String ncm,
+        // --- NOVO CAMPO ---
+        String marca,
+        String categoria,
+        String subcategoria,
+        // --
 
         String cest,
         String cst,
@@ -45,7 +50,6 @@ public record ProdutoDTO(
         String urlImagem,
         boolean ativo
 ) {
-        // Construtor de conversão Entity -> DTO
         public ProdutoDTO(Produto produto) {
                 this(
                         produto.getId(),
@@ -56,11 +60,15 @@ public record ProdutoDTO(
                         produto.getQuantidadeEmEstoque(),
                         produto.getEstoqueMinimo(),
                         produto.getNcm(),
+                        // Novos campos sendo lidos da entidade
+                        produto.getMarca(),
+                        produto.getCategoria(),
+                        produto.getSubcategoria(),
+                        // Fim novos campos
                         produto.getCest(),
                         produto.getCst(),
                         produto.isMonofasico(),
-                        // Se for nulo no banco (legado), assume PADRAO
-                        produto.getClassificacaoReforma() != null ? produto.getClassificacaoReforma() : TipoTributacaoReforma.PADRAO,
+                        produto.getClassificacaoReforma(),
                         produto.getUrlImagem(),
                         produto.isAtivo()
                 );

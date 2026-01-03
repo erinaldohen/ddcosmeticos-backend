@@ -4,6 +4,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.handler;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -77,4 +78,12 @@ public class ApiExceptionHandler {
             LocalDateTime timestamp,
             Map<String, String> errors
     ) {}
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Object> handleConstraintViolation(DataIntegrityViolationException ex) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("message", "Erro de integridade: Verifique se o CNPJ ou Código de Barras já existe.");
+        body.put("status", HttpStatus.CONFLICT.value());
+        return new ResponseEntity<>(body, HttpStatus.CONFLICT);
+    }
 }

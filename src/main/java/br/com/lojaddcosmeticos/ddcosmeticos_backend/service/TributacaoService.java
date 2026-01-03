@@ -20,6 +20,21 @@ public class TributacaoService {
         TABELA_CEST_COSMETICOS.put("33042010", "20.011.00"); // Sombra
         TABELA_CEST_COSMETICOS.put("34011190", "20.022.00"); // Sabonetes de toucador
     }
+    public Map<String, String> consultarRegrasPorNcm(String ncm) {
+        String ncmLimpo = ncm.replaceAll("[^0-9]", "");
+        Map<String, String> resultado = new HashMap<>();
+
+        // Busca o CEST na tabela estática que já temos
+        if (TABELA_CEST_COSMETICOS.containsKey(ncmLimpo)) {
+            resultado.put("cest", TABELA_CEST_COSMETICOS.get(ncmLimpo));
+        }
+
+        // Verifica se é monofásico (reaproveitando a lógica existente)
+        boolean ehMonofasico = ncmLimpo.startsWith("3303") || ncmLimpo.startsWith("3304"); // etc
+        resultado.put("monofasico", String.valueOf(ehMonofasico));
+
+        return resultado;
+    }
 
     @Transactional
     public void classificarProduto(Produto produto) {

@@ -2,6 +2,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -27,7 +29,7 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findByDescricaoContainingIgnoreCase(String descricao);
 
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
-
+    Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarrasContainingIgnoreCase(String descricao, String codigoBarras, Pageable pageable);
     // ==================================================================================
     // SESSÃO 2: QUERIES PERSONALIZADAS (JPQL & NATIVE)
     // ==================================================================================

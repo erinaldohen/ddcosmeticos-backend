@@ -186,6 +186,7 @@ public class VendaService {
                         .desconto(v.getDescontoTotal())
                         .totalItens(v.getItens().size())
                         .statusFiscal(v.getStatusFiscal())
+                        .formaPagamento(v.getFormaPagamento())
                         .alertas(new ArrayList<>()).build());
     }
 

@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import lombok.Builder;
 
@@ -17,5 +18,6 @@ public record VendaResponseDTO(
         BigDecimal desconto,
         Integer totalItens,
         StatusFiscal statusFiscal,
+        FormaDePagamento formaPagamento,
         List<String> alertas
 ) {}

@@ -33,8 +33,11 @@ public class Produto implements Serializable {
     private String descricao;
 
     // --- NOVOS CAMPOS (Do CSV) ---
+    @Column(length = 100)
     private String marca;
+    @Column(length = 50)
     private String categoria;
+    @Column(length = 50)
     private String subcategoria;
     // -----------------------------
 
@@ -55,13 +58,13 @@ public class Produto implements Serializable {
 
     // --- DADOS FISCAIS ---
 
-    @Column(length = 20)
+    @Column(length = 8)
     private String ncm;
 
-    @Column(length = 20)
+    @Column(length = 1)
     private String cest;
 
-    @Column(length = 10)
+    @Column(length = 4)
     private String cst; // <--- O CAMPO QUE FALTAVA (Restaurado)
 
     @Enumerated(EnumType.STRING)

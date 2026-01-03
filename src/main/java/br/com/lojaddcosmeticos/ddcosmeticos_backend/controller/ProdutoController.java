@@ -11,12 +11,16 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.PrecificacaoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.persistence.EntityManager; // <--- Import Novo
 import jakarta.validation.Valid;
 import org.hibernate.envers.AuditReader; // <--- Import Novo
 import org.hibernate.envers.AuditReaderFactory; // <--- Import Novo
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -48,18 +52,7 @@ public class ProdutoController {
     // SESSÃO 1: LEITURA E BUSCA (MÉTODO UNIFICADO)
     // ==================================================================================
 
-    @GetMapping
-    public ResponseEntity<List<ProdutoListagemDTO>> listar(@RequestParam(required = false) String busca) {
-        List<ProdutoListagemDTO> resultado;
 
-        if (busca != null && !busca.isBlank()) {
-            resultado = repository.buscarPorTermo(busca);
-        } else {
-            resultado = repository.findAllResumo();
-        }
-
-        return ResponseEntity.ok(resultado);
-    }
 
     @GetMapping("/{id}")
     @Operation(summary = "Buscar produto por ID")
@@ -203,5 +196,18 @@ public class ProdutoController {
         }
 
         return ResponseEntity.ok(historico);
+    }
+    // Localize os métodos @GetMapping que retornam a lista de produtos e substitua por este:
+
+    @GetMapping
+    @Operation(summary = "Listar produtos com busca e paginação",
+            description = "Retorna lista de produtos ativos. Permite filtrar por termo (nome/código) e paginação.")
+    public ResponseEntity<Page<ProdutoDTO>> listar(
+            @RequestParam(required = false) String busca,
+            @Parameter(hidden = true) @PageableDefault(size = 10, sort = "descricao") Pageable pageable) {
+
+        // Este método único resolve tanto a listagem geral quanto a busca específica
+        Page<ProdutoDTO> produtos = produtoService.listarTodos(busca, pageable);
+        return ResponseEntity.ok(produtos);
     }
 }

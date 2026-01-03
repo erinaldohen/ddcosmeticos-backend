@@ -5,6 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -15,11 +16,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+@Slf4j
 @Service
 public class ProdutoService {
 
-    @Autowired
-    private ProdutoRepository produtoRepository;
+    @Autowired private ProdutoRepository produtoRepository;
 
     // --- LEITURA ---
 
@@ -39,17 +40,17 @@ public class ProdutoService {
     @Transactional(readOnly = true)
     public List<Produto> buscarInteligente(String termo) {
         if (termo == null || termo.isBlank()) return produtoRepository.findAll();
+        // Certifique-se que o Repository tem o método findByDescricaoContainingIgnoreCaseOrCodigoBarras
         return produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo);
     }
 
-    @Transactional(readOnly = true)
-    public List<ProdutoDTO> listarTodos() {
-        return produtoRepository.findAll().stream().map(ProdutoDTO::new).toList();
-    }
-
-    @Transactional(readOnly = true)
-    public Page<Produto> listarPaginado(Pageable pageable) {
-        return produtoRepository.findAll(pageable);
+    public Page<ProdutoDTO> listarTodos(String busca, Pageable pageable) {
+        if (busca != null && !busca.isEmpty()) {
+            // Certifique-se que o Repository tem o método findByDescricaoContainingIgnoreCaseOrCodigoBarrasContainingIgnoreCase
+            return produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarrasContainingIgnoreCase(busca, busca, pageable)
+                    .map(ProdutoDTO::new);
+        }
+        return produtoRepository.findAll(pageable).map(ProdutoDTO::new);
     }
 
     // --- ESCRITA ---
@@ -63,8 +64,11 @@ public class ProdutoService {
         Produto produto = new Produto();
         copiarDtoParaEntidade(dto, produto);
         produto.setQuantidadeEmEstoque(0);
+        produto.setEstoqueFiscal(0);
+        produto.setEstoqueNaoFiscal(0);
         produto.setAtivo(true);
-        produtoRepository.save(produto);
+
+        produto = produtoRepository.save(produto);
         return new ProdutoDTO(produto);
     }
 
@@ -96,24 +100,15 @@ public class ProdutoService {
         produtoRepository.save(p);
     }
 
-    @Transactional
-    @CacheEvict(value = "produtos", key = "#ean")
-    public void reativarPorEan(String ean) {
-        Produto p = buscarPorCodigoBarras(ean);
-        p.setAtivo(true);
-        produtoRepository.save(p);
-    }
-
-    @Transactional
-    public void atualizarUrlImagem(Long id, String url) {
-        Produto p = buscarPorId(id);
-        p.setUrlImagem(url);
-        produtoRepository.save(p);
-    }
-
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
         produto.setCodigoBarras(dto.codigoBarras());
         produto.setDescricao(dto.descricao());
+
+        // --- MAPEAMENTO DA MARCA ---
+        produto.setMarca(dto.marca());
+        produto.setCategoria(dto.categoria());
+        produto.setSubcategoria(dto.subcategoria());
+
         produto.setPrecoCusto(dto.precoCusto());
         produto.setPrecoVenda(dto.precoVenda());
         produto.setNcm(dto.ncm());
@@ -121,13 +116,19 @@ public class ProdutoService {
         produto.setMonofasico(dto.monofasico() != null ? dto.monofasico() : false);
         produto.setCest(dto.cest());
         produto.setCst(dto.cst());
+        produto.setUrlImagem(dto.urlImagem());
 
-        // --- MAPEAMENTO DO NOVO CAMPO ---
         if (dto.classificacaoReforma() != null) {
             produto.setClassificacaoReforma(dto.classificacaoReforma());
         } else {
-            // Default se o frontend não mandar nada
             produto.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
         }
+    }
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public void atualizarUrlImagem(Long id, String url) {
+        Produto produto = buscarPorId(id);
+        produto.setUrlImagem(url);
+        produtoRepository.save(produto);
     }
 }

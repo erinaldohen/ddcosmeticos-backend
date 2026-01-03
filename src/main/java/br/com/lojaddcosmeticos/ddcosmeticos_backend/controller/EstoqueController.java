@@ -1,39 +1,30 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO; // Importe o novo DTO
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
-import jakarta.validation.Valid;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueIntelligenceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
-@RequestMapping("/api/v1/estoque")
+@RequestMapping("/api/estoque")
 public class EstoqueController {
 
     @Autowired
-    private EstoqueService estoqueService;
+    private EstoqueIntelligenceService estoqueService;
 
-    // Endpoint de Compra (Entrada normal com Nota)
-    @PostMapping("/entrada")
-    @PreAuthorize("hasRole('GERENTE')")
-    public ResponseEntity<String> registrarEntrada(@RequestBody @Valid EstoqueRequestDTO dados) {
-        estoqueService.registrarEntrada(dados);
-        return ResponseEntity.ok("Entrada de mercadoria registrada com sucesso. PMP atualizado.");
+    @GetMapping("/sugestao-compras")
+    public ResponseEntity<List<SugestaoCompraDTO>> getSugestaoCompras() {
+        List<SugestaoCompraDTO> sugestoes = estoqueService.gerarRelatorioCompras();
+
+        if (sugestoes.isEmpty()) {
+            return ResponseEntity.noContent().build();
+        }
+
+        return ResponseEntity.ok(sugestoes);
     }
-
-    // Endpoint de Inventário (Ajuste Manual)
-    @PostMapping("/ajuste")
-    @PreAuthorize("hasRole('GERENTE')")
-    public ResponseEntity<String> ajustarEstoque(@RequestBody @Valid AjusteEstoqueDTO dados) {
-        estoqueService.realizarAjusteInventario(dados);
-        return ResponseEntity.ok("Estoque ajustado com sucesso e auditoria registrada.");
-    }
-
-
 }

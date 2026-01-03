@@ -1,22 +1,22 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity; // <--- Import Novo
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*; // Importa todos os DTOs (incluindo HistoricoProdutoDTO)
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ArquivoService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.PrecificacaoService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.persistence.EntityManager; // <--- Import Novo
+import jakarta.persistence.EntityManager;
 import jakarta.validation.Valid;
-import org.hibernate.envers.AuditReader; // <--- Import Novo
-import org.hibernate.envers.AuditReaderFactory; // <--- Import Novo
+import org.hibernate.envers.AuditReader;
+import org.hibernate.envers.AuditReaderFactory;
+import org.hibernate.envers.DefaultRevisionEntity; // <--- CORREÇÃO: Usar Default
+import org.hibernate.envers.RevisionType;          // <--- CORREÇÃO: Importar Tipo
+import org.hibernate.envers.query.AuditEntity;     // <--- CORREÇÃO: Importar Query
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,8 +30,8 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
-import java.util.ArrayList; // <--- Import Novo
-import java.util.Date; // <--- Import Novo
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 @RestController
@@ -45,14 +45,22 @@ public class ProdutoController {
     @Autowired private PrecificacaoService precificacaoService;
     @Autowired private EstoqueService estoqueService;
     @Autowired private ArquivoService arquivoService;
+    @Autowired private AuditoriaService auditoriaService;
 
-    @Autowired private EntityManager entityManager; // <--- ADICIONADO: Necessário para o Envers
+    @Autowired private EntityManager entityManager;
 
     // ==================================================================================
-    // SESSÃO 1: LEITURA E BUSCA (MÉTODO UNIFICADO)
+    // SESSÃO 1: LEITURA E BUSCA
     // ==================================================================================
-
-
+    @GetMapping("/analisar/{codigoBarras}")
+    public ResponseEntity<AnalisePrecificacaoDTO> analisarIndividual(@PathVariable String codigoBarras) {
+        try {
+            AnalisePrecificacaoDTO analise = precificacaoService.calcularSugestao(codigoBarras);
+            return ResponseEntity.ok(analise);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 
     @GetMapping("/{id}")
     @Operation(summary = "Buscar produto por ID")
@@ -76,6 +84,16 @@ public class ProdutoController {
                 .filter(p -> p.getQuantidadeEmEstoque() <= (p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0))
                 .toList();
         return ResponseEntity.ok(criticos);
+    }
+
+    @GetMapping
+    @Operation(summary = "Listar produtos com busca e paginação",
+            description = "Retorna lista de produtos ativos. Permite filtrar por termo (nome/código) e paginação.")
+    public ResponseEntity<Page<ProdutoDTO>> listar(
+            @RequestParam(required = false) String busca,
+            @Parameter(hidden = true) @PageableDefault(size = 10, sort = "descricao") Pageable pageable) {
+        Page<ProdutoDTO> produtos = produtoService.listarTodos(busca, pageable);
+        return ResponseEntity.ok(produtos);
     }
 
     // ==================================================================================
@@ -113,7 +131,6 @@ public class ProdutoController {
         if (custo == null || custo.compareTo(BigDecimal.ZERO) < 0) {
             return ResponseEntity.badRequest().body("Custo inválido.");
         }
-
         try {
             EstoqueRequestDTO request = new EstoqueRequestDTO();
             request.setCodigoBarras(ean);
@@ -123,9 +140,7 @@ public class ProdutoController {
             request.setNumeroLote(lote);
             request.setDataValidade(validade);
             request.setFormaPagamento(FormaDePagamento.DINHEIRO);
-
             estoqueService.registrarEntrada(request);
-
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Erro ao dar entrada: " + e.getMessage());
@@ -133,9 +148,13 @@ public class ProdutoController {
     }
 
     @GetMapping("/{id}/sugestao-preco")
-    public ResponseEntity<SugestaoPrecoDTO> obterSugestao(@PathVariable String codigoBarras) {
-        var produto = repository.findByCodigoBarras(codigoBarras).orElseThrow(() -> new RuntimeException("Produto não encontrado"));
-        return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
+    public ResponseEntity<AnalisePrecificacaoDTO> obterSugestao(@PathVariable String codigoBarras) {
+        // Correção: Agora buscamos via service para garantir lógica única
+        try {
+            return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @PatchMapping("/{id}/definir-preco")
@@ -170,7 +189,7 @@ public class ProdutoController {
     }
 
     // ==================================================================================
-    // SESSÃO 6: AUDITORIA E HISTÓRICO
+    // SESSÃO 6: AUDITORIA E HISTÓRICO (CORRIGIDO)
     // ==================================================================================
 
     @GetMapping("/{id}/historico")
@@ -178,36 +197,57 @@ public class ProdutoController {
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
         AuditReader reader = AuditReaderFactory.get(entityManager);
 
-        // Busca todas as revisões do Produto com aquele ID
-        List<Number> revisions = reader.getRevisions(Produto.class, id);
+        // Busca as revisões
+        List<Object[]> results = reader.createQuery()
+                .forRevisionsOfEntity(Produto.class, false, true)
+                .add(AuditEntity.id().eq(id))
+                .getResultList();
+
         List<HistoricoProdutoDTO> historico = new ArrayList<>();
 
-        for (Number rev : revisions) {
-            Produto pAntigo = reader.find(Produto.class, id, rev);
-            CustomRevisionEntity info = reader.findRevision(CustomRevisionEntity.class, rev);
+        for (Object[] row : results) {
+            Produto pAntigo = (Produto) row[0];
 
+            // --- AQUI ESTÁ A CORREÇÃO ---
+            // Em vez de DefaultRevisionEntity, usamos a sua CustomRevisionEntity
+            CustomRevisionEntity info = (CustomRevisionEntity) row[1];
+            // ----------------------------
+
+            RevisionType type = (RevisionType) row[2];
+
+            String tipoString = switch (type) {
+                case ADD -> "CRIADO";
+                case MOD -> "ALTERADO";
+                case DEL -> "EXCLUÍDO";
+            };
+
+            // Se a sua CustomRevisionEntity tiver um campo 'usuario',
+            // você pode passá-lo aqui no lugar de info.getId().toString()
             historico.add(new HistoricoProdutoDTO(
-                    new Date(info.getTimestamp()), // Converte long para Date
-                    info.getUsuarioResponsavel(),
-                    pAntigo.getPrecoVenda(),
-                    pAntigo.getQuantidadeEmEstoque(),
-                    pAntigo.getDescricao()
+                    info.getId(),                      // ID da revisão
+                    new Date(info.getTimestamp()),     // Data
+                    tipoString,                        // Tipo da ação
+                    pAntigo.getDescricao(),            // Nome do produto na época
+                    pAntigo.getPrecoVenda(),           // Preço na época
+                    pAntigo.getPrecoCusto(),           // Custo na época
+                    pAntigo.getQuantidadeEmEstoque()   // Estoque na época
             ));
         }
 
+        historico.sort((a, b) -> b.getDataAlteracao().compareTo(a.getDataAlteracao()));
         return ResponseEntity.ok(historico);
     }
-    // Localize os métodos @GetMapping que retornam a lista de produtos e substitua por este:
 
-    @GetMapping
-    @Operation(summary = "Listar produtos com busca e paginação",
-            description = "Retorna lista de produtos ativos. Permite filtrar por termo (nome/código) e paginação.")
-    public ResponseEntity<Page<ProdutoDTO>> listar(
-            @RequestParam(required = false) String busca,
-            @Parameter(hidden = true) @PageableDefault(size = 10, sort = "descricao") Pageable pageable) {
+    @GetMapping("/lixeira")
+    @Operation(summary = "Ver Lixeira", description = "Lista produtos excluídos.")
+    public ResponseEntity<List<Produto>> getLixeira() {
+        return ResponseEntity.ok(auditoriaService.buscarLixeira());
+    }
 
-        // Este método único resolve tanto a listagem geral quanto a busca específica
-        Page<ProdutoDTO> produtos = produtoService.listarTodos(busca, pageable);
-        return ResponseEntity.ok(produtos);
+    @PutMapping("/{id}/restaurar")
+    @Operation(summary = "Restaurar Produto", description = "Tira o produto da lixeira.")
+    public ResponseEntity<Void> restaurar(@PathVariable Long id) {
+        auditoriaService.restaurarProduto(id);
+        return ResponseEntity.ok().build();
     }
 }

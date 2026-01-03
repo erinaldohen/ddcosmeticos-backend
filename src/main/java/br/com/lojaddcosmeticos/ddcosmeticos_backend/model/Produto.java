@@ -61,7 +61,7 @@ public class Produto implements Serializable {
     @Column(length = 8)
     private String ncm;
 
-    @Column(length = 1)
+    @Column(length = 7)
     private String cest;
 
     @Column(length = 4)

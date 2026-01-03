@@ -1,14 +1,28 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import lombok.Data;
 import java.math.BigDecimal;
 import java.util.Date;
 
-public record HistoricoProdutoDTO(
-        Date dataHora,              // Convertemos o timestamp (long) para Date para facilitar no JSON
-        String usuarioResponsavel,  // Quem fez a alteração
-        BigDecimal precoVenda,      // O valor do preço naquela época
-        Integer quantidadeEmEstoque,// O saldo de estoque naquela época
-        String descricao            // O nome do produto naquela época
-) {
-    // Construtor canônico compacto (opcional, mas bom para validações se precisar)
+@Data
+public class HistoricoProdutoDTO {
+    private Integer revisaoId;
+    private Date dataAlteracao;
+    private String tipoRevisao;
+    private String nomeNaqueleMomento;
+    private BigDecimal precoVendaNaqueleMomento;
+    private BigDecimal custoNaqueleMomento;
+    private Integer estoqueNaqueleMomento;
+
+    // CONSTRUTOR COM 7 ARGUMENTOS
+    public HistoricoProdutoDTO(Integer revisaoId, Date dataAlteracao, String tipoRevisao,
+                               String nome, BigDecimal preco, BigDecimal custo, Integer estoque) {
+        this.revisaoId = revisaoId;
+        this.dataAlteracao = dataAlteracao;
+        this.tipoRevisao = tipoRevisao;
+        this.nomeNaqueleMomento = nome;
+        this.precoVendaNaqueleMomento = preco;
+        this.custoNaqueleMomento = custo;
+        this.estoqueNaqueleMomento = estoque;
+    }
 }

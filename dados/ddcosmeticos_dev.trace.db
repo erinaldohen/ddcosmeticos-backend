@@ -1,0 +1,131 @@
+2026-01-03 01:57:39.932469-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2001900' (7)"; SQL statement:
+INSERT INTO produto (
+    ativo,
+    codigo_barras,
+    descricao,
+    marca,
+    categoria,
+    subcategoria,
+    preco_custo,
+    preco_medio,
+    preco_venda,
+    unidade,
+    monofasico,
+    ncm,
+    cest,
+    cst,
+    classificacao_reforma,
+    estoque_fiscal,
+    estoque_nao_fiscal,
+    quantidade_estoque,
+    venda_media_diaria,
+    dias_para_reposicao,
+    estoque_minimo
+) VALUES (
+    true,                               -- Ativo
+    '7898466605531',                    -- Código de Barras
+    'PRODUTO TESTE IA ABASTECIMENTO',   -- Descrição
+    'MARCA EXEMPLO',                    -- Marca
+    'TESTE',                            -- Categoria
+    'SIMULACAO',                        -- Subcategoria
+    10.00,                              -- Preço Custo
+    10.00,                              -- Preço Médio
+    25.00,                              -- Preço Venda
+    'UN',                               -- Unidade
+    false,                              -- Monofásico
+    '33051000',                         -- NCM (Exemplo Shampoo)
+    '2001900',                          -- CEST
+    '000',                              -- CST
+    'PADRAO',                           -- Classificação Reforma (Enum)
+    1,                                  -- Estoque Fiscal
+    1,                                  -- Estoque Não Fiscal
+    2,                                  -- Quantidade Total (1+1 = 2) -> BAIXO!
+    1.500,                              -- Venda Média Diária -> ALTO CONSUMO!
+    7,                                  -- Dias para Reposição -> DEMORADO!
+    12                                  -- Estoque Mínimo (Calculado aprox: 1.5 * 7 + margem)
+) [22001-232]
+2026-01-03 02:43:51.018298-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2000000' (7)"; SQL statement:
+-- 1. Inserir o Produto Atual (Estado: Excluído/Inativo na Lixeira)
+INSERT INTO produto (
+    id, ativo, codigo_barras, descricao, marca, categoria, subcategoria,
+    preco_custo, preco_medio, preco_venda, unidade, monofasico,
+    ncm, cest, cst, classificacao_reforma, estoque_fiscal, estoque_nao_fiscal,
+    quantidade_estoque, venda_media_diaria, dias_para_reposicao, estoque_minimo
+) VALUES (
+    999, false, 'AUDIT-TEST-001', 'PERFUME TESTE AUDITORIA', 'MARCA X', 'PERFUMARIA', 'LUXO',
+    50.00, 50.00, 150.00, 'UN', false,
+    [22001-232]
+2026-01-03 02:43:51.026303-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- 2. Criar os Carimbos de Tempo (Tabela REVINFO do Envers)
+-- ID 5001: Ontem (Criação)
+INSERT INTO revinfo (rev, revtstmp) VALUES (5001, 1704100000000) [42102-232]
+2026-01-03 02:43:51.028301-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- ID 5002: Hoje cedo (Aumento de Preço)
+INSERT INTO revinfo (rev, revtstmp) VALUES (5002, 1704200000000) [42102-232]
+2026-01-03 02:43:51.030300-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- ID 5003: Agora (Exclusão Lógica)
+INSERT INTO revinfo (rev, revtstmp) VALUES (5003, 1704300000000) [42102-232]
+2026-01-03 02:45:17.831029-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2000000' (7)"; SQL statement:
+-- 1. Inserir o Produto Atual (Estado: Excluído/Inativo na Lixeira)
+INSERT INTO produto (
+    id, ativo, codigo_barras, descricao, marca, categoria, subcategoria,
+    preco_custo, preco_medio, preco_venda, unidade, monofasico,
+    ncm, cest, cst, classificacao_reforma, estoque_fiscal, estoque_nao_fiscal,
+    quantidade_estoque, venda_media_diaria, dias_para_reposicao, estoque_minimo
+) VALUES (
+    999, false, 'AUDIT-TEST-001', 'PERFUME TESTE AUDITORIA', 'MARCA X', 'PERFUMARIA', 'LUXO',
+    50.00, 50.00, 150.00, 'UN', false,
+    [22001-232]
+2026-01-03 02:45:17.832987-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- 2. Criar os Carimbos de Tempo (Tabela REVINFO)
+INSERT INTO revinfo (rev, revtstmp) VALUES (5001, 1704100000000) [42102-232]
+2026-01-03 02:45:17.833982-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- Ontem
+INSERT INTO revinfo (rev, revtstmp) VALUES (5002, 1704200000000) [42102-232]
+2026-01-03 02:45:17.834984-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "REVINFO" not found; SQL statement:
+-- Hoje Cedo
+INSERT INTO revinfo (rev, revtstmp) VALUES (5003, 1704300000000) [42102-232]
+2026-01-03 02:45:17.835982-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2000000' (7)"; SQL statement:
+-- Agora
+
+-- 3. Criar os Snapshots (Tabela PRODUTO_AUD)
+-- ATENÇÃO: Preenchemos TODOS os campos novos aqui para evitar erro de coluna faltando
+
+-- Versão 1: Criação (REVTYPE 0) - Preço 100.00
+INSERT INTO produto_aud (
+    id, rev, revtype, ativo, descricao, codigo_barras, marca, categoria, subcategoria,
+    preco_venda, preco_custo, preco_medio, quantidade_estoque,
+    ncm, cest, cst, classificacao_reforma, estoque_fiscal, estoque_nao_fiscal, unidade, monofasico
+) VALUES (
+  [22001-232]
+2026-01-03 02:45:17.837013-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2000000' (7)"; SQL statement:
+-- Versão 2: Alteração de Preço (REVTYPE 1) - Preço 150.00, Estoque caiu para 10
+INSERT INTO produto_aud (
+    id, rev, revtype, ativo, descricao, codigo_barras, marca, categoria, subcategoria,
+    preco_venda, preco_custo, preco_medio, quantidade_estoque,
+    ncm, cest, cst, classificacao_reforma, estoque_fiscal, estoque_nao_fiscal, unidade, monofasico
+) VALUES (
+    999, 5002, 1, true, 'PERFUME TESTE AUDITORIA', 'AUDIT-TEST-001', 'MARCA X', 'PERFUMARIA', 'LUXO',
+    150.00, 50 [22001-232]
+2026-01-03 02:45:17.838012-03:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(1)": "'2000000' (7)"; SQL statement:
+-- Versão 3: Exclusão Lógica (REVTYPE 1, mas Ativo = False)
+INSERT INTO produto_aud (
+    id, rev, revtype, ativo, descricao, codigo_barras, marca, categoria, subcategoria,
+    preco_venda, preco_custo, preco_medio, quantidade_estoque,
+    ncm, cest, cst, classificacao_reforma, estoque_fiscal, estoque_nao_fiscal, unidade, monofasico
+) VALUES (
+    999, 5003, 1, false, 'PERFUME TESTE AUDITORIA', 'AUDIT-TEST-001', 'MARCA X', 'PERFUMARIA', 'LUXO',
+    150.00, 50.00, 50.00, 10,
+     [22001-232]

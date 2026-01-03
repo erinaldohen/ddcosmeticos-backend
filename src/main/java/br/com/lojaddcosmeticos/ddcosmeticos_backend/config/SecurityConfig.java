@@ -42,26 +42,38 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // 1. Libere o Dashboard e Login PRIMEIRO
-                        .requestMatchers(HttpMethod.GET, "/dashboard/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
+                        // ====================================================
+                        // 1. REGRAS PRIORITÁRIAS (Coloque o que falhou aqui em cima)
+                        // ====================================================
 
-                        // --- ADICIONE ESTA LINHA AQUI ---
-                        .requestMatchers("/api/fiscal/**").permitAll() // Libera tudo de fiscal para teste
-                        // --------------------------------
+                        // Força a liberação da rota de histórico com ID variável (*)
+                        .requestMatchers("/api/v1/produtos/*/historico").permitAll()
 
-                        // 2. Libere os Produtos DEPOIS
-                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/produtos/**").permitAll()
+                        // Libera todas as outras rotas de produtos (Lixeira, Restaurar, etc)
+                        .requestMatchers("/api/v1/produtos/**").permitAll()
+                        .requestMatchers("/produtos/**").permitAll()
 
-                        // 3. Imagens (importante para carregar as fotos)
-                        .requestMatchers(HttpMethod.GET, "/imagens/**").permitAll()
+                        // ====================================================
+                        // 2. OUTRAS ROTAS PÚBLICAS
+                        // ====================================================
+                        .requestMatchers("/api/fiscal/**").permitAll()
+                        .requestMatchers("/api/estoque/**").permitAll()
+                        .requestMatchers("/api/precificacao/**").permitAll()
+                        .requestMatchers("/api/catalogo/**").permitAll()
+                        .requestMatchers("/api/auditoria/**").permitAll()
 
-                        // 4. Bloqueia o resto
+                        .requestMatchers("/dashboard/**", "/api/v1/dashboard/**").permitAll()
+                        .requestMatchers("/auth/**", "/api/v1/auth/**").permitAll()
+
+                        .requestMatchers("/h2-console/**").permitAll()
+                        .requestMatchers("/imagens/**").permitAll()
+
+                        // ====================================================
+                        // 3. BLOQUEIO GERAL
+                        // ====================================================
                         .anyRequest().authenticated()
                 )
+                .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

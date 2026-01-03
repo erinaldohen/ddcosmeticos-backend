@@ -1,28 +1,25 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import lombok.Builder;
-import java.io.Serializable;
+import lombok.Data;
 import java.math.BigDecimal;
 import java.util.List;
 
+@Data
 @Builder
-public record DashboardResumoDTO(
-        // 1. O Dia (Vendas)
-        BigDecimal totalVendidoHoje,
-        Long quantidadeVendasHoje,
-        BigDecimal ticketMedioHoje,
+public class DashboardResumoDTO {
+    // Card 1: Saúde do Estoque
+    private Long produtosAbaixoMinimo;
+    private Long produtosEsgotados;
 
-        // 2. O Financeiro (Hoje)
-        BigDecimal aPagarHoje,
-        BigDecimal aReceberHoje,
-        BigDecimal saldoDoDia,
+    // Card 2: Financeiro
+    private BigDecimal valorTotalEstoqueCusto;
+    private Long produtosMargemCritica;
 
-        // 3. Alertas (Urgente)
-        BigDecimal totalVencidoPagar,
-        Long produtosAbaixoMinimo,
+    // Card 3: Atividade Recente
+    private List<HistoricoProdutoDTO> ultimasAlteracoes;
 
-        // 4. Gráfico (Projeção 7 dias)
-        List<FluxoCaixaDiarioDTO> projecaoSemanal
-) implements Serializable {
-    private static final long serialVersionUID = 1L;
+    // Card 4: Alertas Fiscais
+    private Long produtosSemNcmOuCest;
 }

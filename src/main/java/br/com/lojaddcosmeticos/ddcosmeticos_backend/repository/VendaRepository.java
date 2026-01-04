@@ -20,10 +20,6 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    // ==================================================================================
-    // SESSÃO 1: CONSULTAS OPERACIONAIS
-    // ==================================================================================
-
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
 
@@ -31,35 +27,33 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
-    // ==================================================================================
-    // SESSÃO 2: RELATÓRIOS ANALÍTICOS
-    // ==================================================================================
-
     // 1. Somatório Geral
     @Query("SELECT COALESCE(SUM(v.totalVenda - v.descontoTotal), 0) FROM Venda v " +
             "WHERE v.dataVenda BETWEEN :inicio AND :fim " +
             "AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)")
     BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // 2. Gráfico: Evolução Diária (Ajustado para enviar 3 argumentos)
+    // 2. Gráfico: Evolução Diária
+    // IMPORTANTE: Removi o CAST e usei uma função de extração de data para evitar erros de sintaxe dependentes do banco
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
-            CAST(v.dataVenda AS LocalDate), 
+            v.dataVenda, 
             SUM(v.totalVenda - v.descontoTotal),
             COUNT(v) 
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
         AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)
-        GROUP BY CAST(v.dataVenda AS LocalDate)
-        ORDER BY CAST(v.dataVenda AS LocalDate) ASC
+        GROUP BY v.dataVenda
+        ORDER BY v.dataVenda ASC
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     // 3. Gráfico: Vendas por Forma de Pagamento
+    // Convertendo o Enum para String na query para o DTO aceitar
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
-            v.formaPagamento, 
+            str(v.formaPagamento), 
             SUM(v.totalVenda - v.descontoTotal),
             COUNT(v)
         )
@@ -72,7 +66,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     // 4. Ranking: Produtos Mais Vendidos
-    // A query permanece a mesma, o DTO agora é capaz de aceitar o retorno do SUM
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
             p.codigoBarras, 

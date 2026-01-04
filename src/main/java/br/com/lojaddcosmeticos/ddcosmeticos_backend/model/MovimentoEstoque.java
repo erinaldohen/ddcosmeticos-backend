@@ -30,7 +30,6 @@ public class MovimentoEstoque {
     @Column(nullable = false, name = "motivo_movimentacao")
     private MotivoMovimentacaoDeEstoque motivoMovimentacaoDeEstoque;
 
-    // Mudamos para BigDecimal para compatibilidade total
     @Column(name = "quantidade_movimentada", precision = 10, scale = 4)
     private BigDecimal quantidadeMovimentada;
 
@@ -40,7 +39,6 @@ public class MovimentoEstoque {
     @Column(name = "documento_referencia")
     private String documentoReferencia;
 
-    // --- CAMPOS DE AUDITORIA (SNAPSHOT) ---
     @Column(name = "saldo_anterior")
     private Integer saldoAnterior;
 
@@ -49,6 +47,9 @@ public class MovimentoEstoque {
 
     @Column(name = "movimentacao_fiscal")
     private boolean movimentacaoFiscal;
+
+    @Column(columnDefinition = "TEXT")
+    private String observacao;
 
     @ManyToOne
     @JoinColumn(name = "produto_id", nullable = false)

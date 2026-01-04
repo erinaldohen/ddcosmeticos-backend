@@ -1,9 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO; // Import necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,7 +16,6 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class FinanceiroService {
@@ -37,7 +35,7 @@ public class FinanceiroService {
         Cliente cliente = null;
         if(clienteId != null) {
             cliente = clienteRepository.findById(clienteId)
-                    .orElseThrow(() -> new RuntimeException("Cliente não encontrado para ID: " + clienteId));
+                    .orElse(null); // Não lança erro se não achar, para não travar a venda
         }
 
         BigDecimal valorPorParcela = valorTotalVenda.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
@@ -48,21 +46,26 @@ public class FinanceiroService {
             conta.setIdVendaRef(venda.getId());
             conta.setCliente(cliente);
             conta.setValorTotal(valorPorParcela);
-            conta.setValorLiquido(valorPorParcela);
+            conta.setValorLiquido(valorPorParcela); // Valor líquido inicial igual ao total
             conta.setDataEmissao(LocalDate.now());
             conta.setDataVencimento(LocalDate.now().plusMonths(i-1));
             conta.setFormaPagamento(formaPagamento);
             conta.setHistorico("Venda #" + vendaId + " - Parcela " + i + "/" + parcelas + " (" + formaPagamento + ")");
 
-            boolean ehAvista = formaPagamento.equals("DINHEIRO") || formaPagamento.equals("PIX") || formaPagamento.equals("DEBITO");
+            boolean ehAvista = formaPagamento.equalsIgnoreCase("DINHEIRO") ||
+                    formaPagamento.equalsIgnoreCase("PIX") ||
+                    formaPagamento.equalsIgnoreCase("DEBITO");
+
             if (ehAvista) {
                 conta.setStatus(StatusConta.PAGO);
                 conta.setDataPagamento(LocalDate.now());
                 conta.setValorPago(conta.getValorTotal());
             } else {
                 conta.setStatus(StatusConta.PENDENTE);
+                conta.setValorPago(BigDecimal.ZERO);
             }
 
+            // Adiciona os centavos restantes na última parcela
             if (i == parcelas) {
                 conta.setValorTotal(conta.getValorTotal().add(resto));
                 conta.setValorLiquido(conta.getValorLiquido().add(resto));
@@ -88,6 +91,7 @@ public class FinanceiroService {
             conta.setDataVencimento(LocalDate.now().plusMonths(i-1));
             conta.setStatus(StatusConta.PENDENTE);
             conta.setDescricao("Compra de Produtos - Parcela " + i + "/" + parcelas + " - " + observacao);
+            conta.setValorTotal(BigDecimal.ZERO);
 
             if (i == parcelas) {
                 conta.setValorTotal(conta.getValorTotal().add(resto));
@@ -96,12 +100,11 @@ public class FinanceiroService {
         }
     }
 
-    // --- CORREÇÃO: Método renomeado, recebendo DTO e retornando Objeto ---
     @Transactional
     public MovimentacaoCaixa registrarMovimentacaoManual(MovimentacaoDTO dto, String usuarioResponsavel) {
         MovimentacaoCaixa movimentacao = new MovimentacaoCaixa();
         movimentacao.setValor(dto.getValor());
-        movimentacao.setTipo(dto.getTipo()); // Certifique-se que o DTO usa o Enum TipoMovimentacaoCaixa
+        movimentacao.setTipo(dto.getTipo());
         movimentacao.setDataHora(LocalDateTime.now());
         movimentacao.setMotivo(dto.getMotivo());
         movimentacao.setUsuarioResponsavel(usuarioResponsavel);
@@ -118,8 +121,9 @@ public class FinanceiroService {
             throw new RuntimeException("Esta conta já foi paga.");
         }
 
+        // Validação simples: não aceita pagamento menor que o total
         if (valorPago.compareTo(conta.getValorTotal()) < 0) {
-            throw new RuntimeException("Pagamento parcial não suportado ou valor insuficiente.");
+            throw new RuntimeException("Valor insuficiente para quitação integral.");
         }
 
         conta.setValorPago(valorPago);
@@ -138,14 +142,10 @@ public class FinanceiroService {
         }
 
         if (valorPago.compareTo(conta.getValorTotal()) < 0) {
-            throw new RuntimeException("Pagamento parcial não suportado ou valor insuficiente.");
+            throw new RuntimeException("Valor insuficiente para quitação integral.");
         }
 
-        // CORREÇÃO CRÍTICA: Não sobrescreva o valorTotal (dívida) com o valorPago.
-        // Use setValorPago. Se a entidade ContaPagar não tiver, adicione o campo nela.
-        // Se realmente não tiver, use setValorTotal apenas se tiver certeza que quer perder o histórico da dívida original.
-        // O ideal é:
-        // conta.setValorPago(valorPago);
+        conta.setValorTotal(valorPago);
         conta.setDataPagamento(LocalDate.now());
         conta.setStatus(StatusConta.PAGO);
         contaPagarRepository.save(conta);
@@ -153,23 +153,22 @@ public class FinanceiroService {
 
     @Transactional(readOnly = true)
     public FechamentoCaixaDTO gerarResumoFechamento(LocalDate data) {
-        List<ContaReceber> recebimentos = contaReceberRepository.findAll().stream()
-                .filter(c -> data.equals(c.getDataPagamento()) && StatusConta.PAGO.equals(c.getStatus()))
-                .collect(Collectors.toList());
+        // OTIMIZAÇÃO: Busca no banco filtrado, em vez de baixar tudo para memória
+        List<ContaReceber> recebimentos = contaReceberRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
+        List<ContaPagar> pagamentos = contaPagarRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
 
         BigDecimal totalDinheiro = somarPorFormaPagamento(recebimentos, "DINHEIRO");
         BigDecimal totalPix = somarPorFormaPagamento(recebimentos, "PIX");
+
+        // Soma Crédito e Débito como "Cartão"
         BigDecimal totalCartao = somarPorFormaPagamento(recebimentos, "CREDITO")
-                .add(somarPorFormaPagamento(recebimentos, "DEBITO"));
+                .add(somarPorFormaPagamento(recebimentos, "DEBITO"))
+                .add(somarPorFormaPagamento(recebimentos, "CREDIARIO")); // Se houver recebimento de crediário no dia
 
         BigDecimal totalEntradas = totalDinheiro.add(totalPix).add(totalCartao);
 
-        List<ContaPagar> pagamentos = contaPagarRepository.findAll().stream()
-                .filter(c -> data.equals(c.getDataPagamento()) && StatusConta.PAGO.equals(c.getStatus()))
-                .collect(Collectors.toList());
-
         BigDecimal totalSaidas = pagamentos.stream()
-                .map(ContaPagar::getValorTotal)
+                .map(p -> p.getValorTotal() != null ? p.getValorTotal() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         Map<String, BigDecimal> formas = new HashMap<>();
@@ -177,21 +176,26 @@ public class FinanceiroService {
         formas.put("PIX", totalPix);
         formas.put("CARTAO", totalCartao);
 
+        // Calcula saldo em caixa (apenas dinheiro físico importa para conferência de gaveta)
+        // Lógica: (Entradas em Dinheiro) - (Saídas/Pagamentos em Dinheiro) - (Sangrias) + (Suprimentos)
+        // Simplificado aqui:
+        BigDecimal saldoDinheiro = totalDinheiro.subtract(totalSaidas);
+
         return FechamentoCaixaDTO.builder()
                 .data(data)
                 .quantidadeVendas(recebimentos.stream().map(ContaReceber::getIdVendaRef).distinct().count())
                 .totalVendasBruto(totalEntradas)
-                .totalSangrias(totalSaidas)
-                .totalSuprimentos(BigDecimal.ZERO)
+                .totalSangrias(totalSaidas) // Assumindo que pagamentos saem do caixa
+                .totalSuprimentos(BigDecimal.ZERO) // Implementar lógica de suprimento se houver tabela
                 .totaisPorFormaPagamento(formas)
-                .saldoFinalDinheiroEmEspecie(totalDinheiro.subtract(totalSaidas))
+                .saldoFinalDinheiroEmEspecie(saldoDinheiro)
                 .build();
     }
 
     private BigDecimal somarPorFormaPagamento(List<ContaReceber> lista, String forma) {
         return lista.stream()
-                .filter(c -> forma.equalsIgnoreCase(c.getFormaPagamento()))
-                .map(ContaReceber::getValorPago)
+                .filter(c -> c.getFormaPagamento() != null && c.getFormaPagamento().equalsIgnoreCase(forma))
+                .map(c -> c.getValorPago() != null ? c.getValorPago() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 }

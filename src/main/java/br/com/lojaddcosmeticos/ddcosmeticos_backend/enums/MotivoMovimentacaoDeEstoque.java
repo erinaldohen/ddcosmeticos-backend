@@ -13,14 +13,17 @@ public enum MotivoMovimentacaoDeEstoque {
     AJUSTE_SOBRA,           // Inventário: contagem física maior que sistema
     ESTOQUE_INICIAL,        // Implantação do sistema / Carga inicial
     AJUSTE_ENTRADA,         // Correção manual positiva genérica
+    AJUSTE_INVENTARIO_ENTRADA, // Adicionado para compatibilidade com legados
 
     // --- SAÍDAS (Diminuem o Estoque) ---
     VENDA,                  // Saída padrão via PDV
     DEVOLUCAO_AO_FORNECEDOR,// Devolução de item defeituoso ao fabricante
     AJUSTE_PERDA,           // Inventário: item sumiu ou foi roubado
+    PERDA_OU_QUEBRA, // Adicionado para compatibilidade
     AJUSTE_AVARIA,          // Inventário: item quebrado/inutilizado
     USO_INTERNO,            // Consumo próprio (tester, limpeza)
-    AJUSTE_SAIDA;           // Correção manual negativa genérica
+    AJUSTE_SAIDA,           // Correção manual negativa genérica
+    AJUSTE_INVENTARIO_SAIDA; // Adicionado para compatibilidade
 
     /**
      * Verifica se o motivo representa uma ENTRADA de mercadoria.
@@ -28,13 +31,11 @@ public enum MotivoMovimentacaoDeEstoque {
     public boolean isEntrada() {
         return this == COMPRA_FORNECEDOR || this == DEVOLUCAO_CLIENTE ||
                 this == CANCELAMENTO_DE_VENDA || this == AJUSTE_SOBRA ||
-                this == ESTOQUE_INICIAL || this == AJUSTE_ENTRADA;
+                this == ESTOQUE_INICIAL || this == AJUSTE_ENTRADA ||
+                this == AJUSTE_INVENTARIO_ENTRADA;
     }
 
-    /**
-     * Verifica se o motivo representa uma SAÍDA de mercadoria.
-     */
     public boolean isSaida() {
-        return !isEntrada(); // Se não é entrada, é saída
+        return !isEntrada();
     }
 }

@@ -14,15 +14,19 @@ import java.util.List;
 @Repository
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
+    // --- MÉTODOS BÁSICOS ---
     List<ContaReceber> findByIdVendaRef(Long idVendaRef);
     List<ContaReceber> findByStatus(StatusConta status);
 
+    // [NOVO] Método essencial para o Fechamento de Caixa Otimizado (FinanceiroService)
+    List<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
+
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (Corrigido para clienteDocumento)
+    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (Lógica complexa de risco de cliente)
     // ==================================================================================
 
     @Query("""
-        SELECT SUM(c.valorLiquido) 
+        SELECT COALESCE(SUM(c.valorLiquido), 0)
         FROM ContaReceber c 
         WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
         AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
@@ -39,7 +43,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
     // ==================================================================================
-    // SESSÃO 3: RELATÓRIOS (Corrigido para clienteDocumento)
+    // SESSÃO 3: RELATÓRIOS E OPERACIONAL
     // ==================================================================================
 
     @Query("""
@@ -59,7 +63,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     """)
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
-    // SESSÃO 4: DASHBOARD
-    @Query("SELECT SUM(c.valorLiquido) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
+    // SESSÃO 4: DASHBOARD FINANCEIRO
+    @Query("SELECT COALESCE(SUM(c.valorLiquido), 0) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

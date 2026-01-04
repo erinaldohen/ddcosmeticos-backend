@@ -10,12 +10,13 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 public class VendaPorPagamentoDTO {
     private FormaDePagamento formaPagamento;
-    private BigDecimal total;
-    private Long quantidade;
+    private BigDecimal valorTotal;
+    private Long quantidadeVendas;
 
-    public VendaPorPagamentoDTO(FormaDePagamento formaPagamento, Number total, Long quantidade) {
+    // Construtor compatível com a Query: (Enum, BigDecimal, Long)
+    public VendaPorPagamentoDTO(FormaDePagamento formaPagamento, BigDecimal valorTotal, Long quantidadeVendas) {
         this.formaPagamento = formaPagamento;
-        this.total = total != null ? new BigDecimal(total.toString()) : BigDecimal.ZERO;
-        this.quantidade = quantidade != null ? quantidade : 0L;
+        this.valorTotal = valorTotal != null ? valorTotal : BigDecimal.ZERO;
+        this.quantidadeVendas = quantidadeVendas != null ? quantidadeVendas : 0L;
     }
 }

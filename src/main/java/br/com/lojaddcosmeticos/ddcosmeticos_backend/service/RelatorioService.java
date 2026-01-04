@@ -5,18 +5,19 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.awt.Color;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -26,9 +27,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.Date;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Locale;
 
 @Slf4j
 @Service
@@ -43,19 +44,19 @@ public class RelatorioService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDate.now().withDayOfMonth(1).atStartOfDay();
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
 
-        // 2. Busca e Filtragem
-        List<Venda> vendas = vendaRepository.findByDataVendaBetween(dataInicio, dataFim, null).getContent();
+        // 2. Execução das Consultas Otimizadas (JPQL)
+        BigDecimal faturamentoTotal = vendaRepository.somarFaturamentoNoPeriodo(dataInicio, dataFim);
+        if (faturamentoTotal == null) faturamentoTotal = BigDecimal.ZERO;
 
-        List<Venda> vendasValidas = vendas.stream()
-                .filter(v -> v.getStatusFiscal() == StatusFiscal.PENDENTE || v.getStatusFiscal() == StatusFiscal.CONCLUIDA)
-                .collect(Collectors.toList());
+        List<VendaDiariaDTO> evolucaoDiaria = vendaRepository.agruparVendasPorDia(dataInicio, dataFim);
+        List<VendaPorPagamentoDTO> vendasPorPagamento = vendaRepository.agruparPorFormaPagamento(dataInicio, dataFim);
 
-        // 3. Cálculos de Cabeçalho (Totais)
-        BigDecimal faturamentoTotal = vendasValidas.stream()
-                .map(v -> v.getTotalVenda().subtract(v.getDescontoTotal()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Ranking Top 10
+        List<ProdutoRankingDTO> rankingProdutos = vendaRepository.buscarRankingProdutos(dataInicio, dataFim, PageRequest.of(0, 10));
 
-        Long totalVendas = (long) vendasValidas.size();
+        // 3. Cálculos Complementares (Ticket Médio)
+        // CORREÇÃO: Usando o getter correto 'getQuantidade()' baseado no DTO
+        long totalVendas = vendasPorPagamento.stream().mapToLong(VendaPorPagamentoDTO::getQuantidadeVendas).sum();
 
         BigDecimal ticketMedio = (totalVendas > 0)
                 ? faturamentoTotal.divide(BigDecimal.valueOf(totalVendas), 2, RoundingMode.HALF_UP)
@@ -64,12 +65,7 @@ public class RelatorioService {
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         String periodoStr = dataInicio.format(fmt) + " a " + dataFim.format(fmt);
 
-        // 4. Processamento dos Gráficos e Listas
-        List<VendaDiariaDTO> evolucaoDiaria = processarEvolucaoDiaria(vendasValidas);
-        List<VendaPorPagamentoDTO> porPagamento = processarVendasPorPagamento(vendasValidas);
-        List<ProdutoRankingDTO> rankingProdutos = processarRankingProdutos(vendasValidas);
-
-        // 5. Build do DTO
+        // 4. Montagem do DTO Final
         return RelatorioVendasDTO.builder()
                 .dataGeracao(LocalDateTime.now())
                 .periodo(periodoStr)
@@ -77,87 +73,13 @@ public class RelatorioService {
                 .totalVendasRealizadas(totalVendas)
                 .ticketMedio(ticketMedio)
                 .evolucaoDiaria(evolucaoDiaria)
-                .vendasPorPagamento(porPagamento)
+                .vendasPorPagamento(vendasPorPagamento)
                 .produtosMaisVendidos(rankingProdutos)
                 .build();
     }
 
-    // --- Métodos Auxiliares de Processamento ---
-
-    private List<VendaDiariaDTO> processarEvolucaoDiaria(List<Venda> vendas) {
-        Map<LocalDate, BigDecimal> agrupamento = vendas.stream()
-                .collect(Collectors.groupingBy(
-                        v -> v.getDataVenda().toLocalDate(),
-                        Collectors.reducing(
-                                BigDecimal.ZERO,
-                                v -> v.getTotalVenda().subtract(v.getDescontoTotal()),
-                                BigDecimal::add
-                        )
-                ));
-
-        return agrupamento.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> VendaDiariaDTO.builder()
-                        .data(entry.getKey())
-                        .valorTotal(entry.getValue())
-                        .build())
-                .collect(Collectors.toList());
-    }
-
-    private List<VendaPorPagamentoDTO> processarVendasPorPagamento(List<Venda> vendas) {
-        return vendas.stream()
-                .collect(Collectors.groupingBy(Venda::getFormaPagamento))
-                .entrySet().stream()
-                .map(entry -> {
-                    BigDecimal total = entry.getValue().stream()
-                            .map(v -> v.getTotalVenda().subtract(v.getDescontoTotal()))
-                            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                    return VendaPorPagamentoDTO.builder()
-                            .formaPagamento(entry.getKey().name())
-                            .quantidadeVendas((long) entry.getValue().size())
-                            .valorTotal(total)
-                            .build();
-                })
-                .sorted((a, b) -> b.getValorTotal().compareTo(a.getValorTotal()))
-                .collect(Collectors.toList());
-    }
-
-    private List<ProdutoRankingDTO> processarRankingProdutos(List<Venda> vendas) {
-        return vendas.stream()
-                .flatMap(v -> v.getItens().stream())
-                .collect(Collectors.groupingBy(
-                        ItemVenda::getProduto,
-                        Collectors.toList()
-                ))
-                .entrySet().stream()
-                .map(entry -> {
-                    Produto p = entry.getKey();
-                    List<ItemVenda> itens = entry.getValue();
-
-                    BigDecimal qtdTotal = itens.stream()
-                            .map(ItemVenda::getQuantidade)
-                            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                    BigDecimal valorTotal = itens.stream()
-                            .map(i -> i.getPrecoUnitario().multiply(i.getQuantidade()))
-                            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                    // CORREÇÃO: Usando o construtor do DTO existente
-                    return new ProdutoRankingDTO(
-                            p.getCodigoBarras(),
-                            p.getDescricao(),
-                            qtdTotal.longValue(), // Converte BigDecimal para Long
-                            valorTotal            // O construtor aceita Number/BigDecimal
-                    );
-                })
-                .sorted((a, b) -> b.getQuantidadeVendida().compareTo(a.getQuantidadeVendida()))
-                .limit(10)
-                .collect(Collectors.toList());
-    }
-
     // ==================================================================================
-    // MÉTODOS DE PDF E ETIQUETA (Mantidos placeholders para integridade)
+    // SESSÃO 2: GERAÇÃO DE PDF E ETIQUETAS
     // ==================================================================================
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {
@@ -166,6 +88,7 @@ public class RelatorioService {
             PdfWriter.getInstance(document, out);
             document.open();
 
+            // Cabeçalho
             Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18);
             Paragraph titulo = new Paragraph("RELATÓRIO DE REPOSIÇÃO INTELIGENTE", fontTitulo);
             titulo.setAlignment(Element.ALIGN_CENTER);
@@ -173,21 +96,73 @@ public class RelatorioService {
             document.add(new Paragraph("Gerado em: " + new SimpleDateFormat("dd/MM/yyyy HH:mm").format(new Date())));
             document.add(new Paragraph(" "));
 
-            // Lógica completa de tabela (já enviada anteriormente) estaria aqui...
-            // Para brevidade e foco na correção, omiti a tabela complexa, mas se precisar dela inteira, me avise.
+            // Tabela
+            PdfPTable table = new PdfPTable(7);
+            table.setWidthPercentage(100);
+            table.setWidths(new float[]{4f, 2f, 2f, 1f, 1f, 1.5f, 2f});
 
+            String[] headers = {"Produto", "Marca", "Urgência", "Atual", "Mín", "Comprar", "Investimento"};
+            for (String h : headers) {
+                PdfPCell cell = new PdfPCell(new Phrase(h, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
+                cell.setBackgroundColor(Color.DARK_GRAY);
+                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+                cell.setPadding(6);
+                table.addCell(cell);
+            }
+
+            NumberFormat moeda = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
+
+            for (SugestaoCompraDTO item : sugestoes) {
+                table.addCell(criarCelula(item.getNomeProduto(), Element.ALIGN_LEFT));
+                table.addCell(criarCelula(item.getMarca(), Element.ALIGN_LEFT));
+
+                PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.getNivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
+                cellUrgencia.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cellUrgencia.setPadding(4);
+                if (item.getNivelUrgencia().contains("CRÍTICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
+                else if (item.getNivelUrgencia().contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
+                else cellUrgencia.setBackgroundColor(new Color(220, 255, 220));
+                table.addCell(cellUrgencia);
+
+                table.addCell(criarCelula(String.valueOf(item.getEstoqueAtual()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(String.valueOf(item.getEstoqueMinimoCalculado()), Element.ALIGN_CENTER));
+
+                PdfPCell cellSugerido = new PdfPCell(new Phrase(String.valueOf(item.getQuantidadeSugeridaCompra()), FontFactory.getFont(FontFactory.HELVETICA_BOLD)));
+                cellSugerido.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cellSugerido.setPadding(4);
+                table.addCell(cellSugerido);
+
+                table.addCell(criarCelula(moeda.format(item.getCustoEstimadoPedido()), Element.ALIGN_RIGHT));
+            }
+
+            document.add(table);
             document.close();
             return out.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Erro ao gerar PDF", e);
+            throw new RuntimeException("Erro PDF", e);
         }
+    }
+
+    private PdfPCell criarCelula(String texto, int alinhamento) {
+        PdfPCell cell = new PdfPCell(new Phrase(texto, FontFactory.getFont(FontFactory.HELVETICA, 9)));
+        cell.setHorizontalAlignment(alinhamento);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setPadding(4);
+        return cell;
     }
 
     public String gerarEtiquetaTermica(Produto p) {
         StringBuilder sb = new StringBuilder();
-        sb.append("DD COSMETICOS\n");
-        sb.append(p.getDescricao()).append("\n");
-        sb.append("R$ ").append(p.getPrecoVenda()).append("\n");
+        sb.append("================================\n");
+        sb.append("      DD COSMETICOS\n");
+        sb.append("================================\n\n");
+        String nome = p.getDescricao().length() > 32 ? p.getDescricao().substring(0, 32) : p.getDescricao();
+        sb.append(nome).append("\n\n");
+        sb.append("R$ ").append(String.format("%.2f", p.getPrecoVenda())).append("\n\n");
+        sb.append("COD: ").append(p.getCodigoBarras()).append("\n");
+        sb.append("\n\n\n");
         return sb.toString();
     }
 }

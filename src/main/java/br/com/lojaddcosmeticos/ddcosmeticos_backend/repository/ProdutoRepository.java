@@ -17,14 +17,12 @@ import java.util.Optional;
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     // ==================================================================================
-    // SESSÃO 1: BUSCAS PADRÃO E EXATAS (JPA Padrão)
-    // Foco: Recuperação simples por chave ou filtro básico.
+    // SESSÃO 1: BUSCAS PADRÃO E OTIMIZADAS
     // ==================================================================================
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
-    // CORREÇÃO: Método necessário para o VendaService (Linha 262) funcionar
-    // O Spring cria automaticamente o SQL: WHERE codigo_barras IN ('...', '...')
+    // ESSENCIAL PARA VENDA SERVICE (Correção N+1)
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
 
     boolean existsByCodigoBarras(String codigoBarras);
@@ -33,27 +31,19 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findByDescricaoContainingIgnoreCase(String descricao);
 
-    // Buscas combinadas (Nome OU Código)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
+
+    // Suporte a paginação nas buscas
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarrasContainingIgnoreCase(String descricao, String codigoBarras, Pageable pageable);
 
-
     // ==================================================================================
-    // SESSÃO 2: PROJEÇÕES E DTOS (Performance)
-    // Foco: Listagens leves para o frontend (traz apenas os dados necessários).
+    // SESSÃO 2: PROJEÇÕES LEVES (DTOs)
     // ==================================================================================
 
     @Query("""
        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO(
-           p.id, 
-           p.descricao, 
-           p.precoVenda, 
-           p.urlImagem, 
-           p.quantidadeEmEstoque, 
-           p.ativo,
-           p.codigoBarras,  
-           p.marca,         
-           p.ncm            
+           p.id, p.descricao, p.precoVenda, p.urlImagem, 
+           p.quantidadeEmEstoque, p.ativo, p.codigoBarras, p.marca, p.ncm
        ) 
        FROM Produto p
     """)
@@ -69,36 +59,24 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     """)
     List<ProdutoListagemDTO> buscarPorTermo(@Param("termo") String termo);
 
-
     // ==================================================================================
-    // SESSÃO 3: INTELIGÊNCIA E CATÁLOGO (Módulo Smart Search)
-    // Foco: Buscas complexas que varrem múltiplos campos (Google Style).
+    // SESSÃO 3: BUSCAS INTELIGENTES E INDICADORES
     // ==================================================================================
 
     @Query("SELECT p FROM Produto p WHERE " +
             "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
-            "(LOWER(p.subcategoria) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
-
-
-    // ==================================================================================
-    // SESSÃO 4: INDICADORES E ESTOQUE (Módulo Dashboard/IA)
-    // Foco: Contagens e regras de negócio para relatórios.
-    // ==================================================================================
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
-
     // ==================================================================================
-    // SESSÃO 5: ADMINISTRATIVO E MANUTENÇÃO (Native Queries)
-    // Foco: Acesso direto ao banco para correções ou atualizações em massa.
+    // SESSÃO 4: MANUTENÇÃO E AUDITORIA (Native Queries)
     // ==================================================================================
 
-    // Busca ignorando o Soft Delete (traz até os inativos/excluídos)
     @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
@@ -106,7 +84,7 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);
 
-    // Lista apenas o que está na "Lixeira" (Inativo/Deletado)
+    // CORREÇÃO DO ERRO LINHA 73 (AuditoriaService)
     @Query(value = "SELECT * FROM produto WHERE ativo = false", nativeQuery = true)
     List<Produto> findAllLixeira();
 }

@@ -13,12 +13,17 @@ public class ProdutoRankingDTO {
     private Long quantidadeVendida;
     private BigDecimal totalFaturado;
 
-    // Construtor flexível para o Hibernate
-    public ProdutoRankingDTO(String codigoBarras, String nomeProduto, Long quantidadeVendida, Number totalFaturado) {
+    // --- CORREÇÃO AQUI ---
+    // Alterado o 3º parâmetro de Long para Number.
+    // O Hibernate retorna SUM() como BigDecimal, então precisamos receber Number e converter.
+    public ProdutoRankingDTO(String codigoBarras, String nomeProduto, Number quantidadeVendida, Number totalFaturado) {
         this.codigoBarras = codigoBarras;
         this.nomeProduto = nomeProduto;
-        this.quantidadeVendida = quantidadeVendida != null ? quantidadeVendida : 0L;
-        // Converte qualquer Number para BigDecimal de forma segura
+
+        // Converte o valor do banco (BigDecimal) para Long
+        this.quantidadeVendida = quantidadeVendida != null ? quantidadeVendida.longValue() : 0L;
+
+        // Converte o valor do banco para BigDecimal
         this.totalFaturado = totalFaturado != null ? new BigDecimal(totalFaturado.toString()) : BigDecimal.ZERO;
     }
 }

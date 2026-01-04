@@ -5,6 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
@@ -68,6 +69,7 @@ public class Venda implements Serializable {
     private String xmlNfce;
 
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
+    @ToString.Exclude
     private List<ItemVenda> itens = new ArrayList<>();
 
     // Métodos de compatibilidade usados pelo Service

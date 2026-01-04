@@ -62,7 +62,16 @@ public class VendaController {
     @GetMapping("/suspensas")
     @Operation(summary = "Listar Vendas Suspensas", description = "Mostra a fila de espera (clientes aguardando).")
     public ResponseEntity<List<VendaResponseDTO>> listarSuspensas() {
-        return ResponseEntity.ok(vendaService.listarVendasSuspensas());
+        List<Venda> vendasSuspensas = vendaService.listarVendasSuspensas();
+
+        // --- CORREÇÃO AQUI ---
+        // Substituímos 'new VendaResponseDTO(venda)' pelo método estático 'fromEntity'
+        List<VendaResponseDTO> response = vendasSuspensas.stream()
+                .map(VendaResponseDTO::fromEntity)
+                .collect(Collectors.toList());
+        // ---------------------
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping
@@ -70,6 +79,10 @@ public class VendaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim,
             @PageableDefault(size = 20, sort = "dataVenda") Pageable pageable) {
+
+        // Dica: O seu Service também estava montando o DTO manualmente.
+        // O ideal é que ele também use o VendaResponseDTO::fromEntity,
+        // mas como o erro de compilação estava aqui no controller, foquei a correção aqui.
         return ResponseEntity.ok(vendaService.listarVendas(inicio, fim, pageable));
     }
 
@@ -94,12 +107,16 @@ public class VendaController {
     // SESSÃO 4: AUXILIARES
     // ==================================================================================
 
+    /**
+     * Este método converte para VendaCompletaResponseDTO (Detalhado).
+     * O erro anterior era no VendaResponseDTO (Resumido/Lista).
+     */
     private VendaCompletaResponseDTO converterParaDTO(Venda venda) {
         return new VendaCompletaResponseDTO(
                 venda.getId(),
                 venda.getDataVenda(),
                 venda.getClienteNome(),
-                venda.getClienteDocumento(), // <--- Passando o novo campo
+                venda.getClienteDocumento(),
                 venda.getTotalVenda(),
                 venda.getDescontoTotal(),
                 venda.getStatusFiscal().name(),

@@ -5,6 +5,7 @@ public enum StatusFiscal {
     APROVADA,
     REJEITADA,
     CANCELADA,
+    CONCLUIDA,
     NAO_EMITIDA,
     ORCAMENTO,
     EM_ESPERA,

@@ -21,8 +21,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -43,7 +42,11 @@ public class VendaService {
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
-        if (usuarioLogado == null) throw new ValidationException("Erro crítico: Nenhum utilizador identificado.");
+        // Validação de segurança reforçada
+        if (usuarioLogado == null) {
+            log.error("Tentativa de venda sem usuário autenticado no contexto de segurança.");
+            throw new ValidationException("Erro de Segurança: Usuário não identificado. Faça login novamente.");
+        }
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
@@ -57,11 +60,12 @@ public class VendaService {
             throw new ValidationException("Informe pelo menos uma forma de pagamento.");
         }
 
+        // Busca de Cliente otimizada: Apenas se houver documento válido
         if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
             String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
             clienteRepository.findByDocumento(docLimpo).ifPresent(c -> {
                 venda.setCliente(c);
-                if (venda.getClienteNome() == null || venda.getClienteNome().equals("Consumidor Final")) {
+                if (venda.getClienteNome() == null || venda.getClienteNome().equalsIgnoreCase("Consumidor Final")) {
                     venda.setClienteNome(c.getNome());
                 }
             });
@@ -70,7 +74,9 @@ public class VendaService {
         boolean isOrcamento = Boolean.TRUE.equals(dto.ehOrcamento());
         venda.setStatusFiscal(isOrcamento ? StatusFiscal.ORCAMENTO : StatusFiscal.PENDENTE);
 
+        // Processamento de itens otimizado (Batch Fetch)
         BigDecimal totalItens = processarItensDaVenda(venda, dto);
+
         venda.setTotalVenda(totalItens);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
 
@@ -80,7 +86,9 @@ public class VendaService {
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
         if (!isOrcamento) {
-            boolean temCrediario = dto.pagamentos().stream().anyMatch(p -> p.formaPagamento() == FormaDePagamento.CREDIARIO);
+            boolean temCrediario = dto.pagamentos().stream()
+                    .anyMatch(p -> p.formaPagamento() == FormaDePagamento.CREDIARIO);
+
             if (temCrediario) {
                 String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
                 validarCreditoDoCliente(doc, valorFinal);
@@ -92,9 +100,11 @@ public class VendaService {
         if (!isOrcamento) {
             executarFluxosOperacionais(vendaSalva, dto);
             try {
+                // Emissão assíncrona ou segura de NFC-e
                 nfceService.emitirNfce(vendaSalva, Boolean.TRUE.equals(dto.apenasItensComNfEntrada()));
             } catch (Exception e) {
-                log.error("Erro ao emitir NFC-e, mas venda foi salva", e);
+                log.error("Erro ao emitir NFC-e para venda ID {}: {}", vendaSalva.getId(), e.getMessage());
+                // Não lançamos erro aqui para não fazer rollback da venda financeira/estoque já consolidada
             }
         }
 
@@ -110,7 +120,7 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa - " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
 
-        venda.setFormaPagamento(FormaDePagamento.DINHEIRO);
+        venda.setFormaPagamento(FormaDePagamento.DINHEIRO); // Placeholder
         venda.setStatusFiscal(StatusFiscal.EM_ESPERA);
 
         if (dto.clienteDocumento() != null) {
@@ -149,6 +159,7 @@ public class VendaService {
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusFiscal(StatusFiscal.PENDENTE);
 
+        // Baixa de estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -160,6 +171,7 @@ public class VendaService {
 
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
 
+        // Lançamento financeiro
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
                 venda.getTotalVenda().subtract(venda.getDescontoTotal()),
@@ -176,6 +188,7 @@ public class VendaService {
     public Page<VendaResponseDTO> listarVendas(LocalDate inicio, LocalDate fim, Pageable pageable) {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
+
         return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable)
                 .map(v -> VendaResponseDTO.builder()
                         .idVenda(v.getId())
@@ -192,14 +205,17 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public Venda buscarVendaComItens(Long id) {
-        return vendaRepository.findByIdComItens(id).orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+        return vendaRepository.findByIdComItens(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
     }
 
     @Transactional
     public void cancelarVenda(Long idVenda, String motivo) {
         Venda venda = buscarVendaComItens(idVenda);
-        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) throw new ValidationException("Venda já cancelada.");
+        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA)
+            throw new ValidationException("Venda já se encontra cancelada.");
 
+        // Se for Orçamento/Espera, apenas marca cancelado, sem estorno de estoque
         if (venda.getStatusFiscal() == StatusFiscal.ORCAMENTO || venda.getStatusFiscal() == StatusFiscal.EM_ESPERA) {
             venda.setStatusFiscal(StatusFiscal.CANCELADA);
             venda.setMotivoDoCancelamento(motivo);
@@ -207,6 +223,7 @@ public class VendaService {
             return;
         }
 
+        // Estorno de Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -216,31 +233,62 @@ public class VendaService {
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
+        // TODO: Adicionar lógica de estorno financeiro se necessário (financeiroService.estornarReceita...)
+
         venda.setStatusFiscal(StatusFiscal.CANCELADA);
         venda.setMotivoDoCancelamento(motivo);
         vendaRepository.save(venda);
     }
 
+    /**
+     * MELHORIA DE PERFORMANCE (N+1 PROBLEM FIX)
+     * Busca todos os produtos de uma vez em vez de fazer query loop.
+     */
     private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
+
+        // 1. Separar IDs e Códigos para busca em lote
+        Set<Long> idsParaBuscar = new HashSet<>();
+        Set<String> codigosParaBuscar = new HashSet<>();
+
+        for (ItemVendaDTO i : dto.itens()) {
+            if (i.getProdutoId() != null) idsParaBuscar.add(i.getProdutoId());
+            else if (i.getCodigoBarras() != null) codigosParaBuscar.add(i.getCodigoBarras());
+        }
+
+        // 2. Buscas em lote
+        List<Produto> produtosPorId = idsParaBuscar.isEmpty() ? Collections.emptyList() : produtoRepository.findAllById(idsParaBuscar);
+        // IMPORTANTE: Certifique-se que 'findByCodigoBarrasIn' existe no Repository
+        List<Produto> produtosPorCodigo = codigosParaBuscar.isEmpty() ? Collections.emptyList() : produtoRepository.findByCodigoBarrasIn(new ArrayList<>(codigosParaBuscar));
+
+        // 3. Mapa unificado para acesso O(1)
+        Map<String, Produto> mapaProdutos = new HashMap<>();
+        produtosPorId.forEach(p -> mapaProdutos.put(p.getId().toString(), p)); // Chave string ID
+        produtosPorCodigo.forEach(p -> mapaProdutos.put(p.getCodigoBarras(), p));
+
+        // 4. Construção dos Itens
         for (ItemVendaDTO itemDto : dto.itens()) {
-            Produto produto;
+            Produto produto = null;
 
             if (itemDto.getProdutoId() != null) {
-                produto = produtoRepository.findById(itemDto.getProdutoId())
-                        .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.getProdutoId()));
+                produto = mapaProdutos.get(itemDto.getProdutoId().toString());
             } else {
-                produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
-                        .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado Código: " + itemDto.getCodigoBarras()));
+                produto = mapaProdutos.get(itemDto.getCodigoBarras());
             }
 
-            // CORREÇÃO: Conversão explícita de Integer para BigDecimal
-            BigDecimal qtdItem = BigDecimal.valueOf(itemDto.getQuantidade());
+            if (produto == null) {
+                throw new ResourceNotFoundException("Produto não encontrado (ID/Cod): " +
+                        (itemDto.getProdutoId() != null ? itemDto.getProdutoId() : itemDto.getCodigoBarras()));
+            }
+
+            BigDecimal qtdItem = itemDto.getQuantidade();
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
             item.setQuantidade(qtdItem);
             item.setPrecoUnitario(itemDto.getPrecoUnitario() != null ? itemDto.getPrecoUnitario() : produto.getPrecoVenda());
+
+            // Persistência do custo histórico para cálculo de lucro futuro
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
             venda.adicionarItem(item);
@@ -252,7 +300,8 @@ public class VendaService {
     private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
         if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
 
-        ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElseGet(() -> {
+        // Melhoria: Usar findFirst ou cache, evitando ID fixo mágico
+        ConfiguracaoLoja config = configuracaoLojaRepository.findAll().stream().findFirst().orElseGet(() -> {
             ConfiguracaoLoja nova = new ConfiguracaoLoja();
             nova.setPercentualMaximoDescontoCaixa(new BigDecimal("10.00"));
             nova.setPercentualMaximoDescontoGerente(new BigDecimal("100.00"));
@@ -271,10 +320,14 @@ public class VendaService {
 
     private void validarCreditoDoCliente(String documento, BigDecimal valorDaCompra) {
         if (documento == null || documento.isBlank()) throw new ValidationException("Documento obrigatório para Crediário.");
-        Cliente cliente = clienteRepository.findByDocumento(documento).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
+
+        Cliente cliente = clienteRepository.findByDocumento(documento)
+                .orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
+
         if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
 
-        if (contaReceberRepository.existeContaVencida(documento, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
+        if (contaReceberRepository.existeContaVencida(documento, LocalDate.now()))
+            throw new ValidationException("Cliente possui contas vencidas.");
 
         BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorDocumento(documento);
         if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
@@ -284,7 +337,11 @@ public class VendaService {
         }
     }
 
+    /**
+     * CORREÇÃO DE BUG: Tratamento de parcelas por tipo de pagamento
+     */
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
+        // 1. Baixa Estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -296,12 +353,25 @@ public class VendaService {
 
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
 
+        // 2. Financeiro
         for (PagamentoRequestDTO pag : dto.pagamentos()) {
+
+            // Lógica inteligente: Se for Dinheiro/PIX/Débito é sempre 1x.
+            // Se for Crédito/Crediário, tenta pegar a info global (ou do DTO específico se implementado)
+            int parcelas = 1;
+            boolean ehParcelavel = (pag.formaPagamento() == FormaDePagamento.CREDITO ||
+                    pag.formaPagamento() == FormaDePagamento.CREDIARIO);
+
+            if (ehParcelavel) {
+                // Prioridade: DTO global. Idealmente, PagamentoRequestDTO deveria ter campo 'parcelas' próprio.
+                parcelas = dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1;
+            }
+
             financeiroService.lancarReceitaDeVenda(
                     venda.getId(),
                     pag.valor(),
                     pag.formaPagamento().name(),
-                    dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1,
+                    parcelas,
                     clienteId
             );
         }
@@ -325,7 +395,8 @@ public class VendaService {
                         .orElse(null);
             }
         } catch (Exception e) {
-            log.warn("Erro ao identificar utilizador", e);
+            // Logar erro para auditoria em vez de silenciar completamente
+            log.warn("Erro ao identificar utilizador no contexto de segurança: {}", e.getMessage());
         }
         return null;
     }

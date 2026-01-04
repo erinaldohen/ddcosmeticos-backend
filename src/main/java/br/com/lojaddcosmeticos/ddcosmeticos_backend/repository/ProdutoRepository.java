@@ -23,6 +23,10 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
+    // CORREÇÃO: Método necessário para o VendaService (Linha 262) funcionar
+    // O Spring cria automaticamente o SQL: WHERE codigo_barras IN ('...', '...')
+    List<Produto> findByCodigoBarrasIn(List<String> codigos);
+
     boolean existsByCodigoBarras(String codigoBarras);
 
     List<Produto> findAllByAtivoTrue();

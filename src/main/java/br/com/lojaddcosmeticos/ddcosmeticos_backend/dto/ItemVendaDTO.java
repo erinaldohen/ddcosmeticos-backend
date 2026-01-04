@@ -1,27 +1,31 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class ItemVendaDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    // Adicionado para o Service encontrar o produto (findById)
+    // Opcional: Se o front mandar ID, busca por ID.
     private Long produtoId;
 
-    // Mantido como opcional (fallback)
+    // Recomendado: O PDV geralmente manda o código de barras lido pelo leitor
     private String codigoBarras;
 
-    @NotNull(message = "Quantidade obrigatória")
-    @Min(value = 1, message = "Quantidade deve ser pelo menos 1")
-    // Alterado de BigDecimal para Integer para bater com a Entity ItemVenda e evitar erro de tipo
-    private Integer quantidade;
+    @NotNull(message = "A quantidade é obrigatória")
+    @Positive(message = "A quantidade deve ser maior que zero")
+    private BigDecimal quantidade; // CORREÇÃO: BigDecimal para alinhar com a Entity
 
-    // Adicionado para permitir que o PDV envie o preço praticado (caso tenha desconto no item)
+    // Opcional: Se null, o backend usa o preço atual do cadastro.
+    // Se preenchido, o backend acata (útil para descontos pontuais no PDV)
     private BigDecimal precoUnitario;
 }

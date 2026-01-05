@@ -34,13 +34,6 @@ public class VendaController {
     // SESSÃO 1: OPERAÇÕES PRINCIPAIS
     // ==================================================================================
 
-    @PostMapping
-    @Operation(summary = "Realizar Venda ou Orçamento", description = "Finaliza uma venda ou cria um orçamento.")
-    public ResponseEntity<VendaCompletaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        Venda venda = vendaService.realizarVenda(dto);
-        return ResponseEntity.status(HttpStatus.CREATED).body(converterParaDTO(venda));
-    }
-
     @PostMapping("/suspender")
     @Operation(summary = "Suspender Venda (Fila de Espera)", description = "Salva os itens para atender outro cliente. Não movimenta financeiro nem estoque.")
     public ResponseEntity<VendaCompletaResponseDTO> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
@@ -124,5 +117,13 @@ public class VendaController {
                         .map(i -> i.getProduto().getDescricao())
                         .collect(Collectors.toList())
         );
+    }
+
+    @PostMapping
+    @Operation(summary = "Realizar Venda", description = "Finaliza uma venda baixando estoque e gerando financeiro.")
+    public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
+        Venda venda = vendaService.realizarVenda(dto);
+        // CORREÇÃO LINHA 125: Usando o método estático fromEntity em vez de 'new'
+        return ResponseEntity.ok(VendaResponseDTO.fromEntity(venda));
     }
 }

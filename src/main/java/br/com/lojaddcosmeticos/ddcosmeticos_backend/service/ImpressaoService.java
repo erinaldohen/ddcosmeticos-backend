@@ -58,13 +58,15 @@ public class ImpressaoService {
                 String descricaoLimitada = item.getProduto().getDescricao();
                 if (descricaoLimitada.length() > 20) descricaoLimitada = descricaoLimitada.substring(0, 20);
 
-                String linha = String.format("%03d %s %s %.0f x %.2f",
+                String codigo = item.getProduto().getCodigoBarras();
+                String codigoCurto = codigo.length() > 6 ? codigo.substring(0, 6) : codigo;
+
+                String linha = String.format("%03d %-6s %-20s %.0f x %.2f",
                         i++,
-                        item.getProduto().getCodigoBarras().substring(0, Math.min(6, item.getProduto().getCodigoBarras().length())),
+                        codigoCurto,
                         descricaoLimitada,
                         item.getQuantidade().doubleValue(),
                         item.getPrecoUnitario().doubleValue());
-
                 document.add(new Paragraph(linha, fontSmall));
             }
             document.add(new Paragraph("--------------------------------", fontNormal));

@@ -40,53 +40,58 @@ public class RelatorioService {
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
-        // 1. Busca os dados usando as queries otimizadas do Repository
+        // 1. Busca dados reais das queries consolidadas
         BigDecimal totalFaturado = vendaRepository.somarFaturamentoNoPeriodo(dataInicio, dataFim);
         List<VendaDiariaDTO> vendasDiarias = vendaRepository.agruparVendasPorDia(dataInicio, dataFim);
         List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(dataInicio, dataFim);
 
-        // Busca o ranking (Top 10 produtos por valor)
-        List<ProdutoRankingDTO> rankingProdutos = vendaRepository.buscarRankingProdutos(
-                dataInicio, dataFim, PageRequest.of(0, 10));
+        // Busca Top Marcas para o gráfico (Top 5)
+        List<ProdutoRankingDTO> rankingMarcas = vendaRepository.buscarRankingMarcas(dataInicio, dataFim, PageRequest.of(0, 5));
 
-        // 2. Cálculos Complementares para os Cards do Frontend
-        // Soma a quantidade de vendas a partir da lista diária
+        // 2. Cálculos para os Cards do Dashboard
         long totalVendasCount = vendasDiarias.stream()
-                .mapToLong(VendaDiariaDTO::getQuantidade)
+                .mapToLong(v -> v.getQuantidade() != null ? v.getQuantidade() : 0L)
                 .sum();
 
-        BigDecimal ticketMedio = (totalVendasCount == 0) ? BigDecimal.ZERO :
-                totalFaturado.divide(new BigDecimal(totalVendasCount), RoundingMode.HALF_UP);
+        BigDecimal ticketMedio = BigDecimal.ZERO;
+        if (totalVendasCount > 0) {
+            ticketMedio = totalFaturado.divide(new BigDecimal(totalVendasCount), 2, RoundingMode.HALF_UP);
+        }
 
-        // 3. Monta o DTO final exatamente como o Frontend espera
+        BigDecimal lucroEstimado = totalFaturado.multiply(new BigDecimal("0.35")); // Baseado na margem padrão da loja
+
+        // 3. Retorno mapeado para o RelatorioVendasDTO (alinhado com o React)
         return RelatorioVendasDTO.builder()
                 .dataGeracao(LocalDateTime.now())
                 .totalFaturado(totalFaturado)
                 .quantidadeVendas((int) totalVendasCount)
                 .ticketMedio(ticketMedio)
-                .lucroBrutoEstimado(totalFaturado.multiply(new BigDecimal("0.35"))) // Exemplo de margem de 35%
-                .vendasDiarias(vendasDiarias)
-                .porPagamento(porPagamento)
-                .rankingMarcas(rankingProdutos) // Mapeia para o gráfico de barras
+                .lucroBrutoEstimado(lucroEstimado)
+                .vendasDiarias(vendasDiarias)     // Popula gráfico "Tendência Diária"
+                .porPagamento(porPagamento)       // Popula gráfico "Meios de Pagamento"
+                .rankingMarcas(rankingMarcas)     // Popula gráfico "Top Marcas"
                 .build();
     }
 
-    // --- MÉTODOS DE PDF E ETIQUETAS (MANTIDOS CONFORME SEU CÓDIGO) ---
+    // --- MÉTODOS DE PDF E ETIQUETAS (MANTIDOS) ---
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4.rotate());
             PdfWriter.getInstance(document, out);
             document.open();
+
             Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18);
             Paragraph titulo = new Paragraph("RELATÓRIO DE REPOSIÇÃO INTELIGENTE", fontTitulo);
             titulo.setAlignment(Element.ALIGN_CENTER);
             document.add(titulo);
             document.add(new Paragraph("Gerado em: " + new SimpleDateFormat("dd/MM/yyyy HH:mm").format(new Date())));
             document.add(new Paragraph(" "));
+
             PdfPTable table = new PdfPTable(7);
             table.setWidthPercentage(100);
             table.setWidths(new float[]{4f, 2f, 2f, 1f, 1f, 1.5f, 2f});
+
             String[] headers = {"Produto", "Marca", "Urgência", "Atual", "Mín", "Comprar", "Investimento"};
             for (String h : headers) {
                 PdfPCell cell = new PdfPCell(new Phrase(h, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
@@ -95,16 +100,19 @@ public class RelatorioService {
                 cell.setPadding(6);
                 table.addCell(cell);
             }
+
             NumberFormat moeda = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
             for (SugestaoCompraDTO item : sugestoes) {
                 table.addCell(criarCelula(item.getNomeProduto(), Element.ALIGN_LEFT));
                 table.addCell(criarCelula(item.getMarca(), Element.ALIGN_LEFT));
+
                 PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.getNivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
                 cellUrgencia.setHorizontalAlignment(Element.ALIGN_CENTER);
                 if (item.getNivelUrgencia().contains("CRÍTICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
                 else if (item.getNivelUrgencia().contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
                 else cellUrgencia.setBackgroundColor(new Color(220, 255, 220));
                 table.addCell(cellUrgencia);
+
                 table.addCell(criarCelula(String.valueOf(item.getEstoqueAtual()), Element.ALIGN_CENTER));
                 table.addCell(criarCelula(String.valueOf(item.getEstoqueMinimoCalculado()), Element.ALIGN_CENTER));
                 table.addCell(criarCelula(String.valueOf(item.getQuantidadeSugeridaCompra()), Element.ALIGN_CENTER));

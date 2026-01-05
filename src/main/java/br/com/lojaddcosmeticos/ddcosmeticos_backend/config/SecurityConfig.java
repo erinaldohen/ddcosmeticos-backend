@@ -62,6 +62,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/catalogo/**").permitAll()
                         .requestMatchers("/api/auditoria/**").permitAll()
                         .requestMatchers("/api/operacoes/**").permitAll()
+                                // Dentro do seu SecurityConfig.java
+                                .requestMatchers(HttpMethod.GET, "/api/v1/relatorios/**").hasAnyRole("ADMIN", "USUARIO")
+// OU se quiser deixar aberto para teste rápido:
+                                .requestMatchers("/api/v1/relatorios/**").permitAll()
 
                         .requestMatchers("/dashboard/**", "/api/v1/dashboard/**").permitAll()
                         .requestMatchers("/auth/**", "/api/v1/auth/**").permitAll()

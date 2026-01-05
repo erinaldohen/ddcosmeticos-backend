@@ -24,45 +24,27 @@ public record VendaResponseDTO(
         List<String> alertas
 ) {
 
-    /**
-     * Converte a Entidade Venda para o DTO de resposta.
-     * Ajustado para ler os campos 'totalVenda' e 'descontoTotal' da sua Entidade.
-     */
     public static VendaResponseDTO fromEntity(Venda venda) {
+        if (venda == null) return null;
 
-        // Lógica de Prioridade para o Cliente:
-        // 1. Tenta pegar o nome gravado na venda (Snapshot - mais rápido e seguro)
-        // 2. Se não tiver, tenta pegar do objeto Cliente relacionado
-        // 3. Se não tiver nada, retorna "Consumidor Final" ou similar
-        String nomeFinal = "Cliente não identificado";
-        if (venda.getClienteNome() != null && !venda.getClienteNome().isEmpty()) {
-            nomeFinal = venda.getClienteNome();
-        } else if (venda.getCliente() != null) {
-            nomeFinal = venda.getCliente().getNome();
+        String nomeFinal = venda.getClienteNome();
+        if (nomeFinal == null || nomeFinal.isEmpty()) {
+            nomeFinal = (venda.getCliente() != null) ? venda.getCliente().getNome() : "Consumidor Final";
         }
 
-        String docFinal = null;
-        if (venda.getClienteDocumento() != null && !venda.getClienteDocumento().isEmpty()) {
-            docFinal = venda.getClienteDocumento();
-        } else if (venda.getCliente() != null) {
-            docFinal = venda.getCliente().getDocumento(); // Assumindo que Cliente tem esse método
+        String docFinal = venda.getClienteDocumento();
+        if (docFinal == null || docFinal.isEmpty()) {
+            docFinal = (venda.getCliente() != null) ? venda.getCliente().getDocumento() : null;
         }
-
-        // Contagem de itens segura contra NullPointer
-        int qtdItens = (venda.getItens() != null) ? venda.getItens().size() : 0;
 
         return VendaResponseDTO.builder()
                 .idVenda(venda.getId())
                 .dataVenda(venda.getDataVenda())
                 .clienteNome(nomeFinal)
                 .clienteDocumento(docFinal)
-
-                // --- AQUI ESTAVA A DIFERENÇA DE NOMES ---
-                .valorTotal(venda.getTotalVenda())       // Sua entidade usa 'totalVenda'
-                .desconto(venda.getDescontoTotal())      // Sua entidade usa 'descontoTotal'
-                // ----------------------------------------
-
-                .totalItens(qtdItens)
+                .valorTotal(venda.getTotalVenda() != null ? venda.getTotalVenda() : BigDecimal.ZERO)
+                .desconto(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO)
+                .totalItens(venda.getItens() != null ? venda.getItens().size() : 0)
                 .statusFiscal(venda.getStatusFiscal())
                 .formaPagamento(venda.getFormaPagamento())
                 .alertas(Collections.emptyList())

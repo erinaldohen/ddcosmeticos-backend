@@ -25,9 +25,18 @@ public class ProdutoService {
     // --- LEITURA ---
 
     @Transactional(readOnly = true)
+    public Page<Produto> listarComFiltros(String termo, Pageable pageable) {
+        if (termo == null || termo.isBlank()) {
+            return produtoRepository.findAll(pageable);
+        }
+        // Busca inteligente (Nome ou EAN) PAGINADA
+        return produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo, pageable);
+    }
+
+    @Transactional(readOnly = true)
     public Produto buscarPorId(Long id) {
         return produtoRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado com ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado."));
     }
 
     @Transactional(readOnly = true)
@@ -74,31 +83,12 @@ public class ProdutoService {
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
-    public Produto atualizar(Long id, ProdutoDTO dto) {
-        Produto produto = buscarPorId(id);
-        if (!produto.getCodigoBarras().equals(dto.codigoBarras()) &&
-                produtoRepository.existsByCodigoBarras(dto.codigoBarras())) {
-            throw new IllegalArgumentException("Código de barras já utilizado.");
-        }
-        copiarDtoParaEntidade(dto, produto);
-        return produtoRepository.save(produto);
-    }
-
-    @Transactional
-    @CacheEvict(value = "produtos", allEntries = true)
     public void inativar(Long id) {
         Produto produto = buscarPorId(id);
         produto.setAtivo(false);
         produtoRepository.save(produto);
     }
 
-    @Transactional
-    @CacheEvict(value = "produtos", key = "#ean")
-    public void inativarPorEan(String ean) {
-        Produto p = buscarPorCodigoBarras(ean);
-        p.setAtivo(false);
-        produtoRepository.save(p);
-    }
 
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
         produto.setCodigoBarras(dto.codigoBarras());
@@ -129,6 +119,60 @@ public class ProdutoService {
     public void atualizarUrlImagem(Long id, String url) {
         Produto produto = buscarPorId(id);
         produto.setUrlImagem(url);
+        produtoRepository.save(produto);
+    }
+
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public Produto salvar(Produto produto) {
+        if (produtoRepository.existsByCodigoBarras(produto.getCodigoBarras())) {
+            // Tenta buscar inclusive os inativos para avisar corretamente
+            var existente = produtoRepository.findByEanIrrestrito(produto.getCodigoBarras());
+            if(existente.isPresent() && !existente.get().isAtivo()) {
+                throw new IllegalArgumentException("Este produto já existe mas está INATIVO. Reative-o ao invés de cadastrar novo.");
+            }
+            throw new IllegalArgumentException("Já existe um produto com este código de barras.");
+        }
+        return produtoRepository.save(produto);
+    }
+
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public Produto atualizar(Long id, ProdutoDTO dados) {
+        Produto produto = buscarPorId(id);
+
+        produto.setDescricao(dados.descricao());
+        produto.setPrecoVenda(dados.precoVenda());
+        produto.setPrecoCusto(dados.precoCusto());
+        produto.setEstoqueMinimo(dados.estoqueMinimo());
+        produto.setNcm(dados.ncm());
+
+        // Validação de troca de EAN
+        if (!produto.getCodigoBarras().equals(dados.codigoBarras())) {
+            if (produtoRepository.existsByCodigoBarras(dados.codigoBarras())) {
+                throw new IllegalStateException("Já existe outro produto com este EAN.");
+            }
+            produto.setCodigoBarras(dados.codigoBarras());
+        }
+
+        return produtoRepository.save(produto);
+    }
+
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public void inativarPorEan(String ean) {
+        var produto = produtoRepository.findByCodigoBarras(ean)
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
+        produto.setAtivo(false);
+        produtoRepository.save(produto);
+    }
+
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public void reativarPorEan(String ean) {
+        var produto = produtoRepository.findByEanIrrestrito(ean)
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
+        produto.setAtivo(true);
         produtoRepository.save(produto);
     }
 }

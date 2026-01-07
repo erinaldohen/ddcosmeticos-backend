@@ -20,12 +20,19 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     // SESSÃO 1: BUSCAS PADRÃO E OTIMIZADAS
     // ==================================================================================
 
+    boolean existsByCodigoBarras(String codigoBarras);
+
+    // ✅ CORREÇÃO: Adicionado Pageable para suportar paginação na busca
+    Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
+
+    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
+    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
+
+
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
     // ESSENCIAL PARA VENDA SERVICE (Correção N+1)
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
-
-    boolean existsByCodigoBarras(String codigoBarras);
 
     List<Produto> findAllByAtivoTrue();
 
@@ -76,9 +83,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     // ==================================================================================
     // SESSÃO 4: MANUTENÇÃO E AUDITORIA (Native Queries)
     // ==================================================================================
-
-    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
-    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")

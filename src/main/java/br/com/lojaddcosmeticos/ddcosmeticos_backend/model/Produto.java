@@ -16,9 +16,9 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 @Audited
 @Table(name = "produto", indexes = {
-        // Isso aqui cria os comandos CREATE INDEX automaticamente
         @Index(name = "idx_produto_descricao", columnList = "descricao"),
-        @Index(name = "idx_produto_ean", columnList = "codigo_barras")
+        @Index(name = "idx_produto_ean", columnList = "codigo_barras"),
+        @Index(name = "idx_produto_ativo", columnList = "ativo") // Ajuda muito nos filtros
 })
 // Restaura o Soft Delete (Exclusão lógica)
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")

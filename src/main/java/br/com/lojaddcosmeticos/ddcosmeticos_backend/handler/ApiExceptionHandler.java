@@ -1,5 +1,3 @@
-// Local: src/main/java/br/com/lojaddcosmeticos/ddcosmeticos_backend/handler/ApiExceptionHandler.java
-
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.handler;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
@@ -9,24 +7,26 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Tratador global de exceções para mapear erros para respostas HTTP padronizadas.
+ * Tratador global unificado de exceções.
+ * Substitui o antigo GlobalExceptionHandler.
  */
-@ControllerAdvice
+@RestControllerAdvice
 public class ApiExceptionHandler {
 
     /**
-     * Trata erros de validação de DTOs (@Valid) -> 400 Bad Request
+     * 1. Erros de Validação do DTO (@Valid, @NotNull, etc)
+     * Retorna um Map com os campos inválidos para o Frontend marcar em vermelho.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Object> handleValidationExceptions(MethodArgumentNotValidException ex) {
+    public ResponseEntity<ErrorResponse> handleValidationExceptions(MethodArgumentNotValidException ex) {
         Map<String, String> errors = new HashMap<>();
         ex.getBindingResult().getAllErrors().forEach((error) -> {
             String fieldName = ((FieldError) error).getField();
@@ -35,55 +35,79 @@ public class ApiExceptionHandler {
         });
 
         ErrorResponse errorResponse = new ErrorResponse(
-                "Dados de entrada inválidos",
+                "Dados inválidos. Verifique os campos.",
                 HttpStatus.BAD_REQUEST.value(),
                 LocalDateTime.now(),
                 errors
         );
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
     /**
-     * Trata ResourceNotFoundException (Recurso não encontrado) -> 404 Not Found
+     * 2. Recurso não encontrado (404)
      */
     @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<Object> handleResourceNotFoundException(ResourceNotFoundException ex) {
+    public ResponseEntity<ErrorResponse> handleResourceNotFoundException(ResourceNotFoundException ex) {
         ErrorResponse errorResponse = new ErrorResponse(
                 ex.getMessage(),
                 HttpStatus.NOT_FOUND.value(),
                 LocalDateTime.now(),
                 null
         );
-        return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
     }
 
     /**
-     * Trata ValidationException (Erros de regra de negócio) -> 400 Bad Request
+     * 3. Erros de Regra de Negócio (400)
      */
-    @ExceptionHandler(ValidationException.class)
-    public ResponseEntity<Object> handleValidationException(ValidationException ex) {
+    @ExceptionHandler({ValidationException.class, IllegalArgumentException.class})
+    public ResponseEntity<ErrorResponse> handleBusinessException(RuntimeException ex) {
         ErrorResponse errorResponse = new ErrorResponse(
                 ex.getMessage(),
                 HttpStatus.BAD_REQUEST.value(),
                 LocalDateTime.now(),
                 null
         );
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
-    // DTO auxiliar para padronizar o retorno de erro
-    private record ErrorResponse(
-            String message,
+    /**
+     * 4. Erros de Integridade do Banco (Ex: EAN duplicado) (409)
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleConstraintViolation(DataIntegrityViolationException ex) {
+        // Tenta extrair uma mensagem mais amigável ou usa uma padrão
+        String mensagem = "Erro de integridade de dados. Verifique se o registro (EAN/CNPJ) já existe.";
+
+        ErrorResponse errorResponse = new ErrorResponse(
+                mensagem,
+                HttpStatus.CONFLICT.value(),
+                LocalDateTime.now(),
+                null
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse);
+    }
+
+    /**
+     * 5. Fallback para erros gerais não tratados (500)
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGeneralException(Exception ex) {
+        ex.printStackTrace(); // Loga no console do servidor para debug
+        ErrorResponse errorResponse = new ErrorResponse(
+                "Ocorreu um erro interno no servidor. Contate o suporte.",
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                LocalDateTime.now(),
+                null // Não enviar stacktrace para o cliente por segurança
+        );
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+    }
+
+    // DTO Interno para padronização da resposta JSON
+    public record ErrorResponse(
+            String mensagem,
             int status,
             LocalDateTime timestamp,
-            Map<String, String> errors
+            Map<String, String> detalhes // Usado apenas para validação de campos
     ) {}
-
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<Object> handleConstraintViolation(DataIntegrityViolationException ex) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("message", "Erro de integridade: Verifique se o CNPJ ou Código de Barras já existe.");
-        body.put("status", HttpStatus.CONFLICT.value());
-        return new ResponseEntity<>(body, HttpStatus.CONFLICT);
-    }
 }

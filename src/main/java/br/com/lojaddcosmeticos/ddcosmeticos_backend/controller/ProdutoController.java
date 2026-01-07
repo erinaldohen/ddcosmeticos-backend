@@ -1,20 +1,13 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.persistence.EntityManager;
 import jakarta.validation.Valid;
-import org.hibernate.envers.AuditReader;
-import org.hibernate.envers.AuditReaderFactory;
-import org.hibernate.envers.RevisionType;
-import org.hibernate.envers.query.AuditEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -30,8 +23,6 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 @RestController
@@ -40,32 +31,28 @@ import java.util.List;
 public class ProdutoController {
 
     @Autowired private ProdutoService produtoService;
-    @Autowired private ProdutoRepository repository;
     @Autowired private CosmosService cosmosService;
     @Autowired private PrecificacaoService precificacaoService;
     @Autowired private EstoqueService estoqueService;
     @Autowired private ArquivoService arquivoService;
     @Autowired private AuditoriaService auditoriaService;
-    @Autowired private EntityManager entityManager;
 
-    // ==================================================================================
-    // 1. LEITURA (GET)
-    // ==================================================================================
+    // --- 1. LEITURA ---
 
     @GetMapping
-    @Operation(summary = "Listar produtos (Paginado)", description = "Busca por termo/descrição ou lista tudo.")
-    public ResponseEntity<Page<Produto>> listar(
+    @Operation(summary = "Listar produtos (Resumo)", description = "Retorna dados seguros para listagem (sem custo).")
+    public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String descricao,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "descricao") String sort) {
 
-        // Prioriza o 'termo', se não vier, tenta 'descricao'
         String termoBusca = (termo != null && !termo.isBlank()) ? termo : descricao;
-
         Pageable pageable = PageRequest.of(page, size, Sort.by(sort));
-        return ResponseEntity.ok(produtoService.listarComFiltros(termoBusca, pageable));
+
+        // Retorna o DTO de Listagem (Protegido)
+        return ResponseEntity.ok(produtoService.listarResumo(termoBusca, pageable));
     }
 
     @GetMapping("/{id}")
@@ -75,18 +62,15 @@ public class ProdutoController {
     }
 
     @GetMapping("/analisar/{codigoBarras}")
-    @Operation(summary = "Análise de Precificação")
     public ResponseEntity<AnalisePrecificacaoDTO> analisarIndividual(@PathVariable String codigoBarras) {
         try {
-            AnalisePrecificacaoDTO analise = precificacaoService.calcularSugestao(codigoBarras);
-            return ResponseEntity.ok(analise);
+            return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
     }
 
     @GetMapping("/consulta-externa/{ean}")
-    @Operation(summary = "Consulta API Cosmos")
     public ResponseEntity<?> consultarExterno(@PathVariable String ean) {
         return cosmosService.consultarEan(ean)
                 .map(ResponseEntity::ok)
@@ -94,63 +78,41 @@ public class ProdutoController {
     }
 
     @GetMapping("/alerta-reposicao")
-    @Operation(summary = "Alerta de Estoque Baixo")
     public ResponseEntity<List<Produto>> listarBaixoEstoque() {
-        var todos = repository.findAll();
-        var criticos = todos.stream()
-                .filter(p -> p.getQuantidadeEmEstoque() <= (p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0))
-                .toList();
-        return ResponseEntity.ok(criticos);
+        return ResponseEntity.ok(produtoService.listarBaixoEstoque());
     }
 
-    // ==================================================================================
-    // 2. ESCRITA (POST / PUT / DELETE)
-    // ==================================================================================
+    // --- 2. ESCRITA ---
 
     @PostMapping
     @Operation(summary = "Cadastrar Novo Produto")
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
-            // Conversão DTO -> Entidade
-            Produto p = new Produto();
-            p.setDescricao(dados.descricao());
-            p.setCodigoBarras(dados.codigoBarras());
-            p.setPrecoVenda(dados.precoVenda());
-            p.setPrecoCusto(dados.precoCusto());
-            p.setEstoqueMinimo(dados.estoqueMinimo());
-            p.setNcm(dados.ncm());
-            p.setQuantidadeEmEstoque(0);
-            p.setAtivo(true);
+            // Delega a criação para o serviço
+            ProdutoDTO salvo = produtoService.salvar(dados);
 
-            Produto salvo = produtoService.salvar(p);
-
-            URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(salvo.getId()).toUri();
+            URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
+                    .buildAndExpand(salvo.id()).toUri();
             return ResponseEntity.created(uri).body(salvo);
-
-        } catch (IllegalArgumentException e) {
+        } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Atualizar Produto")
     public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody @Valid ProdutoDTO dados) {
         return ResponseEntity.ok(produtoService.atualizar(id, dados));
     }
 
     @DeleteMapping("/{ean}")
-    @Operation(summary = "Inativar Produto")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();
     }
 
-    // ==================================================================================
-    // 3. ESTOQUE E OPERAÇÕES
-    // ==================================================================================
+    // --- 3. ESTOQUE E PREÇO ---
 
     @PostMapping("/estoque")
-    @Operation(summary = "Entrada Manual de Estoque")
     public ResponseEntity<?> adicionarEstoque(
             @RequestParam String ean,
             @RequestParam Integer qtd,
@@ -175,7 +137,7 @@ public class ProdutoController {
             estoqueService.registrarEntrada(request);
             return ResponseEntity.ok().build();
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Erro ao dar entrada: " + e.getMessage());
+            return ResponseEntity.badRequest().body("Erro: " + e.getMessage());
         }
     }
 
@@ -190,18 +152,13 @@ public class ProdutoController {
 
     @PatchMapping("/{id}/definir-preco")
     public ResponseEntity<Void> definirPreco(@PathVariable Long id, @RequestParam BigDecimal novoPreco) {
-        var produto = repository.findById(id).orElseThrow(() -> new RuntimeException("Produto não encontrado"));
-        produto.setPrecoVenda(novoPreco);
-        repository.save(produto);
+        produtoService.definirPrecoVenda(id, novoPreco);
         return ResponseEntity.ok().build();
     }
 
-    // ==================================================================================
-    // 4. IMAGENS E ARQUIVOS
-    // ==================================================================================
+    // --- 4. ARQUIVOS E IMAGENS ---
 
     @PostMapping(value = "/{id}/imagem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Upload de Foto")
     public ResponseEntity<Void> uploadImagem(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
         String nomeArquivo = arquivoService.salvarImagem(file);
         String urlAcesso = "/imagens/" + nomeArquivo;
@@ -209,54 +166,19 @@ public class ProdutoController {
         return ResponseEntity.ok().build();
     }
 
-    // ==================================================================================
-    // 5. AUDITORIA E LIXEIRA
-    // ==================================================================================
+    // --- 5. AUDITORIA ---
 
     @GetMapping("/{id}/historico")
-    @Operation(summary = "Histórico de Alterações")
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
-        AuditReader reader = AuditReaderFactory.get(entityManager);
-        List<Object[]> results = reader.createQuery()
-                .forRevisionsOfEntity(Produto.class, false, true)
-                .add(AuditEntity.id().eq(id))
-                .getResultList();
-
-        List<HistoricoProdutoDTO> historico = new ArrayList<>();
-
-        for (Object[] row : results) {
-            Produto pAntigo = (Produto) row[0];
-            CustomRevisionEntity info = (CustomRevisionEntity) row[1];
-            RevisionType type = (RevisionType) row[2];
-
-            String tipoString = switch (type) {
-                case ADD -> "CRIADO";
-                case MOD -> "ALTERADO";
-                case DEL -> "EXCLUÍDO";
-            };
-
-            historico.add(new HistoricoProdutoDTO(
-                    info.getId(),
-                    new Date(info.getTimestamp()),
-                    tipoString,
-                    pAntigo.getDescricao(),
-                    pAntigo.getPrecoVenda(),
-                    pAntigo.getPrecoCusto(),
-                    pAntigo.getQuantidadeEmEstoque()
-            ));
-        }
-        historico.sort((a, b) -> b.getDataAlteracao().compareTo(a.getDataAlteracao()));
-        return ResponseEntity.ok(historico);
+        return ResponseEntity.ok(produtoService.buscarHistorico(id));
     }
 
     @GetMapping("/lixeira")
-    @Operation(summary = "Ver Lixeira")
     public ResponseEntity<List<Produto>> getLixeira() {
         return ResponseEntity.ok(auditoriaService.buscarLixeira());
     }
 
     @PutMapping("/{id}/restaurar")
-    @Operation(summary = "Restaurar da Lixeira")
     public ResponseEntity<Void> restaurar(@PathVariable Long id) {
         auditoriaService.restaurarProduto(id);
         return ResponseEntity.ok().build();

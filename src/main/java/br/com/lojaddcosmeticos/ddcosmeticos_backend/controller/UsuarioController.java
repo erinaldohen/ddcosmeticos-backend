@@ -26,7 +26,13 @@ public class UsuarioController {
     @Operation(summary = "Listar todos os usuários")
     public ResponseEntity<List<UsuarioResponseDTO>> listar() {
         var lista = repository.findAll().stream()
-                .map(u -> new UsuarioResponseDTO(u.getId(), u.getEmail(), u.getNome(), u.getPerfilDoUsuario(), u.isEnabled()))
+                .map(u -> new UsuarioResponseDTO(
+                        u.getId(),
+                        u.getEmail(), // Login geralmente é o email
+                        u.getNome(),
+                        u.getPerfilDoUsuario(),
+                        u.isEnabled()
+                ))
                 .toList();
         return ResponseEntity.ok(lista);
     }
@@ -54,11 +60,11 @@ public class UsuarioController {
     @Operation(summary = "Inativar/Ativar Usuário")
     public ResponseEntity<Void> alternarStatus(@PathVariable Long id) {
         Usuario usuario = repository.findById(id).orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
-        // Se tiver método setEnabled ou setAtivo no seu model
-        // usuario.setAtivo(!usuario.isAtivo());
-        // repository.save(usuario);
-        // Se não tiver, implemente soft delete ou use delete físico:
+
+        // Exclusão física (Se preferir soft delete, descomente a linha abaixo e comente o delete)
+        // usuario.setAtivo(!usuario.isAtivo()); repository.save(usuario);
         repository.delete(usuario);
+
         return ResponseEntity.ok().build();
     }
 }

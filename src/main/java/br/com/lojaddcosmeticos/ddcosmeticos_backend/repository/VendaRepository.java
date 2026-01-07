@@ -20,9 +20,7 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    // ==========================================
-    // OPERAÇÃO PDV E IMPRESSÃO
-    // ==========================================
+    // --- OPERAÇÃO ---
 
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
@@ -31,9 +29,11 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
-    // ==========================================
-    // RELATÓRIOS (Sincronizados com Frontend)
-    // ==========================================
+    // [NOVO] Otimização para relatórios detalhados (Evita N+1 queries)
+    @Query("SELECT DISTINCT v FROM Venda v JOIN FETCH v.itens i JOIN FETCH i.produto WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    List<Venda> buscarVendasComItensParaRelatorio(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    // --- DASHBOARD / BI ---
 
     @Query("SELECT COALESCE(SUM(v.totalVenda - v.descontoTotal), 0) FROM Venda v " +
             "WHERE v.dataVenda BETWEEN :inicio AND :fim " +
@@ -54,7 +54,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // Método que estava faltando para o gráfico de Pizza
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
             v.formaPagamento, 

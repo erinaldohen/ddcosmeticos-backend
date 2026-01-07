@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -28,7 +29,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     // --- 2. CATÁLOGO VISUAL ---
 
-    // Busca Inteligente (Nome, Marca, Categoria ou EAN)
     @Query("SELECT p FROM Produto p WHERE " +
             "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
@@ -36,30 +36,36 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "(p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
-    // Busca Otimizada (Top 50 ativos recentes)
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
 
-    // --- 3. DASHBOARD E RELATÓRIOS ---
+    // --- 3. DASHBOARD E RELATÓRIOS (Consultas Rápidas) ---
 
-    // ✅ MÉTODO RESTAURADO: Contagem para o Dashboard
+    // Alertas de Estoque
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
-    // Lista produtos com estoque baixo (para alertas)
     @Query("SELECT p FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     List<Produto> findProdutosComBaixoEstoque();
 
+    // [NOVO] Conta Esgotados direto no banco
+    long countByQuantidadeEmEstoqueLessThanEqualAndAtivoTrue(Integer qtd);
+
+    // [NOVO] Soma Valor de Estoque (Custo) via SQL (Muito rápido)
+    @Query("SELECT COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
+    BigDecimal calcularValorTotalEstoque();
+
+    // [NOVO] Conta produtos com cadastro fiscal incompleto
+    @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
+    long contarProdutosSemFiscal();
+
     // --- 4. MANUTENÇÃO E SISTEMA ---
 
-    // Busca ignorando soft delete (para validação de cadastro duplicado)
     @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
-    // Lixeira (Apenas inativos)
     @Query(value = "SELECT * FROM produto WHERE ativo = false", nativeQuery = true)
     List<Produto> findAllLixeira();
 
-    // Restaurar produto
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);

@@ -15,7 +15,11 @@ import java.math.BigDecimal;
 @Entity
 @NoArgsConstructor
 @Audited
-@Table(name = "produto")
+@Table(name = "produto", indexes = {
+        // Isso aqui cria os comandos CREATE INDEX automaticamente
+        @Index(name = "idx_produto_descricao", columnList = "descricao"),
+        @Index(name = "idx_produto_ean", columnList = "codigo_barras")
+})
 // Restaura o Soft Delete (Exclusão lógica)
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true")

@@ -33,7 +33,7 @@ public class SecurityConfig {
     private UserDetailsService userDetailsService;
 
     @Autowired
-    private SecurityFilter securityFilter; // <--- Injetamos o filtro aqui
+    private SecurityFilter securityFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -42,41 +42,27 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // ====================================================
-                        // 1. REGRAS PRIORITÁRIAS (Coloque o que falhou aqui em cima)
-                        // ====================================================
-
-                        // Força a liberação da rota de histórico com ID variável (*)
-                        .requestMatchers("/api/v1/produtos/*/historico").permitAll()
-
-                        // Libera todas as outras rotas de produtos (Lixeira, Restaurar, etc)
-                        .requestMatchers("/api/v1/produtos/**").permitAll()
-                        .requestMatchers("/produtos/**").permitAll()
-
-                        // ====================================================
-                        // 2. OUTRAS ROTAS PÚBLICAS
-                        // ====================================================
-                        .requestMatchers("/api/fiscal/**").permitAll()
-                        .requestMatchers("/api/estoque/**").permitAll()
-                        .requestMatchers("/api/precificacao/**").permitAll()
-                        .requestMatchers("/api/catalogo/**").permitAll()
-                        .requestMatchers("/api/auditoria/**").permitAll()
-                        .requestMatchers("/api/operacoes/**").permitAll()
-                                // Dentro do seu SecurityConfig.java
-                                .requestMatchers(HttpMethod.GET, "/api/v1/relatorios/**").hasAnyRole("ADMIN", "USUARIO")
-// OU se quiser deixar aberto para teste rápido:
-                                .requestMatchers("/api/v1/relatorios/**").permitAll()
-
-                        .requestMatchers("/dashboard/**", "/api/v1/dashboard/**").permitAll()
-                        .requestMatchers("/auth/**", "/api/v1/auth/**").permitAll()
+                        // 1. REGRAS PÚBLICAS (Login, Catálogo, Swagger, etc)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/catalogo/**").permitAll()
 
                         .requestMatchers("/h2-console/**").permitAll()
                         .requestMatchers("/imagens/**").permitAll()
 
-                        // ====================================================
-                        // 3. BLOQUEIO GERAL
-                        // ====================================================
-                        .anyRequest().authenticated()
+                        // Swagger UI
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+
+                        // 2. REGRAS DO PDV E VENDAS
+                        .requestMatchers("/api/v1/vendas/**").authenticated() // Em produção, mude para authenticated()
+
+                        // 3. REGRAS ESPECÍFICAS
+                        .requestMatchers("/api/v1/usuarios/**").hasRole("ADMIN") // Só admin mexe em usuários
+                        .requestMatchers("/api/v1/relatorios/**").hasAnyRole("ADMIN", "USUARIO") // Permite acesso aos relatórios
+
+                        // 4. RESTO
+                        // .anyRequest().authenticated()
+                        .anyRequest().permitAll() // ⚠️ MODO DESENVOLVIMENTO: Tudo liberado para facilitar testes
                 )
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
@@ -84,15 +70,14 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // Adicione este Bean para configurar as origens permitidas
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Use "*" apenas em desenvolvimento. Em prod, coloque a URL exata.
+        // Permite o Frontend React (3000 e 5173) e qualquer outro (*) em dev
         configuration.setAllowedOrigins(Arrays.asList("http://localhost:3000", "http://localhost:5173", "*"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(false); // Se usar "*" em origins, credentials DEVE ser false
+        configuration.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

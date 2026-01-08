@@ -4,7 +4,5 @@ import java.math.BigDecimal;
 
 public record ItemVendaRequestDTO(
         String codigoBarras,
-        BigDecimal quantidade,
-        BigDecimal precoUnitario,
-        BigDecimal descontoItem
+        BigDecimal quantidade
 ) {}

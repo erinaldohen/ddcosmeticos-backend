@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -16,8 +17,7 @@ public record VendaRequestDTO(
         String clienteNome,
 
         // ALTERAÇÃO CRÍTICA: Mudou de "FormaDePagamento formaPagamento" para Lista
-        @NotEmpty(message = "Informe pelo menos uma forma de pagamento")
-        List<PagamentoRequestDTO> pagamentos,
+        FormaDePagamento formaDePagamento,
 
         Integer quantidadeParcelas,
 

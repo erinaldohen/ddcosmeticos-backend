@@ -1,7 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
@@ -21,13 +28,13 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class VendaService {
-
-    private static final String NOME_CLIENTE_PADRAO = "Consumidor Final";
 
     @Autowired private VendaRepository vendaRepository;
     @Autowired private ProdutoRepository produtoRepository;
@@ -40,36 +47,26 @@ public class VendaService {
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
 
-    // ==================================================================================
-    // SESSÃO 1: TRANSAÇÕES DE VENDA (ESCRITA)
-    // ==================================================================================
-
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
-        if (usuarioLogado == null) {
-            throw new ValidationException("Erro de Segurança: Usuário não identificado. Faça login novamente.");
-        }
+        if (usuarioLogado == null) throw new ValidationException("Erro crítico: Nenhum utilizador identificado.");
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
+
         venda.setClienteCpf(dto.clienteDocumento());
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
 
-        if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
-            venda.setFormaPagamento(dto.pagamentos().get(0).formaPagamento());
-        } else {
-            throw new ValidationException("Informe pelo menos uma forma de pagamento.");
-        }
+        // CORREÇÃO 1: dto.formaDePagamento() (não pagamentos)
+        venda.setFormaPagamento(dto.formaDePagamento());
 
         if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
             String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
             clienteRepository.findByDocumento(docLimpo).ifPresent(c -> {
                 venda.setCliente(c);
-                if (venda.getClienteNome() == null || venda.getClienteNome().equalsIgnoreCase(NOME_CLIENTE_PADRAO)) {
-                    venda.setClienteNome(c.getNome());
-                }
+                if (venda.getClienteNome() == null) venda.setClienteNome(c.getNome());
             });
         }
 
@@ -85,26 +82,21 @@ public class VendaService {
         BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
-        if (!isOrcamento) {
-            boolean temCrediario = dto.pagamentos().stream()
-                    .anyMatch(p -> p.formaPagamento() == FormaDePagamento.CREDIARIO);
-            if (temCrediario) {
-                String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
-                validarCreditoDoCliente(doc, valorFinal);
-            }
+        // CORREÇÃO 2: dto.formaDePagamento()
+        if (!isOrcamento && dto.formaDePagamento() == FormaDePagamento.CREDIARIO) {
+            String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
+            validarCreditoDoCliente(doc, valorFinal);
         }
 
         Venda vendaSalva = vendaRepository.save(venda);
-
         if (!isOrcamento) {
             executarFluxosOperacionais(vendaSalva, dto);
             try {
                 nfceService.emitirNfce(vendaSalva, Boolean.TRUE.equals(dto.apenasItensComNfEntrada()));
             } catch (Exception e) {
-                log.error("NFC-e pendente para venda {}", vendaSalva.getId(), e);
+                log.error("Erro ao emitir NFCe na venda {}: {}", vendaSalva.getId(), e.getMessage());
             }
         }
-
         return vendaRepository.save(vendaSalva);
     }
 
@@ -116,14 +108,35 @@ public class VendaService {
         venda.setClienteCpf(dto.clienteDocumento());
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa - " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
-        venda.setFormaPagamento(FormaDePagamento.DINHEIRO);
+
+        // CORREÇÃO 3: dto.formaDePagamento()
+        venda.setFormaPagamento(dto.formaDePagamento() != null ? dto.formaDePagamento() : FormaDePagamento.DINHEIRO);
         venda.setStatusFiscal(StatusFiscal.EM_ESPERA);
+
+        if (dto.clienteDocumento() != null) {
+            clienteRepository.findByDocumento(dto.clienteDocumento().replaceAll("\\D", "")).ifPresent(venda::setCliente);
+        }
 
         BigDecimal totalItens = processarItensDaVenda(venda, dto);
         venda.setTotalVenda(totalItens);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
-
         return vendaRepository.save(venda);
+    }
+
+    @Transactional(readOnly = true)
+    public List<VendaResponseDTO> listarVendasSuspensas() {
+        return vendaRepository.findByStatusFiscalOrderByDataVendaDesc(StatusFiscal.EM_ESPERA).stream()
+                .map(v -> VendaResponseDTO.builder()
+                        .idVenda(v.getId())
+                        .dataVenda(v.getDataVenda())
+                        .clienteNome(v.getClienteNome())
+                        .clienteDocumento(v.getClienteCpf())
+                        .valorTotal(v.getTotalVenda().subtract(v.getDescontoTotal()))
+                        .totalItens(v.getItens().size())
+                        .statusFiscal(v.getStatusFiscal())
+                        .alertas(new ArrayList<>())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     @Transactional
@@ -135,15 +148,23 @@ public class VendaService {
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusFiscal(StatusFiscal.PENDENTE);
 
+        if (venda.getFormaPagamento() == FormaDePagamento.CREDIARIO) {
+            BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
+            String doc = venda.getClienteCpf() != null ? venda.getClienteCpf().replaceAll("\\D", "") : null;
+            validarCreditoDoCliente(doc, valorFinal);
+        }
+
+        // Baixa de estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
-            ajuste.setObservacao("Efetivação Venda #" + venda.getId());
+            // Removido setTipoMovimento pois não existe no DTO AjusteEstoqueDTO
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
+        // Lançamento financeiro
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
@@ -153,115 +174,118 @@ public class VendaService {
                 clienteId
         );
 
-        nfceService.emitirNfce(venda, false);
+        try {
+            nfceService.emitirNfce(venda, false);
+        } catch (Exception e) {
+            log.error("Erro ao emitir NFCe na efetivação {}: {}", venda.getId(), e.getMessage());
+        }
         return vendaRepository.save(venda);
-    }
-
-    // ==================================================================================
-    // SESSÃO 2: CONSULTAS (LEITURA)
-    // ==================================================================================
-
-    @Transactional(readOnly = true)
-    public Venda buscarVendaComItens(Long id) {
-        return vendaRepository.findByIdComItens(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + id));
-    }
-
-    @Transactional(readOnly = true)
-    public List<Venda> listarVendasSuspensas() {
-        // CORREÇÃO: Usando o nome exato definido no Repository
-        return vendaRepository.findByStatusFiscalOrderByDataVendaDesc(StatusFiscal.EM_ESPERA);
     }
 
     @Transactional(readOnly = true)
     public Page<VendaResponseDTO> listarVendas(LocalDate inicio, LocalDate fim, Pageable pageable) {
-        LocalDateTime dIni = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
-        LocalDateTime dFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
-
-        return vendaRepository.findByDataVendaBetween(dIni, dFim, pageable)
+        LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
+        LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
+        return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable)
                 .map(v -> VendaResponseDTO.builder()
                         .idVenda(v.getId())
                         .dataVenda(v.getDataVenda())
                         .clienteNome(v.getClienteNome())
+                        .clienteDocumento(v.getClienteCpf())
                         .valorTotal(v.getTotalVenda())
+                        .desconto(v.getDescontoTotal())
+                        .totalItens(v.getItens().size())
                         .statusFiscal(v.getStatusFiscal())
+                        .alertas(new ArrayList<>())
                         .build());
     }
 
-    // ==================================================================================
-    // SESSÃO 3: CANCELAMENTO
-    // ==================================================================================
+    @Transactional(readOnly = true)
+    public Venda buscarVendaComItens(Long id) {
+        return vendaRepository.findByIdComItens(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+    }
 
     @Transactional
     public void cancelarVenda(Long idVenda, String motivo) {
         Venda venda = buscarVendaComItens(idVenda);
-        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) {
-            throw new ValidationException("Venda já cancelada.");
+        if (venda.getStatusFiscal() == StatusFiscal.CANCELADA) throw new ValidationException("Venda já cancelada.");
+
+        if (venda.getStatusFiscal() == StatusFiscal.ORCAMENTO || venda.getStatusFiscal() == StatusFiscal.EM_ESPERA) {
+            venda.setStatusFiscal(StatusFiscal.CANCELADA);
+            venda.setMotivoDoCancelamento(motivo);
+            vendaRepository.save(venda);
+            return;
         }
 
-        if (venda.getStatusFiscal() != StatusFiscal.ORCAMENTO && venda.getStatusFiscal() != StatusFiscal.EM_ESPERA) {
-            venda.getItens().forEach(item -> {
-                AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
-                ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-                ajuste.setQuantidade(item.getQuantidade());
-                ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
-                ajuste.setObservacao("Estorno Venda #" + idVenda);
-                estoqueService.realizarAjusteInventario(ajuste);
-            });
-        }
+        venda.getItens().forEach(item -> {
+            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
+            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
+            ajuste.setQuantidade(item.getQuantidade());
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
+            // Removido setTipoMovimento pois não existe no DTO
+            estoqueService.realizarAjusteInventario(ajuste);
+        });
 
+        financeiroService.cancelarReceitaDeVenda(idVenda);
         venda.setStatusFiscal(StatusFiscal.CANCELADA);
         venda.setMotivoDoCancelamento(motivo);
         vendaRepository.save(venda);
     }
 
-    // ==================================================================================
-    // SESSÃO 4: PROCESSAMENTO INTERNO E AUXILIARES
-    // ==================================================================================
-
     private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
+        for (ItemVendaDTO itemDto : dto.itens()) {
+            Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
+                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
 
-        Set<Long> ids = new HashSet<>();
-        Set<String> codigos = new HashSet<>();
+            ItemVenda item = new ItemVenda();
+            item.setProduto(produto);
+            item.setQuantidade(itemDto.getQuantidade());
+            item.setPrecoUnitario(produto.getPrecoVenda());
+            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
-        if (dto.itens() != null) {
-            for (ItemVendaDTO i : dto.itens()) {
-                if (i.getProdutoId() != null) ids.add(i.getProdutoId());
-                else if (i.getCodigoBarras() != null) codigos.add(i.getCodigoBarras());
-            }
-        }
-
-        List<Produto> produtosById = ids.isEmpty() ? Collections.emptyList() : produtoRepository.findAllById(ids);
-        List<Produto> produtosByCod = codigos.isEmpty() ? Collections.emptyList() : produtoRepository.findByCodigoBarrasIn(new ArrayList<>(codigos));
-
-        Map<String, Produto> mapProdutos = new HashMap<>();
-        produtosById.forEach(p -> mapProdutos.put(p.getId().toString(), p));
-        produtosByCod.forEach(p -> mapProdutos.put(p.getCodigoBarras(), p));
-
-        if (dto.itens() != null) {
-            for (ItemVendaDTO itemDto : dto.itens()) {
-                Produto produto = (itemDto.getProdutoId() != null)
-                        ? mapProdutos.get(itemDto.getProdutoId().toString())
-                        : mapProdutos.get(itemDto.getCodigoBarras());
-
-                if (produto == null) {
-                    throw new ResourceNotFoundException("Produto não encontrado ou indisponível: "
-                            + (itemDto.getProdutoId() != null ? itemDto.getProdutoId() : itemDto.getCodigoBarras()));
-                }
-
-                BigDecimal qtd = itemDto.getQuantidade();
-                ItemVenda item = new ItemVenda();
-                item.setProduto(produto);
-                item.setQuantidade(qtd);
-                item.setPrecoUnitario(itemDto.getPrecoUnitario() != null ? itemDto.getPrecoUnitario() : produto.getPrecoVenda());
-                item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
-
-                venda.adicionarItem(item);
-                totalAcumulado = totalAcumulado.add(item.getPrecoUnitario().multiply(qtd));
-            }
+            venda.adicionarItem(item);
+            totalAcumulado = totalAcumulado.add(item.getPrecoUnitario().multiply(item.getQuantidade()));
         }
         return totalAcumulado;
+    }
+
+    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
+        if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
+        if (totalVenda.compareTo(BigDecimal.ZERO) == 0) return;
+
+        ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElseGet(() -> {
+            ConfiguracaoLoja nova = new ConfiguracaoLoja();
+            nova.setPercentualMaximoDescontoCaixa(new BigDecimal("5.00"));
+            nova.setPercentualMaximoDescontoGerente(new BigDecimal("100.00"));
+            return nova;
+        });
+
+        BigDecimal percentualAplicado = descontoAplicado.divide(totalVenda, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+
+        BigDecimal limitePermitido = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN || usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_USUARIO)
+                ? config.getPercentualMaximoDescontoGerente()
+                : config.getPercentualMaximoDescontoCaixa();
+
+        if (percentualAplicado.compareTo(limitePermitido) > 0) {
+            throw new ValidationException(String.format("Desconto não autorizado. Aplicado: %.2f%% | Limite: %.2f%%", percentualAplicado, limitePermitido));
+        }
+    }
+
+    private void validarCreditoDoCliente(String documento, BigDecimal valorDaCompra) {
+        if (documento == null || documento.isBlank()) throw new ValidationException("Documento obrigatório para Crediário.");
+        Cliente cliente = clienteRepository.findByDocumento(documento).orElseThrow(() -> new ValidationException("Cliente não cadastrado."));
+        if (!cliente.isAtivo()) throw new ValidationException("Cliente bloqueado.");
+
+        if (contaReceberRepository.existeContaVencida(documento, LocalDate.now())) throw new ValidationException("Cliente com contas vencidas.");
+
+        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorDocumento(documento);
+        if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
+
+        if (dividaAtual.add(valorDaCompra).compareTo(cliente.getLimiteCredito()) > 0) {
+            throw new ValidationException("Limite de Crédito Excedido.");
+        }
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
@@ -270,58 +294,18 @@ public class VendaService {
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
-            ajuste.setObservacao("Venda #" + venda.getId());
+            // Removido setTipoMovimento pois não existe no DTO
             estoqueService.realizarAjusteInventario(ajuste);
         });
 
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
-        if (dto.pagamentos() != null) {
-            for (PagamentoRequestDTO pag : dto.pagamentos()) {
-                int parcelas = 1;
-                boolean parcelavel = (pag.formaPagamento() == FormaDePagamento.CREDITO || pag.formaPagamento() == FormaDePagamento.CREDIARIO);
-
-                if (parcelavel) {
-                    parcelas = dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1;
-                }
-                financeiroService.lancarReceitaDeVenda(venda.getId(), pag.valor(), pag.formaPagamento().name(), parcelas, clienteId);
-            }
-        }
-    }
-
-    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal total, BigDecimal desconto) {
-        if (desconto == null || desconto.compareTo(BigDecimal.ZERO) <= 0) return;
-        ConfiguracaoLoja config = configuracaoLojaRepository.findAll().stream().findFirst().orElse(new ConfiguracaoLoja());
-
-        BigDecimal maxCaixa = config.getPercentualMaximoDescontoCaixa() != null ? config.getPercentualMaximoDescontoCaixa() : BigDecimal.TEN;
-        BigDecimal maxGerente = config.getPercentualMaximoDescontoGerente() != null ? config.getPercentualMaximoDescontoGerente() : new BigDecimal("100");
-
-        BigDecimal perc = BigDecimal.ZERO;
-        if (total.compareTo(BigDecimal.ZERO) > 0) {
-            perc = desconto.divide(total, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
-        }
-
-        BigDecimal limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ADMIN || usuario.getPerfilDoUsuario() == PerfilDoUsuario.ADMIN)
-                ? maxGerente : maxCaixa;
-
-        if (perc.compareTo(limite) > 0) {
-            throw new ValidationException("Desconto não autorizado. Seu limite é: " + limite + "%");
-        }
-    }
-
-    private void validarCreditoDoCliente(String doc, BigDecimal valorVenda) {
-        if (doc == null || doc.isBlank()) throw new ValidationException("Documento obrigatório para venda no Crediário.");
-        Cliente c = clienteRepository.findByDocumento(doc)
-                .orElseThrow(() -> new ValidationException("Cliente não cadastrado para crediário."));
-        if (!c.isAtivo()) throw new ValidationException("Cliente bloqueado.");
-
-        BigDecimal dividaAtual = contaReceberRepository.somarDividaTotalPorDocumento(doc);
-        if (dividaAtual == null) dividaAtual = BigDecimal.ZERO;
-
-        BigDecimal limite = c.getLimiteCredito() != null ? c.getLimiteCredito() : BigDecimal.ZERO;
-
-        if (dividaAtual.add(valorVenda).compareTo(limite) > 0) {
-            throw new ValidationException("Limite de crédito excedido. Disponível: R$ " + limite.subtract(dividaAtual));
-        }
+        financeiroService.lancarReceitaDeVenda(
+                venda.getId(),
+                venda.getTotalVenda().subtract(venda.getDescontoTotal()),
+                dto.formaDePagamento().name(),
+                dto.quantidadeParcelas(),
+                clienteId
+        );
     }
 
     private Usuario capturarUsuarioLogado() {
@@ -329,12 +313,10 @@ public class VendaService {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth == null) return null;
             if (auth.getPrincipal() instanceof Usuario) return (Usuario) auth.getPrincipal();
-            String idOrEmail = (auth.getPrincipal() instanceof UserDetails)
-                    ? ((UserDetails) auth.getPrincipal()).getUsername()
-                    : auth.getPrincipal().toString();
-            return usuarioRepository.findByMatriculaOrEmail(idOrEmail, idOrEmail).orElse(null);
+            if (auth.getPrincipal() instanceof UserDetails) return usuarioRepository.findByMatricula(((UserDetails) auth.getPrincipal()).getUsername()).orElse(null);
+            if (auth.getPrincipal() instanceof String) return usuarioRepository.findByMatricula((String) auth.getPrincipal()).orElse(null);
         } catch (Exception e) {
-            log.warn("Não foi possível identificar o usuário logado: {}", e.getMessage());
+            log.warn("Erro ao identificar utilizador", e);
         }
         return null;
     }

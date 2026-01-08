@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
 public enum PerfilDoUsuario {
-    USUARIO,
-    ADMIN;
+    ROLE_USUARIO,
+    ROLE_ADMIN;
 }

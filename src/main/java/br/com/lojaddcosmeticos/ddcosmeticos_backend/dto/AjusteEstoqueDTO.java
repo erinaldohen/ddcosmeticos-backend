@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque; // Import Necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -20,7 +20,6 @@ public class AjusteEstoqueDTO implements Serializable {
     @Positive(message = "A quantidade deve ser maior que zero")
     private BigDecimal quantidade;
 
-    // --- CORREÇÃO: Alterado de String para Enum ---
     @NotNull(message = "O motivo do ajuste é obrigatório")
     private MotivoMovimentacaoDeEstoque motivo;
 

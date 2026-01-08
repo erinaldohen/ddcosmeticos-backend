@@ -13,12 +13,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -35,14 +35,14 @@ public class VendaController {
     // ==================================================================================
 
     @PostMapping("/suspender")
-    @Operation(summary = "Suspender Venda (Fila de Espera)", description = "Salva os itens para atender outro cliente. Não movimenta financeiro nem estoque.")
+    @Operation(summary = "Suspender Venda (Fila de Espera)")
     public ResponseEntity<VendaCompletaResponseDTO> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
         Venda venda = vendaService.suspenderVenda(dto);
         return ResponseEntity.ok(converterParaDTO(venda));
     }
 
     @PostMapping("/{id}/efetivar")
-    @Operation(summary = "Efetivar Venda Suspensa/Orçamento", description = "Retoma uma venda suspensa ou orçamento e finaliza (baixa estoque/gera financeiro).")
+    @Operation(summary = "Efetivar Venda Suspensa/Orçamento")
     public ResponseEntity<VendaCompletaResponseDTO> efetivarVenda(@PathVariable Long id) {
         Venda venda = vendaService.efetivarVenda(id);
         return ResponseEntity.ok(converterParaDTO(venda));
@@ -53,18 +53,11 @@ public class VendaController {
     // ==================================================================================
 
     @GetMapping("/suspensas")
-    @Operation(summary = "Listar Vendas Suspensas", description = "Mostra a fila de espera (clientes aguardando).")
+    @Operation(summary = "Listar Vendas Suspensas")
     public ResponseEntity<List<VendaResponseDTO>> listarSuspensas() {
-        List<Venda> vendasSuspensas = vendaService.listarVendasSuspensas();
-
-        // --- CORREÇÃO AQUI ---
-        // Substituímos 'new VendaResponseDTO(venda)' pelo método estático 'fromEntity'
-        List<VendaResponseDTO> response = vendasSuspensas.stream()
-                .map(VendaResponseDTO::fromEntity)
-                .collect(Collectors.toList());
-        // ---------------------
-
-        return ResponseEntity.ok(response);
+        // CORREÇÃO: Usamos o método do service que já retorna a lista de DTOs pronta
+        // Isso evita duplicar a lógica de conversão aqui no controller
+        return ResponseEntity.ok(vendaService.listarVendasSuspensas());
     }
 
     @GetMapping
@@ -72,10 +65,6 @@ public class VendaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim,
             @PageableDefault(size = 20, sort = "dataVenda") Pageable pageable) {
-
-        // Dica: O seu Service também estava montando o DTO manualmente.
-        // O ideal é que ele também use o VendaResponseDTO::fromEntity,
-        // mas como o erro de compilação estava aqui no controller, foquei a correção aqui.
         return ResponseEntity.ok(vendaService.listarVendas(inicio, fim, pageable));
     }
 
@@ -100,10 +89,6 @@ public class VendaController {
     // SESSÃO 4: AUXILIARES
     // ==================================================================================
 
-    /**
-     * Este método converte para VendaCompletaResponseDTO (Detalhado).
-     * O erro anterior era no VendaResponseDTO (Resumido/Lista).
-     */
     private VendaCompletaResponseDTO converterParaDTO(Venda venda) {
         return new VendaCompletaResponseDTO(
                 venda.getId(),
@@ -120,10 +105,19 @@ public class VendaController {
     }
 
     @PostMapping
-    @Operation(summary = "Realizar Venda", description = "Finaliza uma venda baixando estoque e gerando financeiro.")
+    @Operation(summary = "Realizar Venda")
     public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
         Venda venda = vendaService.realizarVenda(dto);
-        // CORREÇÃO LINHA 125: Usando o método estático fromEntity em vez de 'new'
-        return ResponseEntity.ok(VendaResponseDTO.fromEntity(venda));
+        // Conversão manual usando Builder (padrão do projeto)
+        return ResponseEntity.ok(VendaResponseDTO.builder()
+                .idVenda(venda.getId())
+                .dataVenda(venda.getDataVenda())
+                .clienteNome(venda.getClienteNome())
+                .clienteDocumento(venda.getClienteCpf())
+                .valorTotal(venda.getTotalVenda().subtract(venda.getDescontoTotal()))
+                .totalItens(venda.getItens().size())
+                .statusFiscal(venda.getStatusFiscal())
+                .alertas(new ArrayList<>())
+                .build());
     }
 }

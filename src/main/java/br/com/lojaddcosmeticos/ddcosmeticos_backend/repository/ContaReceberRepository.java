@@ -14,53 +14,47 @@ import java.util.List;
 @Repository
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
-    // --- MÉTODOS BÁSICOS ---
+    // ==================================================================================
+    // SESSÃO 1: MÉTODOS BÁSICOS (Utilizados pelos Services)
+    // ==================================================================================
+
+    // Usado no FinanceiroService para cancelar receitas
     List<ContaReceber> findByIdVendaRef(Long idVendaRef);
+
     List<ContaReceber> findByStatus(StatusConta status);
 
-    // [NOVO] Método essencial para o Fechamento de Caixa Otimizado (FinanceiroService)
+    // Usado no Fechamento de Caixa (FinanceiroService)
     List<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
 
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (Lógica complexa de risco de cliente)
+    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (VendaService)
     // ==================================================================================
 
-    @Query("""
-        SELECT COALESCE(SUM(c.valorLiquido), 0)
-        FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
-        AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-    """)
+    @Query("SELECT COALESCE(SUM(c.valorLiquido), 0) FROM ContaReceber c " +
+            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
+            "AND c.status = 'PENDENTE'")
     BigDecimal somarDividaTotalPorDocumento(@Param("documento") String documento);
 
-    @Query("""
-        SELECT COUNT(c) > 0 
-        FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
-        AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-        AND c.dataVencimento < :hoje
-    """)
+    @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM ContaReceber c " +
+            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
+            "AND c.status = 'PENDENTE' " +
+            "AND c.dataVencimento < :hoje")
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
     // ==================================================================================
     // SESSÃO 3: RELATÓRIOS E OPERACIONAL
     // ==================================================================================
 
-    @Query("""
-        SELECT DISTINCT v.clienteDocumento 
-        FROM ContaReceber c 
-        JOIN Venda v ON c.idVendaRef = v.id 
-        WHERE c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-    """)
+    @Query("SELECT DISTINCT v.clienteDocumento " +
+            "FROM ContaReceber c " +
+            "JOIN Venda v ON c.idVendaRef = v.id " +
+            "WHERE c.status = 'PENDENTE'")
     List<String> buscarDocumentosComPendencia();
 
-    @Query("""
-        SELECT c 
-        FROM ContaReceber c 
-        WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento)
-        AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-        ORDER BY c.dataVencimento ASC
-    """)
+    @Query("SELECT c FROM ContaReceber c " +
+            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
+            "AND c.status = 'PENDENTE' " +
+            "ORDER BY c.dataVencimento ASC")
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
     // SESSÃO 4: DASHBOARD FINANCEIRO

@@ -16,6 +16,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -105,6 +106,7 @@ public class ProdutoController {
     }
 
     @DeleteMapping("/{ean}")
+    @PreAuthorize("hasRole('ROLE_ADMIN')") // <--- ADICIONE ISSO
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();

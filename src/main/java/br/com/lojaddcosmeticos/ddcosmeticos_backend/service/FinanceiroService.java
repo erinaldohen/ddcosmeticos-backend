@@ -34,8 +34,7 @@ public class FinanceiroService {
 
         Cliente cliente = null;
         if(clienteId != null) {
-            cliente = clienteRepository.findById(clienteId)
-                    .orElse(null); // Não lança erro se não achar, para não travar a venda
+            cliente = clienteRepository.findById(clienteId).orElse(null);
         }
 
         BigDecimal valorPorParcela = valorTotalVenda.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
@@ -46,7 +45,7 @@ public class FinanceiroService {
             conta.setIdVendaRef(venda.getId());
             conta.setCliente(cliente);
             conta.setValorTotal(valorPorParcela);
-            conta.setValorLiquido(valorPorParcela); // Valor líquido inicial igual ao total
+            conta.setValorLiquido(valorPorParcela);
             conta.setDataEmissao(LocalDate.now());
             conta.setDataVencimento(LocalDate.now().plusMonths(i-1));
             conta.setFormaPagamento(formaPagamento);
@@ -65,7 +64,6 @@ public class FinanceiroService {
                 conta.setValorPago(BigDecimal.ZERO);
             }
 
-            // Adiciona os centavos restantes na última parcela
             if (i == parcelas) {
                 conta.setValorTotal(conta.getValorTotal().add(resto));
                 conta.setValorLiquido(conta.getValorLiquido().add(resto));
@@ -73,6 +71,14 @@ public class FinanceiroService {
             }
             contaReceberRepository.save(conta);
         }
+    }
+
+    // NOVO MÉTODO PARA CORRIGIR ERRO NO VENDASERVICE
+    @Transactional
+    public void cancelarReceitaDeVenda(Long vendaId) {
+        // Busca todas as contas a receber vinculadas a esta venda e as remove/cancela
+        List<ContaReceber> contas = contaReceberRepository.findByIdVendaRef(vendaId);
+        contaReceberRepository.deleteAll(contas);
     }
 
     @Transactional
@@ -91,7 +97,7 @@ public class FinanceiroService {
             conta.setDataVencimento(LocalDate.now().plusMonths(i-1));
             conta.setStatus(StatusConta.PENDENTE);
             conta.setDescricao("Compra de Produtos - Parcela " + i + "/" + parcelas + " - " + observacao);
-            conta.setValorTotal(BigDecimal.ZERO);
+            conta.setValorTotal(BigDecimal.ZERO); // Cuidado: ValorTotal zero inicial? Ajuste se necessário
 
             if (i == parcelas) {
                 conta.setValorTotal(conta.getValorTotal().add(resto));
@@ -108,7 +114,6 @@ public class FinanceiroService {
         movimentacao.setDataHora(LocalDateTime.now());
         movimentacao.setMotivo(dto.getMotivo());
         movimentacao.setUsuarioResponsavel(usuarioResponsavel);
-
         return movimentacaoCaixaRepository.save(movimentacao);
     }
 
@@ -120,12 +125,9 @@ public class FinanceiroService {
         if (StatusConta.PAGO.equals(conta.getStatus())) {
             throw new RuntimeException("Esta conta já foi paga.");
         }
-
-        // Validação simples: não aceita pagamento menor que o total
         if (valorPago.compareTo(conta.getValorTotal()) < 0) {
             throw new RuntimeException("Valor insuficiente para quitação integral.");
         }
-
         conta.setValorPago(valorPago);
         conta.setDataPagamento(LocalDate.now());
         conta.setStatus(StatusConta.PAGO);
@@ -140,12 +142,10 @@ public class FinanceiroService {
         if (StatusConta.PAGO.equals(conta.getStatus())) {
             throw new RuntimeException("Esta conta já foi paga.");
         }
-
         if (valorPago.compareTo(conta.getValorTotal()) < 0) {
             throw new RuntimeException("Valor insuficiente para quitação integral.");
         }
-
-        conta.setValorTotal(valorPago);
+        conta.setValorTotal(valorPago); // Se a lógica for atualizar o valor pago, cuidado para não sobrescrever o total
         conta.setDataPagamento(LocalDate.now());
         conta.setStatus(StatusConta.PAGO);
         contaPagarRepository.save(conta);
@@ -153,20 +153,16 @@ public class FinanceiroService {
 
     @Transactional(readOnly = true)
     public FechamentoCaixaDTO gerarResumoFechamento(LocalDate data) {
-        // OTIMIZAÇÃO: Busca no banco filtrado, em vez de baixar tudo para memória
         List<ContaReceber> recebimentos = contaReceberRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
         List<ContaPagar> pagamentos = contaPagarRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
 
         BigDecimal totalDinheiro = somarPorFormaPagamento(recebimentos, "DINHEIRO");
         BigDecimal totalPix = somarPorFormaPagamento(recebimentos, "PIX");
-
-        // Soma Crédito e Débito como "Cartão"
         BigDecimal totalCartao = somarPorFormaPagamento(recebimentos, "CREDITO")
                 .add(somarPorFormaPagamento(recebimentos, "DEBITO"))
-                .add(somarPorFormaPagamento(recebimentos, "CREDIARIO")); // Se houver recebimento de crediário no dia
+                .add(somarPorFormaPagamento(recebimentos, "CREDIARIO"));
 
         BigDecimal totalEntradas = totalDinheiro.add(totalPix).add(totalCartao);
-
         BigDecimal totalSaidas = pagamentos.stream()
                 .map(p -> p.getValorTotal() != null ? p.getValorTotal() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -176,17 +172,14 @@ public class FinanceiroService {
         formas.put("PIX", totalPix);
         formas.put("CARTAO", totalCartao);
 
-        // Calcula saldo em caixa (apenas dinheiro físico importa para conferência de gaveta)
-        // Lógica: (Entradas em Dinheiro) - (Saídas/Pagamentos em Dinheiro) - (Sangrias) + (Suprimentos)
-        // Simplificado aqui:
         BigDecimal saldoDinheiro = totalDinheiro.subtract(totalSaidas);
 
         return FechamentoCaixaDTO.builder()
                 .data(data)
                 .quantidadeVendas(recebimentos.stream().map(ContaReceber::getIdVendaRef).distinct().count())
                 .totalVendasBruto(totalEntradas)
-                .totalSangrias(totalSaidas) // Assumindo que pagamentos saem do caixa
-                .totalSuprimentos(BigDecimal.ZERO) // Implementar lógica de suprimento se houver tabela
+                .totalSangrias(totalSaidas)
+                .totalSuprimentos(BigDecimal.ZERO)
                 .totaisPorFormaPagamento(formas)
                 .saldoFinalDinheiroEmEspecie(saldoDinheiro)
                 .build();

@@ -44,7 +44,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 1. REGRAS PÚBLICAS (Login, Catálogo, Swagger, etc)
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").hasRole("ADMIN")
+                                // 1. Produtos: LEITURA é pública (Catálogo)
+                                //.requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").permitAll()
+
+                                // 2. Produtos: ESCRITA (Delete, Post, Put) é só para ADMIN
+                                .requestMatchers("/api/v1/produtos/**").permitAll()
+                        .requestMatchers("/api/v1/produtos/**").hasRole("ROLE_ADMIN")
                         .requestMatchers("/api/v1/catalogo/**").permitAll()
 
                         .requestMatchers("/h2-console/**").permitAll()

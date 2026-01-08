@@ -47,7 +47,7 @@ public class DataSeeder implements CommandLineRunner {
                     "admin",
                     "admin@dd.com",
                     passwordEncoder.encode("123456"),
-                    PerfilDoUsuario.ADMIN
+                    PerfilDoUsuario.ROLE_ADMIN
             );
             usuarioRepository.save(admin);
             log.info("✅ Usuário Admin criado: admin / 123456");

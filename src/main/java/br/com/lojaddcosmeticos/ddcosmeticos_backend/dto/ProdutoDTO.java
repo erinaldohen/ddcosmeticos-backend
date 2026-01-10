@@ -18,6 +18,8 @@ public record ProdutoDTO(
         @NotBlank(message = "A descrição do produto é obrigatória")
         String descricao,
 
+        String unidade,
+
         @NotNull(message = "Preço de custo obrigatório")
         @PositiveOrZero
         BigDecimal precoCusto,
@@ -34,17 +36,17 @@ public record ProdutoDTO(
 
         @Size(max = 20, message = "NCM deve ter no máximo 20 dígitos")
         String ncm,
-        // --- NOVO CAMPO ---
+
+        // Dados de Classificação
         String marca,
         String categoria,
         String subcategoria,
-        // --
 
         String cest,
-        String cst,
-        Boolean monofasico,
 
-        // --- NOVO CAMPO DA REFORMA ---
+        // --- NOVOS CAMPOS FISCAIS ---
+        String cst,
+        Boolean monofasico, // Método gerado: monofasico()
         TipoTributacaoReforma classificacaoReforma,
 
         String urlImagem,
@@ -55,16 +57,15 @@ public record ProdutoDTO(
                         produto.getId(),
                         produto.getCodigoBarras(),
                         produto.getDescricao(),
+                        produto.getUnidade(),
                         produto.getPrecoCusto(),
                         produto.getPrecoVenda(),
                         produto.getQuantidadeEmEstoque(),
                         produto.getEstoqueMinimo(),
                         produto.getNcm(),
-                        // Novos campos sendo lidos da entidade
                         produto.getMarca(),
                         produto.getCategoria(),
                         produto.getSubcategoria(),
-                        // Fim novos campos
                         produto.getCest(),
                         produto.getCst(),
                         produto.isMonofasico(),

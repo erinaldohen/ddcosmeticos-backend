@@ -9,6 +9,7 @@ import java.util.TimeZone;
 
 @SpringBootApplication
 @EnableCaching
+
 public class DdcosmeticosBackendApplication {
 
     public static void main(String[] args) {

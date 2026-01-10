@@ -1,6 +1,5 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
@@ -8,6 +7,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity; // Importante para Auditoria
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.extern.slf4j.Slf4j;
@@ -16,13 +16,13 @@ import org.hibernate.envers.RevisionType;
 import org.hibernate.envers.query.AuditEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -32,7 +32,34 @@ import java.util.List;
 public class ProdutoService {
 
     @Autowired private ProdutoRepository produtoRepository;
-    @PersistenceContext private EntityManager entityManager; // Necessário para Auditoria
+    @Autowired private CalculadoraFiscalService calculadoraFiscalService;
+    @PersistenceContext private EntityManager entityManager;
+
+    // --- MÉTODOS DE CÁLCULO FINANCEIRO ---
+
+    @Transactional
+    public void processarEntradaEstoque(Produto produto, Integer quantidadeEntrada, BigDecimal custoEntrada) {
+        if (quantidadeEntrada <= 0) return;
+
+        BigDecimal estoqueAtual = new BigDecimal(produto.getQuantidadeEmEstoque());
+        BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado();
+        if (custoMedioAtual == null) custoMedioAtual = BigDecimal.ZERO;
+
+        BigDecimal valorTotalAtual = estoqueAtual.multiply(custoMedioAtual);
+        BigDecimal valorTotalEntrada = custoEntrada.multiply(new BigDecimal(quantidadeEntrada));
+
+        BigDecimal novoValorTotal = valorTotalAtual.add(valorTotalEntrada);
+        BigDecimal novaQuantidade = estoqueAtual.add(new BigDecimal(quantidadeEntrada));
+
+        if (novaQuantidade.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal novoPrecoMedio = novoValorTotal.divide(novaQuantidade, 4, RoundingMode.HALF_UP);
+            produto.setPrecoMedioPonderado(novoPrecoMedio);
+        } else {
+            produto.setPrecoMedioPonderado(custoEntrada);
+        }
+
+        produto.setPrecoCusto(custoEntrada);
+    }
 
     // --- LEITURA ---
 
@@ -44,8 +71,6 @@ public class ProdutoService {
         } else {
             pagina = produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo, pageable);
         }
-
-        // Converte para DTO leve e seguro
         return pagina.map(p -> new ProdutoListagemDTO(
                 p.getId(), p.getDescricao(), p.getPrecoVenda(), p.getUrlImagem(),
                 p.getQuantidadeEmEstoque(), p.isAtivo(), p.getCodigoBarras(),
@@ -108,6 +133,10 @@ public class ProdutoService {
 
         Produto produto = new Produto();
         copiarDtoParaEntidade(dto, produto);
+
+        // Preço Médio Inicial = Custo Inicial
+        produto.setPrecoMedioPonderado(dto.precoCusto());
+
         produto.setQuantidadeEmEstoque(0);
         produto.setAtivo(true);
         produto = produtoRepository.save(produto);
@@ -115,7 +144,6 @@ public class ProdutoService {
         return new ProdutoDTO(produto);
     }
 
-    // Método auxiliar interno para salvar Entidade direta (se necessário)
     @Transactional
     public Produto salvar(Produto produto) {
         return produtoRepository.save(produto);
@@ -125,17 +153,14 @@ public class ProdutoService {
     @CacheEvict(value = "produtos", allEntries = true)
     public Produto atualizar(Long id, ProdutoDTO dados) {
         Produto produto = buscarPorId(id);
-
         copiarDtoParaEntidade(dados, produto);
 
-        // Validação extra de EAN se mudou
         if (!produto.getCodigoBarras().equals(dados.codigoBarras())) {
             if (produtoRepository.existsByCodigoBarras(dados.codigoBarras())) {
                 throw new IllegalStateException("Já existe outro produto com este EAN.");
             }
             produto.setCodigoBarras(dados.codigoBarras());
         }
-
         return produtoRepository.save(produto);
     }
 
@@ -172,20 +197,40 @@ public class ProdutoService {
         produtoRepository.save(produto);
     }
 
+    // --- SANEAMENTO FISCAL ---
+    @Transactional
+    public String realizarSaneamentoFiscal() {
+        List<Produto> todos = produtoRepository.findAll();
+        int atualizados = 0;
+        for (Produto p : todos) {
+            if (calculadoraFiscalService.aplicarRegrasNoProduto(p)) {
+                atualizados++;
+            }
+        }
+        return String.format("Saneamento concluído. %d produtos atualizados.", atualizados);
+    }
+
+    // Método auxiliar para preencher a Entidade com dados do DTO
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
         produto.setCodigoBarras(dto.codigoBarras());
         produto.setDescricao(dto.descricao());
         produto.setMarca(dto.marca());
         produto.setCategoria(dto.categoria());
         produto.setSubcategoria(dto.subcategoria());
+        produto.setUnidade(dto.unidade() != null ? dto.unidade() : "UN");
         produto.setPrecoCusto(dto.precoCusto());
         produto.setPrecoVenda(dto.precoVenda());
-        produto.setNcm(dto.ncm());
         produto.setEstoqueMinimo(dto.estoqueMinimo());
-        produto.setMonofasico(dto.monofasico() != null ? dto.monofasico() : false);
+        produto.setUrlImagem(dto.urlImagem());
+
+        // Mapeamento Fiscal
+        produto.setNcm(dto.ncm());
         produto.setCest(dto.cest());
         produto.setCst(dto.cst());
-        produto.setUrlImagem(dto.urlImagem());
+
+        // CORREÇÃO: Uso de Boolean.TRUE.equals para evitar NullPointer
+        produto.setMonofasico(Boolean.TRUE.equals(dto.monofasico()));
+
         produto.setClassificacaoReforma(dto.classificacaoReforma() != null ? dto.classificacaoReforma() : TipoTributacaoReforma.PADRAO);
     }
 }

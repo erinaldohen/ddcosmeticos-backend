@@ -1,17 +1,20 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CalculadoraFiscalService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase; // Importante
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
-@ActiveProfiles("test") // Força o uso do application.properties criado acima
-@AutoConfigureTestDatabase // Garante a troca do banco real pelo H2
+@ActiveProfiles("test") // Garanta que application-test.properties existe e usa H2
 class DdcosmeticosBackendApplicationTests {
+
+	// Mockamos o serviço que depende de tabelas que talvez não existam no H2 vazio
+	@MockitoBean private CalculadoraFiscalService calculadoraFiscalService;
 
 	@Test
 	void contextLoads() {
-		// Se este teste passar, significa que o Spring conseguiu subir sem erros
+		// Verifica se o Spring consegue iniciar
 	}
 }

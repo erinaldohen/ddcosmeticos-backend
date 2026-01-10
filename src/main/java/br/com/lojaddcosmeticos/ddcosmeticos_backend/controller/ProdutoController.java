@@ -106,7 +106,7 @@ public class ProdutoController {
     }
 
     @DeleteMapping("/{ean}")
-    @PreAuthorize("hasRole('ROLE_ADMIN')") // <--- ADICIONE ISSO
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();
@@ -184,5 +184,14 @@ public class ProdutoController {
     public ResponseEntity<Void> restaurar(@PathVariable Long id) {
         auditoriaService.restaurarProduto(id);
         return ResponseEntity.ok().build();
+    }
+
+    // --- 6. SANEAMENTO FISCAL (NOVO) ---
+    @PostMapping("/saneamento-fiscal")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Correção Fiscal em Massa", description = "Recalcula CST e Classificação de todos os produtos baseados no NCM.")
+    public ResponseEntity<String> executarSaneamento() {
+        String resultado = produtoService.realizarSaneamentoFiscal();
+        return ResponseEntity.ok(resultado);
     }
 }

@@ -58,7 +58,6 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome());
         venda.setDataVenda(LocalDateTime.now());
 
-        // CORREÇÃO 1: dto.formaDePagamento() (não pagamentos)
         venda.setFormaPagamento(dto.formaDePagamento());
 
         if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
@@ -81,7 +80,6 @@ public class VendaService {
         BigDecimal valorFinal = venda.getTotalVenda().subtract(venda.getDescontoTotal());
         if (valorFinal.compareTo(BigDecimal.ZERO) < 0) valorFinal = BigDecimal.ZERO;
 
-        // CORREÇÃO 2: dto.formaDePagamento()
         if (!isOrcamento && dto.formaDePagamento() == FormaDePagamento.CREDIARIO) {
             String doc = dto.clienteDocumento() != null ? dto.clienteDocumento().replaceAll("\\D", "") : null;
             validarCreditoDoCliente(doc, valorFinal);
@@ -108,7 +106,6 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa - " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
 
-        // CORREÇÃO 3: dto.formaDePagamento()
         venda.setFormaPagamento(dto.formaDePagamento() != null ? dto.formaDePagamento() : FormaDePagamento.DINHEIRO);
         venda.setStatusFiscal(StatusFiscal.EM_ESPERA);
 
@@ -153,14 +150,9 @@ public class VendaService {
             validarCreditoDoCliente(doc, valorFinal);
         }
 
-        // Baixa de estoque
+        // CORREÇÃO: Usar registrarSaidaVenda em vez de realizarAjusteInventario
         venda.getItens().forEach(item -> {
-            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
-            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
-            // Removido setTipoMovimento pois não existe no DTO AjusteEstoqueDTO
-            estoqueService.realizarAjusteInventario(ajuste);
+            estoqueService.registrarSaidaVenda(item.getProduto(), item.getQuantidade().intValue());
         });
 
         // Lançamento financeiro
@@ -217,13 +209,24 @@ public class VendaService {
             return;
         }
 
+        // CORREÇÃO: No cancelamento, fazemos uma entrada de ajuste para devolver o estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
-            // Removido setTipoMovimento pois não existe no DTO
-            estoqueService.realizarAjusteInventario(ajuste);
+            // Aqui usamos realizarAjusteManual porque é uma devolução atípica
+            // Mas precisamos garantir que a "nova quantidade" calculada esteja correta no EstoqueService
+            // Ou criamos um método específico 'estornarVenda' no EstoqueService.
+            // Para simplificar, vou usar registrarEntrada simulando uma devolução sem NF.
+            // Mas o ideal seria ajustar o EstoqueService para suportar estorno.
+
+            // Vamos usar o realizarAjusteManual somando a quantidade
+            int qtdAtual = item.getProduto().getQuantidadeEmEstoque();
+            ajuste.setQuantidade(new BigDecimal(qtdAtual + item.getQuantidade().intValue()));
+            ajuste.setObservacao("Estorno Venda #" + idVenda);
+
+            estoqueService.realizarAjusteManual(ajuste);
         });
 
         financeiroService.cancelarReceitaDeVenda(idVenda);
@@ -288,13 +291,9 @@ public class VendaService {
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
+        // CORREÇÃO: Usar registrarSaidaVenda em vez de realizarAjusteInventario
         venda.getItens().forEach(item -> {
-            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
-            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.VENDA);
-            // Removido setTipoMovimento pois não existe no DTO
-            estoqueService.realizarAjusteInventario(ajuste);
+            estoqueService.registrarSaidaVenda(item.getProduto(), item.getQuantidade().intValue());
         });
 
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;

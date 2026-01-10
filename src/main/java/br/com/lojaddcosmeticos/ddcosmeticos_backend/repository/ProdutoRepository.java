@@ -21,10 +21,8 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
-    // Essencial para VendaService (Evita N+1 queries)
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
 
-    // Busca Paginada (Admin)
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
 
     // --- 2. CATÁLOGO VISUAL ---
@@ -38,27 +36,26 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
 
-    // --- 3. DASHBOARD E RELATÓRIOS (Consultas Rápidas) ---
+    // --- NOVO MÉTODO PARA CORRIGIR O TESTE ---
+    List<Produto> findTop10ByOrderByPrecoVendaDesc();
 
-    // Alertas de Estoque
+    // --- 3. DASHBOARD E RELATÓRIOS ---
+
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
     @Query("SELECT p FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     List<Produto> findProdutosComBaixoEstoque();
 
-    // [NOVO] Conta Esgotados direto no banco
     long countByQuantidadeEmEstoqueLessThanEqualAndAtivoTrue(Integer qtd);
 
-    // [NOVO] Soma Valor de Estoque (Custo) via SQL (Muito rápido)
     @Query("SELECT COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
     BigDecimal calcularValorTotalEstoque();
 
-    // [NOVO] Conta produtos com cadastro fiscal incompleto
     @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
     long contarProdutosSemFiscal();
 
-    // --- 4. MANUTENÇÃO E SISTEMA ---
+    // --- 4. MANUTENÇÃO ---
 
     @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);

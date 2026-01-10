@@ -103,7 +103,7 @@ public class RelatorioService {
 
             NumberFormat moeda = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
             for (SugestaoCompraDTO item : sugestoes) {
-                table.addCell(criarCelula(item.getNomeProduto(), Element.ALIGN_LEFT));
+                table.addCell(criarCelula(item.getDescricao(), Element.ALIGN_LEFT));
                 table.addCell(criarCelula(item.getMarca(), Element.ALIGN_LEFT));
 
                 PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.getNivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
@@ -114,9 +114,9 @@ public class RelatorioService {
                 table.addCell(cellUrgencia);
 
                 table.addCell(criarCelula(String.valueOf(item.getEstoqueAtual()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(String.valueOf(item.getEstoqueMinimoCalculado()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(String.valueOf(item.getQuantidadeSugeridaCompra()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(moeda.format(item.getCustoEstimadoPedido()), Element.ALIGN_RIGHT));
+                table.addCell(criarCelula(String.valueOf(item.getEstoqueMinimo()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(String.valueOf(item.getQuantidadeSugerida()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(moeda.format(item.getCustoEstimado()), Element.ALIGN_RIGHT));
             }
             document.add(table);
             document.close();

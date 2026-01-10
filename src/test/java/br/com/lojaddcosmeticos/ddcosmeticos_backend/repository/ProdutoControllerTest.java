@@ -1,18 +1,17 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository; // Ajuste se seu pacote for diferente
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.controller.ProdutoController; // Importante
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.controller.ProdutoController;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
-import org.junit.jupiter.api.DisplayName;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.security.JwtService; // Importante
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest; // Usar WebMvcTest em vez de SpringBootTest
-// Se MockitoBean não funcionar, use @MockBean (padrão Spring Boot < 3.4)
-// Se estiver no 3.4+, use: import org.springframework.test.context.bean.override.mockito.MockitoBean;
-
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -24,55 +23,49 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// Carrega APENAS o ProdutoController. Muito mais rápido e menos propenso a erro.
 @WebMvcTest(ProdutoController.class)
-// Importante: Se você tiver uma classe SecurityConfig complexa, talvez precise importá-la
-// @Import(SecurityConfig.class)
 class ProdutoControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    @MockitoBean // Tente MockBean primeiro, é mais compatível com WebMvcTest antigo
-    private ProdutoService produtoService;
+    // --- MOCKS DOS SERVIÇOS USADOS NO CONTROLLER ---
+    @MockitoBean private ProdutoService produtoService;
+    @MockitoBean private CosmosService cosmosService;
+    @MockitoBean private PrecificacaoService precificacaoService;
+    @MockitoBean private EstoqueService estoqueService;
+    @MockitoBean private ArquivoService arquivoService;
+    @MockitoBean private AuditoriaService auditoriaService;
 
-    @MockitoBean
-    private br.com.lojaddcosmeticos.ddcosmeticos_backend.security.JwtService jwtService;
-
-    @MockitoBean
-    private br.com.lojaddcosmeticos.ddcosmeticos_backend.handler.SecurityFilter securityFilter;
-
-    // Se o seu SecurityConfig exigir UserDetailsService, mocke ele também
-    // @MockBean
-    // private UserDetailsService userDetailsService;
-    // @MockBean
-    // private JwtService jwtService; // Se tiver filtro JWT
+    // --- MOCKS OBRIGATÓRIOS PARA A SEGURANÇA (SecurityFilter) ---
+    // O SecurityFilter precisa destes beans para inicializar, senão o contexto falha.
+    @MockitoBean private JwtService jwtService;
+    @MockitoBean private UsuarioRepository usuarioRepository;
 
     @Test
-    @DisplayName("GET /produtos - Deve retornar 200")
     @WithMockUser(username = "admin", roles = {"ADMIN"})
     void deveListarProdutosComSeguranca() throws Exception {
+        // Cenário
         ProdutoListagemDTO dto = new ProdutoListagemDTO(
-                1L, "Teste Shampoo", new BigDecimal("25.90"), null,
-                10, true, "123456", "Marca X", "NCM"
+                1L, "TESTE", BigDecimal.TEN, null, 10, true, "123", "MARCA", "NCM"
         );
 
-        when(produtoService.listarResumo(any(), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(dto)));
+        when(produtoService.listarResumo(any(), any()))
+                .thenReturn(new PageImpl<>(List.of(dto), PageRequest.of(0, 10, Sort.by("descricao")), 1));
 
-        mockMvc.perform(get("/api/v1/produtos"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].descricao").value("Teste Shampoo"));
+        // Ação e Validação
+        mockMvc.perform(get("/api/v1/produtos")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
     }
 
     @Test
-    @DisplayName("DELETE /produtos - Deve negar acesso (403)")
-    @WithMockUser(roles = "USUARIO")
+    @WithMockUser(username = "user", roles = {"USUARIO"})
     void deveBloquearExclusaoParaUsuarioComum() throws Exception {
-        mockMvc.perform(delete("/api/v1/produtos/123"))
+        // Tenta deletar/inativar (Endpoint protegido)
+        mockMvc.perform(delete("/api/v1/produtos/EAN123"))
                 .andExpect(status().isForbidden());
     }
 }

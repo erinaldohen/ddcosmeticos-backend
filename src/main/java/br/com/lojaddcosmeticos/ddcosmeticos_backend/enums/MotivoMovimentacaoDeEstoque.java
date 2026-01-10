@@ -7,7 +7,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 public enum MotivoMovimentacaoDeEstoque {
 
     // --- ENTRADAS (Aumentam o Estoque) ---
-    COMPRA_FORNECEDOR,      // Chegada de mercadoria (Nota de Entrada)
+    COMPRA_SEM_NOTA_FISCAL,
+    COMPRA_COM_NOTA_FISCAL,      // Chegada de mercadoria (Nota de Entrada)
     DEVOLUCAO_CLIENTE,      // Cliente devolveu um item comprado
     CANCELAMENTO_DE_VENDA,  // Venda estornada no caixa
     AJUSTE_SOBRA,           // Inventário: contagem física maior que sistema
@@ -29,7 +30,7 @@ public enum MotivoMovimentacaoDeEstoque {
      * Verifica se o motivo representa uma ENTRADA de mercadoria.
      */
     public boolean isEntrada() {
-        return this == COMPRA_FORNECEDOR || this == DEVOLUCAO_CLIENTE ||
+        return this == COMPRA_COM_NOTA_FISCAL || this == DEVOLUCAO_CLIENTE ||
                 this == CANCELAMENTO_DE_VENDA || this == AJUSTE_SOBRA ||
                 this == ESTOQUE_INICIAL || this == AJUSTE_ENTRADA ||
                 this == AJUSTE_INVENTARIO_ENTRADA;

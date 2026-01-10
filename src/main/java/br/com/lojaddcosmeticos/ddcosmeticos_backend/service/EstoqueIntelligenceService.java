@@ -16,73 +16,74 @@ public class EstoqueIntelligenceService {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    // Configuração da IA: Quantos dias de margem de segurança queremos?
-    // Ex: Se o fornecedor demora 7 dias, queremos ter estoque para 7 + 5 dias de segurança.
     private static final int DIAS_MARGEM_SEGURANCA = 5;
 
     public List<SugestaoCompraDTO> gerarRelatorioCompras() {
-        // Busca apenas produtos ativos para não sugerir compra de produto descontinuado
-        // Obs: Idealmente criar um método 'findByAtivoTrue' no repository se não houver
         List<Produto> produtos = produtoRepository.findAll();
         List<SugestaoCompraDTO> sugestoes = new ArrayList<>();
 
         for (Produto p : produtos) {
+            // Filtros de produto
             if (!p.isAtivo()) continue;
 
-            // Garante que os totais estão atualizados
             p.atualizarSaldoTotal();
-            p.recalcularEstoqueMinimoSugerido(); // A IA recalcula o mínimo baseada na média diária atual
+            p.recalcularEstoqueMinimoSugerido();
 
-            // Se o produto não tem saída (venda média 0), ignora para não empilhar estoque
+            // Ignora produtos sem média de venda definida ou zerada
             if (p.getVendaMediaDiaria() == null || p.getVendaMediaDiaria().compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
 
-            // Lógica de Ruptura
-            if (p.getQuantidadeEmEstoque() <= p.getEstoqueMinimo()) {
+            // Lógica de Ruptura (Se estoque atual <= mínimo)
+            // Obs: Garante que o estoqueMinimo não seja nulo (padrão 0)
+            int min = p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0;
+            if (p.getQuantidadeEmEstoque() <= min) {
                 sugestoes.add(calcularSugestao(p));
             }
         }
 
-        // Ordena por urgência: Quem tem menos estoque em relação à venda aparece primeiro
-        sugestoes.sort((a, b) -> b.getNivelUrgencia().compareTo(a.getNivelUrgencia()));
+        // Ordena por urgência (String comparison).
+        // OBS: "CRÍTICO" vem depois de "ALERTA" alfabeticamente, então invertemos (b compare a)
+        // Adicionei verificação de null para evitar crash na linha 48
+        sugestoes.sort((a, b) -> {
+            String urgenciaA = a.getNivelUrgencia() != null ? a.getNivelUrgencia() : "";
+            String urgenciaB = b.getNivelUrgencia() != null ? b.getNivelUrgencia() : "";
+            return urgenciaB.compareTo(urgenciaA);
+        });
 
         return sugestoes;
     }
 
     private SugestaoCompraDTO calcularSugestao(Produto p) {
-        // Cálculo da IA:
-        // Objetivo: Cobrir o tempo de reposição + margem de segurança
-        int diasCoberturaAlvo = p.getDiasParaReposicao() + DIAS_MARGEM_SEGURANCA;
+        int diasReposicao = p.getDiasParaReposicao() != null ? p.getDiasParaReposicao() : 7; // Default 7 dias
+        int diasCoberturaAlvo = diasReposicao + DIAS_MARGEM_SEGURANCA;
 
         BigDecimal vendaDiaria = p.getVendaMediaDiaria();
 
-        // Quanto preciso ter no total para ficar tranquilo?
         int estoqueAlvo = vendaDiaria.multiply(new BigDecimal(diasCoberturaAlvo)).intValue();
-
-        // Quanto falta comprar?
         int quantidadeComprar = estoqueAlvo - p.getQuantidadeEmEstoque();
 
-        if (quantidadeComprar <= 0) quantidadeComprar = 10; // Compra mínima se deu erro de cálculo
+        if (quantidadeComprar <= 0) quantidadeComprar = 6; // Mínimo de reposição padrão (ex: meia dúzia)
 
         // Definir Urgência
         String urgencia = "NORMAL";
         int diasRestantesEstoque = 0;
         if (vendaDiaria.compareTo(BigDecimal.ZERO) > 0) {
-            diasRestantesEstoque = new BigDecimal(p.getQuantidadeEmEstoque()).divide(vendaDiaria, 0, BigDecimal.ROUND_DOWN).intValue();
+            diasRestantesEstoque = new BigDecimal(p.getQuantidadeEmEstoque())
+                    .divide(vendaDiaria, 0, BigDecimal.ROUND_DOWN).intValue();
         }
 
-        if (p.getQuantidadeEmEstoque() == 0) {
-            urgencia = "CRÍTICO (RUPTURA)";
-        } else if (diasRestantesEstoque < p.getDiasParaReposicao()) {
-            urgencia = "ALERTA (VAI FALTAR ANTES DE CHEGAR)";
+        if (p.getQuantidadeEmEstoque() <= 0) {
+            urgencia = "Z-CRÍTICO (RUPTURA)"; // Z para ficar no topo da lista alfabética reversa
+        } else if (diasRestantesEstoque < diasReposicao) {
+            urgencia = "Y-ALERTA (VAI FALTAR)";
         }
 
-        // Custo estimado
-        BigDecimal custoTotal = p.getPrecoCusto() != null
-                ? p.getPrecoCusto().multiply(new BigDecimal(quantidadeComprar))
-                : BigDecimal.ZERO;
+        // Custo estimado (Usa preço de custo ou 0 se nulo)
+        BigDecimal custoUnitario = p.getPrecoCusto() != null ? p.getPrecoCusto() : BigDecimal.ZERO;
+        BigDecimal custoTotal = custoUnitario.multiply(new BigDecimal(quantidadeComprar));
 
+        // Preenche o DTO com os novos campos
         return new SugestaoCompraDTO(
                 p.getCodigoBarras(),
                 p.getDescricao(),

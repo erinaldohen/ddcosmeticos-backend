@@ -9,7 +9,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.VendaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid; // <--- IMPORTANTE
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -17,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/operacoes")
@@ -47,13 +48,18 @@ public class OperacoesController {
     @GetMapping("/relatorio-compras/pdf")
     @Operation(summary = "Gerar Lista de Compras (PDF)", description = "Analisa estoque baixo e gera PDF para fornecedores.")
     public ResponseEntity<byte[]> baixarListaComprasPdf() {
-        // 1. Busca a inteligência do estoque (quem precisa comprar?)
-        List<SugestaoCompraDTO> sugestoes = estoqueService.gerarSugestaoCompras();
+        // 1. Busca a inteligência do estoque (Retorna List<Produto>)
+        List<Produto> produtosBaixoEstoque = estoqueService.gerarSugestaoCompras();
 
-        // 2. Transforma em binário do PDF
+        // 2. Converte Produtos para DTOs (Mapeamento)
+        List<SugestaoCompraDTO> sugestoes = produtosBaixoEstoque.stream()
+                .map(this::converterParaDTO)
+                .collect(Collectors.toList());
+
+        // 3. Transforma em binário do PDF
         byte[] pdfBytes = relatorioService.gerarPdfSugestaoCompras(sugestoes);
 
-        // 3. Retorna como download
+        // 4. Retorna como download
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=lista_compras.pdf")
                 .contentType(MediaType.APPLICATION_PDF)
@@ -76,5 +82,24 @@ public class OperacoesController {
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
                 .body(textoTermico);
+    }
+
+    // --- Método Auxiliar de Conversão ---
+    private SugestaoCompraDTO converterParaDTO(Produto p) {
+        SugestaoCompraDTO dto = new SugestaoCompraDTO();
+        dto.setCodigoBarras(p.getCodigoBarras());
+        dto.setDescricao(p.getDescricao());
+        dto.setMarca(p.getMarca());
+        dto.setEstoqueAtual(p.getQuantidadeEmEstoque());
+        dto.setEstoqueMinimo(p.getEstoqueMinimo());
+
+        // Calcula quanto precisa comprar para atingir o mínimo (Margem de segurança)
+        int min = p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0;
+        int atual = p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0;
+        int sugestao = (min - atual) > 0 ? (min - atual) : 0;
+
+        dto.setQuantidadeSugerida(sugestao);
+
+        return dto;
     }
 }

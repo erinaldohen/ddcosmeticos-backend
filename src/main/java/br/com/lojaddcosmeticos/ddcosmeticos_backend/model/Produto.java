@@ -4,6 +4,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Cache;
+import org.hibernate.annotations.CacheConcurrencyStrategy;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.envers.Audited;
@@ -15,12 +17,13 @@ import java.math.BigDecimal;
 @Entity
 @NoArgsConstructor
 @Audited
+@Cacheable
+@Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
 @Table(name = "produto", indexes = {
         @Index(name = "idx_produto_descricao", columnList = "descricao"),
         @Index(name = "idx_produto_ean", columnList = "codigo_barras"),
-        @Index(name = "idx_produto_ativo", columnList = "ativo") // Ajuda muito nos filtros
+        @Index(name = "idx_produto_ativo", columnList = "ativo")
 })
-// Restaura o Soft Delete (Exclusão lógica)
 @SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true")
 public class Produto implements Serializable {
@@ -33,50 +36,41 @@ public class Produto implements Serializable {
     @Column(name = "codigo_barras", unique = true, length = 20)
     private String codigoBarras;
 
-    @Column(nullable = false, length = 500)
+    @Column(nullable = false, length = 150)
     private String descricao;
 
-    // --- NOVOS CAMPOS (Do CSV) ---
-    @Column(length = 100)
+    // --- CLASSIFICAÇÃO ---
     private String marca;
-    @Column(length = 50)
     private String categoria;
-    @Column(length = 50)
     private String subcategoria;
-    // -----------------------------
-
-    @Column(name = "preco_custo", precision = 10, scale = 2)
-    private BigDecimal precoCusto;
-
-    @Column(name = "preco_medio", precision = 10, scale = 4)
-    private BigDecimal precoMedioPonderado;
-
-    @Column(name = "preco_venda", precision = 10, scale = 2)
-    private BigDecimal precoVenda;
-
-    @Column(length = 10)
     private String unidade = "UN";
 
-    @Column(name = "monofasico")
-    private boolean monofasico = false;
-
     // --- DADOS FISCAIS ---
-
-    @Column(length = 8)
+    @Column(length = 10)
     private String ncm;
-
-    @Column(length = 7)
+    @Column(length = 10)
     private String cest;
-
     @Column(length = 4)
-    private String cst; // <--- O CAMPO QUE FALTAVA (Restaurado)
+    private String cst;
+    private boolean monofasico = false;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "classificacao_reforma")
-    private TipoTributacaoReforma classificacaoReforma;
+    private TipoTributacaoReforma classificacaoReforma = TipoTributacaoReforma.PADRAO;
 
-    // --- ESTOQUES ---
+    // --- FINANCEIRO ---
+    @Column(name = "preco_venda", precision = 10, scale = 2, nullable = false)
+    private BigDecimal precoVenda;
 
+    @Column(name = "preco_custo", precision = 10, scale = 2)
+    private BigDecimal precoCusto; // Custo da Última Entrada (Referência)
+
+    // --- NOVO CAMPO: CUSTO MÉDIO PONDERADO ---
+    // Usamos scale=4 para maior precisão no cálculo de lucro
+    @Column(name = "preco_medio", precision = 10, scale = 4)
+    private BigDecimal precoMedioPonderado = BigDecimal.ZERO;
+
+    // --- ESTOQUE E CONTROLE ---
     @Column(name = "estoque_fiscal", nullable = false)
     private Integer estoqueFiscal = 0;
 
@@ -96,8 +90,7 @@ public class Produto implements Serializable {
     @Column(nullable = false)
     private boolean ativo = true;
 
-    // --- INTELIGÊNCIA ---
-
+    // --- INTELIGÊNCIA DE REPOSIÇÃO ---
     @Column(name = "venda_media_diaria", precision = 10, scale = 3)
     private BigDecimal vendaMediaDiaria = BigDecimal.ZERO;
 
@@ -115,9 +108,19 @@ public class Produto implements Serializable {
         }
     }
 
-    @Transient
-    public boolean isPossuiNfEntrada() {
-        // Se tiver estoque fiscal maior que 0, o Java entende automaticamente como TRUE
-        return this.estoqueFiscal != null && this.estoqueFiscal > 0;
+    @PrePersist
+    @PreUpdate
+    public void preSalvar() {
+        if (this.descricao != null) this.descricao = this.descricao.toUpperCase().trim();
+        if (this.marca != null) this.marca = this.marca.toUpperCase().trim();
+        if (this.ncm != null) this.ncm = this.ncm.replaceAll("\\D", "");
+        if (this.cest != null) this.cest = this.cest.replaceAll("\\D", "");
+
+        // Garante que o preço médio nunca seja nulo
+        if (this.precoMedioPonderado == null) {
+            this.precoMedioPonderado = this.precoCusto != null ? this.precoCusto : BigDecimal.ZERO;
+        }
+
+        atualizarSaldoTotal();
     }
 }

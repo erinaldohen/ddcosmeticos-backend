@@ -2,8 +2,10 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
 import org.hibernate.annotations.SQLDelete;
@@ -12,8 +14,11 @@ import org.hibernate.envers.Audited;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.Objects;
 
-@Data
+@Getter
+@Setter
+@ToString
 @Entity
 @NoArgsConstructor
 @Audited
@@ -63,10 +68,8 @@ public class Produto implements Serializable {
     private BigDecimal precoVenda;
 
     @Column(name = "preco_custo", precision = 10, scale = 2)
-    private BigDecimal precoCusto; // Custo da Última Entrada (Referência)
+    private BigDecimal precoCusto;
 
-    // --- NOVO CAMPO: CUSTO MÉDIO PONDERADO ---
-    // Usamos scale=4 para maior precisão no cálculo de lucro
     @Column(name = "preco_medio", precision = 10, scale = 4)
     private BigDecimal precoMedioPonderado = BigDecimal.ZERO;
 
@@ -79,11 +82,6 @@ public class Produto implements Serializable {
 
     @Column(name = "quantidade_estoque")
     private Integer quantidadeEmEstoque = 0;
-
-    public void atualizarSaldoTotal() {
-        this.quantidadeEmEstoque = (this.estoqueFiscal != null ? this.estoqueFiscal : 0) +
-                (this.estoqueNaoFiscal != null ? this.estoqueNaoFiscal : 0);
-    }
 
     private String urlImagem;
 
@@ -99,28 +97,58 @@ public class Produto implements Serializable {
     @Column(name = "estoque_minimo")
     private Integer estoqueMinimo;
 
+    // --- MÉTODOS DE NEGÓCIO ---
+
+    public void atualizarSaldoTotal() {
+        this.quantidadeEmEstoque = (this.estoqueFiscal != null ? this.estoqueFiscal : 0) +
+                (this.estoqueNaoFiscal != null ? this.estoqueNaoFiscal : 0);
+    }
+
     public void recalcularEstoqueMinimoSugerido() {
         if (this.vendaMediaDiaria != null && this.diasParaReposicao != null) {
             this.estoqueMinimo = this.vendaMediaDiaria.multiply(new BigDecimal(this.diasParaReposicao)).intValue();
+            // Se vende algo (>0) e a conta deu 0 (ex: 0.1 * 7 = 0.7 -> int 0), sugere pelo menos 1
             if (this.estoqueMinimo == 0 && this.vendaMediaDiaria.compareTo(BigDecimal.ZERO) > 0) {
                 this.estoqueMinimo = 1;
             }
         }
     }
 
+    // --- CICLO DE VIDA ---
+
     @PrePersist
     @PreUpdate
     public void preSalvar() {
         if (this.descricao != null) this.descricao = this.descricao.toUpperCase().trim();
         if (this.marca != null) this.marca = this.marca.toUpperCase().trim();
+
+        // Limpeza de caracteres especiais para manter consistência
         if (this.ncm != null) this.ncm = this.ncm.replaceAll("\\D", "");
         if (this.cest != null) this.cest = this.cest.replaceAll("\\D", "");
+        if (this.codigoBarras != null) this.codigoBarras = this.codigoBarras.replaceAll("\\D", "");
 
-        // Garante que o preço médio nunca seja nulo
+        // Valores Default Seguros
         if (this.precoMedioPonderado == null) {
             this.precoMedioPonderado = this.precoCusto != null ? this.precoCusto : BigDecimal.ZERO;
         }
+        if (this.estoqueFiscal == null) this.estoqueFiscal = 0;
+        if (this.estoqueNaoFiscal == null) this.estoqueNaoFiscal = 0;
 
         atualizarSaldoTotal();
+    }
+
+    // --- EQUALS & HASHCODE (Melhor prática JPA: Usar apenas ID) ---
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Produto produto = (Produto) o;
+        return id != null && Objects.equals(id, produto.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

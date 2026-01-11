@@ -68,4 +68,23 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
         GROUP BY c.categoria
     """)
     List<ResumoDespesaDTO> agruparDespesasPorPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
+
+    // ==================================================================================
+    // SESSÃO 2: MÉTODOS ADICIONADOS PARA COMPATIBILIDADE COM DASHBOARD SERVICE
+    // ==================================================================================
+
+    /**
+     * Soma valor total por data de vencimento e status dinâmico.
+     * Usado no Dashboard para calcular o "Pagar Hoje" exato.
+     */
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = :status")
+    BigDecimal sumValorByDataVencimentoAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
+
+    /**
+     * Soma valor total vencido antes da data e com status dinâmico.
+     * Usado no Dashboard para calcular "Total Vencido".
+     */
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :data AND c.status = :status")
+    BigDecimal sumValorByDataVencimentoBeforeAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
+
 }

@@ -1,3 +1,0 @@
-2026-01-08 01:41:30.085722-03:00 jdbc[3]: exception
-org.h2.jdbc.JdbcSQLDataException: Value too long for column "CEST CHARACTER VARYING(7)": "'20.019.00' (9)"; SQL statement:
-update produto set ativo=?,categoria=?,cest=?,classificacao_reforma=?,codigo_barras=?,cst=?,descricao=?,dias_para_reposicao=?,estoque_fiscal=?,estoque_minimo=?,estoque_nao_fiscal=?,marca=?,monofasico=?,ncm=?,preco_custo=?,preco_medio=?,preco_venda=?,quantidade_estoque=?,subcategoria=?,unidade=?,url_imagem=?,venda_media_diaria=? where id=? [22001-232]

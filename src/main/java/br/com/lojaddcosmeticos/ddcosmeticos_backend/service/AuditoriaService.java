@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity; // [IMPORTANTE] Import da entidade customizada
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -26,23 +27,46 @@ public class AuditoriaService {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    // 1. Time Travel: Busca todas as versões de um produto
-    // ... imports ...
-
+    // --- 1. Time Travel: Busca histórico de UM produto específico ---
     @Transactional(readOnly = true)
     public List<HistoricoProdutoDTO> buscarHistoricoDoProduto(Long idProduto) {
+        return executarQueryAuditoria(idProduto, 0); // 0 = sem limite
+    }
+
+    // --- 2. Dashboard: Busca as ÚLTIMAS alterações de QUALQUER produto ---
+    @Transactional(readOnly = true)
+    public List<HistoricoProdutoDTO> listarUltimasAlteracoes(int limite) {
+        return executarQueryAuditoria(null, limite);
+    }
+
+    // --- LÓGICA CENTRAL DE AUDITORIA (Reutilizável) ---
+    private List<HistoricoProdutoDTO> executarQueryAuditoria(Long idProduto, int limite) {
         AuditReader reader = AuditReaderFactory.get(entityManager);
 
-        List<Object[]> results = reader.createQuery()
+        var query = reader.createQuery()
                 .forRevisionsOfEntity(Produto.class, false, true)
-                .add(AuditEntity.id().eq(idProduto))
-                .getResultList();
+                .addOrder(AuditEntity.revisionNumber().desc()); // Mais recentes primeiro
 
+        // Filtra por ID se fornecido
+        if (idProduto != null) {
+            query.add(AuditEntity.id().eq(idProduto));
+        }
+
+        // Aplica limite se fornecido (para o Dashboard)
+        if (limite > 0) {
+            query.setMaxResults(limite);
+        }
+
+        List<Object[]> results = query.getResultList();
         List<HistoricoProdutoDTO> historico = new ArrayList<>();
 
         for (Object[] row : results) {
             Produto produtoAntigo = (Produto) row[0];
-            org.hibernate.envers.DefaultRevisionEntity revisionEntity = (org.hibernate.envers.DefaultRevisionEntity) row[1];
+
+            // [CORREÇÃO] Aqui estava o erro.
+            // O Hibernate retorna a sua CustomRevisionEntity, não a Default.
+            CustomRevisionEntity revisionEntity = (CustomRevisionEntity) row[1];
+
             RevisionType revisionType = (RevisionType) row[2];
 
             String tipo = switch (revisionType) {
@@ -51,29 +75,26 @@ public class AuditoriaService {
                 case DEL -> "EXCLUÍDO";
             };
 
-            // AQUI ESTAVA O ERRO: Certifique-se de passar os 7 parâmetros na ordem certa
             historico.add(new HistoricoProdutoDTO(
-                    revisionEntity.getId(),                     // 1. ID da Revisão (Integer)
-                    new Date(revisionEntity.getTimestamp()),    // 2. Data (Date)
-                    tipo,                                       // 3. Tipo (String)
-                    produtoAntigo.getDescricao(),               // 4. Nome (String)
-                    produtoAntigo.getPrecoVenda(),              // 5. Preço Venda (BigDecimal)
-                    produtoAntigo.getPrecoCusto(),              // 6. Preço Custo (BigDecimal)
-                    produtoAntigo.getQuantidadeEmEstoque()      // 7. Estoque (Integer)
+                    revisionEntity.getId(),
+                    new Date(revisionEntity.getTimestamp()),
+                    tipo,
+                    produtoAntigo.getDescricao(),
+                    produtoAntigo.getPrecoVenda(),
+                    produtoAntigo.getPrecoCusto(),
+                    produtoAntigo.getQuantidadeEmEstoque()
             ));
         }
-
-        historico.sort((a, b) -> b.getDataAlteracao().compareTo(a.getDataAlteracao()));
 
         return historico;
     }
 
-    // 2. Lixeira: Lista produtos deletados
+    // --- 3. Lixeira: Lista produtos deletados ---
     public List<Produto> buscarLixeira() {
         return produtoRepository.findAllLixeira();
     }
 
-    // 3. Restaurar: Tira da lixeira
+    // --- 4. Restaurar: Tira da lixeira ---
     @Transactional
     public void restaurarProduto(Long id) {
         produtoRepository.reativarProduto(id);

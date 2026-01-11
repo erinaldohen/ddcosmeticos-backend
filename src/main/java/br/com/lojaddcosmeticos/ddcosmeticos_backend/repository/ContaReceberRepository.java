@@ -58,6 +58,11 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
     // SESSÃO 4: DASHBOARD FINANCEIRO
+
+    // [ADICIONADO] Essencial para o card "Saldo do Dia" no Dashboard
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento = :data")
+    BigDecimal sumValorByDataVencimento(@Param("data") LocalDate data);
+
     @Query("SELECT COALESCE(SUM(c.valorLiquido), 0) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

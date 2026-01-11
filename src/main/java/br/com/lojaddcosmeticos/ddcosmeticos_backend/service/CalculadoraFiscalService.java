@@ -28,8 +28,10 @@ public class CalculadoraFiscalService {
     /**
      * Aplica regras fiscais em uma entidade Produto do banco.
      * Retorna TRUE se houve alteração (para o saneamento saber se precisa salvar).
+     * * [CORREÇÃO] Renomeado de 'aplicarRegrasNoProduto' para 'aplicarRegrasFiscais'
+     * para bater com a chamada nos testes e no ProdutoService.
      */
-    public boolean aplicarRegrasNoProduto(Produto p) {
+    public boolean aplicarRegrasFiscais(Produto p) {
         if (p.getNcm() == null || p.getNcm().isEmpty()) return false;
 
         RegraFiscalResultado resultado = calcularRegras(p.getNcm());

@@ -23,7 +23,14 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
 
+    // [ADICIONADO] Necessário para o método realizarSaneamentoFiscal no Service
+    List<Produto> findAllByAtivoTrue();
+
+    // Busca Paginada (Para o Grid)
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
+
+    // [ADICIONADO] Busca em Lista (Para o Select/Combobox ou métodos internos sem paginação)
+    List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
     // --- 2. CATÁLOGO VISUAL ---
 

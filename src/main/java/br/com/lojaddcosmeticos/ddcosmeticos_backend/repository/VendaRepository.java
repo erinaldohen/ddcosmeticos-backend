@@ -20,6 +20,13 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
+    // --- MÉTODOS SIMPLES (Usados pelo DashboardService) ---
+
+    long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
+
+    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
     // --- OPERAÇÃO ---
 
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
@@ -29,26 +36,23 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
-    // [NOVO] Otimização para relatórios detalhados (Evita N+1 queries)
     @Query("SELECT DISTINCT v FROM Venda v JOIN FETCH v.itens i JOIN FETCH i.produto WHERE v.dataVenda BETWEEN :inicio AND :fim")
     List<Venda> buscarVendasComItensParaRelatorio(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // --- DASHBOARD / BI ---
+    // --- RELATÓRIOS AVANÇADOS (DTOs) ---
 
-    @Query("SELECT COALESCE(SUM(v.totalVenda - v.descontoTotal), 0) FROM Venda v " +
-            "WHERE v.dataVenda BETWEEN :inicio AND :fim " +
-            "AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)")
+    // [ADICIONADO] Correção para o RelatorioService
+    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
             v.dataVenda, 
-            SUM(v.totalVenda - v.descontoTotal),
+            SUM(v.totalVenda),
             COUNT(v) 
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)
         GROUP BY v.dataVenda
         ORDER BY v.dataVenda ASC
     """)
@@ -57,12 +61,11 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
             v.formaPagamento, 
-            SUM(v.totalVenda - v.descontoTotal),
+            SUM(v.totalVenda),
             COUNT(v)
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)
         GROUP BY v.formaPagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
@@ -75,7 +78,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         ) 
         FROM ItemVenda i JOIN i.produto p JOIN i.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusFiscal IN (br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.PENDENTE, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CONCLUIDA)
         GROUP BY p.marca 
         ORDER BY SUM(i.precoUnitario * i.quantidade) DESC
     """)

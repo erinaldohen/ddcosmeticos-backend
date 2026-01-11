@@ -203,7 +203,8 @@ public class ProdutoService {
         List<Produto> todos = produtoRepository.findAll();
         int atualizados = 0;
         for (Produto p : todos) {
-            if (calculadoraFiscalService.aplicarRegrasNoProduto(p)) {
+            // CORREÇÃO: Chamando o método renomeado 'aplicarRegrasFiscais'
+            if (calculadoraFiscalService.aplicarRegrasFiscais(p)) {
                 atualizados++;
             }
         }

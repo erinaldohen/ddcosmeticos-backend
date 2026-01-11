@@ -27,11 +27,14 @@ class ProdutoRepositoryTest {
     @DisplayName("Deve calcular valor total do estoque corretamente")
     void deveCalcularValorTotalEstoque() {
         // Cenário
-        criarProduto("Prod A", new BigDecimal("10.00"), 5); // 5 * 10 = 50
-        criarProduto("Prod B", new BigDecimal("20.00"), 2); // 2 * 20 = 40
+        // Prod A: 5 und * 10.00 = 50.00
+        criarProduto("Prod A", new BigDecimal("10.00"), 5);
+        // Prod B: 2 und * 20.00 = 40.00
+        criarProduto("Prod B", new BigDecimal("20.00"), 2);
+
         // Total esperado: 90.00
 
-        // Ação: Agora usando o método real do repositório
+        // Ação
         BigDecimal total = produtoRepository.calcularValorTotalEstoque();
 
         // Verificação
@@ -39,65 +42,73 @@ class ProdutoRepositoryTest {
     }
 
     @Test
-    @DisplayName("Deve buscar Top produtos mais caros (Correção Case Sensitive)")
+    @DisplayName("Deve buscar Top produtos mais caros")
     void deveBuscarTop50() {
-        // Cenário
+        // Cenário: Cria 60 produtos com preços crescentes
         for (int i = 0; i < 60; i++) {
-            // A entidade converte para "PROD X" automaticamente agora
+            // O preço será i+1. O último (i=59) custará 60.00 e chamará "PROD 59"
             criarProduto("Prod " + i, new BigDecimal(i + 1), 10);
         }
 
         // Ação
-        // Ajuste o método abaixo para o que existe no seu repositório (ex: findTop10ByOrderByPrecoVendaDesc)
         List<Produto> topProdutos = produtoRepository.findTop10ByOrderByPrecoVendaDesc();
 
         // Verificação
-        // Agora esperamos "PROD 59" (Maiúsculo) por causa da regra do @PrePersist
         assertThat(topProdutos).isNotEmpty();
+        assertThat(topProdutos).hasSize(10); // Garante que limitou a 10
+
+        // O primeiro deve ser o mais caro ("PROD 59" convertido para maiúsculo pelo PrePersist)
         assertThat(topProdutos.get(0).getDescricao()).isEqualTo("PROD 59");
     }
 
     @Test
-    @DisplayName("Deve contar produtos abaixo do estoque mínimo")
-    void deveContarProdutosAbaixoMinimo() {
+    @DisplayName("Deve listar produtos com baixo estoque")
+    void deveListarProdutosAbaixoMinimo() {
         // Cenário
         Produto p1 = criarProduto("Baixo 1", BigDecimal.TEN, 2);
-        p1.setEstoqueMinimo(5); // 2 < 5 (Conta)
+        p1.setEstoqueMinimo(5); // 2 < 5 (Entra na lista)
         entityManager.persistAndFlush(p1);
 
         Produto p2 = criarProduto("Baixo 2", BigDecimal.TEN, 0);
-        p2.setEstoqueMinimo(5); // 0 < 5 (Conta)
+        p2.setEstoqueMinimo(5); // 0 < 5 (Entra na lista)
         entityManager.persistAndFlush(p2);
 
         Produto p3 = criarProduto("Normal", BigDecimal.TEN, 10);
-        p3.setEstoqueMinimo(5); // 10 > 5 (Não conta)
+        p3.setEstoqueMinimo(5); // 10 > 5 (Não entra)
         entityManager.persistAndFlush(p3);
 
         // Ação
-        // Ajuste para o nome real do seu método no Repository
         List<Produto> abaixo = produtoRepository.findProdutosComBaixoEstoque();
 
         // Verificação
-        assertThat(abaixo).hasSize(2); // Espera 2, não 3
+        assertThat(abaixo).hasSize(2);
+        // Verifica se os produtos retornados são realmente os que tem baixo estoque
+        assertThat(abaixo).extracting(Produto::getDescricao)
+                .containsExactlyInAnyOrder("BAIXO 1", "BAIXO 2");
     }
 
     // --- MÉTODOS AUXILIARES ---
 
     private Produto criarProduto(String nome, BigDecimal precoCusto, Integer quantidade) {
         Produto produto = new Produto();
-        produto.setDescricao(nome);
-        produto.setCodigoBarras("EAN-" + nome.replaceAll(" ", ""));
-        produto.setPrecoCusto(precoCusto);
-        produto.setPrecoVenda(precoCusto.multiply(new BigDecimal("2.0"))); // Venda = 2x Custo
+        produto.setDescricao(nome); // O @PrePersist vai converter para Uppercase
 
-        // --- CORREÇÃO FUNDAMENTAL ---
-        // Não usamos setQuantidadeEmEstoque, pois o @PrePersist vai zerar.
-        // Usamos setEstoqueNaoFiscal (ou Fiscal)
+        // CORREÇÃO CRÍTICA: Gerar código APENAS NUMÉRICO e ÚNICO.
+        // O @PrePersist da entidade remove letras. Se passar "EAN-...", vira vazio.
+        long eanUnico = System.nanoTime() + (long)(Math.random() * 100000);
+        produto.setCodigoBarras(String.valueOf(eanUnico));
+
+        produto.setPrecoCusto(precoCusto);
+        produto.setPrecoMedioPonderado(precoCusto); // Inicializa para não dar erro de null em cálculos
+        produto.setPrecoVenda(precoCusto.multiply(new BigDecimal("2.0")));
+
+        // Configuração de Estoque (Fiscal + Não Fiscal = Total)
         produto.setEstoqueNaoFiscal(quantidade);
         produto.setEstoqueFiscal(0);
+        // Não precisamos setar quantidadeEmEstoque manualmente pois o @PrePersist calcula
 
-        // Define NCM para passar na validação fiscal
-        produto.setNcm("33049990");
+        produto.setNcm("33049990"); // NCM válido de cosmético
+        produto.setAtivo(true);
 
         return entityManager.persist(produto);
     }

@@ -37,6 +37,7 @@ public class ProdutoController {
     @Autowired private EstoqueService estoqueService;
     @Autowired private ArquivoService arquivoService;
     @Autowired private AuditoriaService auditoriaService;
+    @Autowired private ImpressaoService impressaoService; // Injeção Correta
 
     // --- 1. LEITURA ---
 
@@ -52,7 +53,6 @@ public class ProdutoController {
         String termoBusca = (termo != null && !termo.isBlank()) ? termo : descricao;
         Pageable pageable = PageRequest.of(page, size, Sort.by(sort));
 
-        // Retorna o DTO de Listagem (Protegido)
         return ResponseEntity.ok(produtoService.listarResumo(termoBusca, pageable));
     }
 
@@ -89,9 +89,7 @@ public class ProdutoController {
     @Operation(summary = "Cadastrar Novo Produto")
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
-            // Delega a criação para o serviço
             ProdutoDTO salvo = produtoService.salvar(dados);
-
             URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
                     .buildAndExpand(salvo.id()).toUri();
             return ResponseEntity.created(uri).body(salvo);
@@ -193,5 +191,15 @@ public class ProdutoController {
     public ResponseEntity<String> executarSaneamento() {
         String resultado = produtoService.realizarSaneamentoFiscal();
         return ResponseEntity.ok(resultado);
+    }
+
+    // --- 7. IMPRESSÃO (NOVO) ---
+    @GetMapping("/{id}/etiqueta")
+    @Operation(summary = "Gerar Etiqueta Térmica", description = "Retorna o código ZPL/Texto para impressão de etiqueta.")
+    public ResponseEntity<String> gerarEtiqueta(@PathVariable Long id) {
+        Produto produto = produtoService.buscarPorId(id);
+        // Agora o método existe no ImpressaoService!
+        String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
+        return ResponseEntity.ok(etiqueta);
     }
 }

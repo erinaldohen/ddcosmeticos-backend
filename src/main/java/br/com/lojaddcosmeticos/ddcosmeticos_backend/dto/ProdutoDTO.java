@@ -29,7 +29,12 @@ public record ProdutoDTO(
         BigDecimal precoVenda,
 
         @PositiveOrZero
-        Integer quantidadeEstoque,
+        Integer quantidadeEstoque, // Total
+
+        // --- NOVOS CAMPOS EXPOSTOS (Adicione isto) ---
+        Integer estoqueFiscal,
+        Integer estoqueNaoFiscal,
+        // ---------------------------------------------
 
         @PositiveOrZero
         Integer estoqueMinimo,
@@ -37,41 +42,41 @@ public record ProdutoDTO(
         @Size(max = 20, message = "NCM deve ter no máximo 20 dígitos")
         String ncm,
 
-        // Dados de Classificação
         String marca,
         String categoria,
         String subcategoria,
-
         String cest,
-
-        // --- NOVOS CAMPOS FISCAIS ---
         String cst,
-        Boolean monofasico, // Método gerado: monofasico()
+        Boolean monofasico,
         TipoTributacaoReforma classificacaoReforma,
-
         String urlImagem,
         boolean ativo
 ) {
-        public ProdutoDTO(Produto produto) {
-                this(
-                        produto.getId(),
-                        produto.getCodigoBarras(),
-                        produto.getDescricao(),
-                        produto.getUnidade(),
-                        produto.getPrecoCusto(),
-                        produto.getPrecoVenda(),
-                        produto.getQuantidadeEmEstoque(),
-                        produto.getEstoqueMinimo(),
-                        produto.getNcm(),
-                        produto.getMarca(),
-                        produto.getCategoria(),
-                        produto.getSubcategoria(),
-                        produto.getCest(),
-                        produto.getCst(),
-                        produto.isMonofasico(),
-                        produto.getClassificacaoReforma(),
-                        produto.getUrlImagem(),
-                        produto.isAtivo()
-                );
-        }
+    public ProdutoDTO(Produto produto) {
+        this(
+                produto.getId(),
+                produto.getCodigoBarras(),
+                produto.getDescricao(),
+                produto.getUnidade(),
+                produto.getPrecoCusto(),
+                produto.getPrecoVenda(),
+                produto.getQuantidadeEmEstoque(),
+
+                // Mapeando os novos campos do Modelo para o DTO
+                produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0,
+                produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0,
+
+                produto.getEstoqueMinimo(),
+                produto.getNcm(),
+                produto.getMarca(),
+                produto.getCategoria(),
+                produto.getSubcategoria(),
+                produto.getCest(),
+                produto.getCst(),
+                produto.isMonofasico(),
+                produto.getClassificacaoReforma(),
+                produto.getUrlImagem(),
+                produto.isAtivo()
+        );
+    }
 }

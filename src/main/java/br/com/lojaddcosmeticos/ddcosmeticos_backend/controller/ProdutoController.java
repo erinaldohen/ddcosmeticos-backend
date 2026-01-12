@@ -202,4 +202,11 @@ public class ProdutoController {
         String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
         return ResponseEntity.ok(etiqueta);
     }
+
+    @PatchMapping("/{ean}/reativar")
+    @Operation(summary = "Reativar Produto", description = "Reativa um produto que estava excluído logicamente (Inativo).")
+    public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
+        produtoService.reativarPorEan(ean);
+        return ResponseEntity.ok().build();
+    }
 }

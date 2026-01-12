@@ -23,17 +23,15 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
 
-    // [ADICIONADO] Necessário para o método realizarSaneamentoFiscal no Service
     List<Produto> findAllByAtivoTrue();
 
     // Busca Paginada (Para o Grid)
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
 
-    // [ADICIONADO] Busca em Lista (Para o Select/Combobox ou métodos internos sem paginação)
+    // Busca em Lista (Para Selects)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
     // --- 2. CATÁLOGO VISUAL ---
-
     @Query("SELECT p FROM Produto p WHERE " +
             "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
@@ -42,12 +40,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
-
-    // --- NOVO MÉTODO PARA CORRIGIR O TESTE ---
     List<Produto> findTop10ByOrderByPrecoVendaDesc();
 
     // --- 3. DASHBOARD E RELATÓRIOS ---
-
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
@@ -62,14 +57,17 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
     long contarProdutosSemFiscal();
 
-    // --- 4. MANUTENÇÃO ---
+    // --- 4. MANUTENÇÃO / LIXEIRA ---
 
+    // Busca inclusive INATIVOS (Usado para validar duplicidade e reativar)
     @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
+    // Lista da Lixeira (Usado pelo AuditoriaService)
     @Query(value = "SELECT * FROM produto WHERE ativo = false", nativeQuery = true)
     List<Produto> findAllLixeira();
 
+    // Reativar por ID (Usado pelo AuditoriaService)
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);

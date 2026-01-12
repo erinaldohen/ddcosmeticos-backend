@@ -10,10 +10,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.PageRequest; // Importante
+import org.springframework.data.domain.Pageable;    // Importante
+import org.springframework.data.domain.Sort;        // Importante
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -37,27 +36,25 @@ public class ProdutoController {
     @Autowired private EstoqueService estoqueService;
     @Autowired private ArquivoService arquivoService;
     @Autowired private AuditoriaService auditoriaService;
-    @Autowired private ImpressaoService impressaoService; // Injeção Correta
+    @Autowired private ImpressaoService impressaoService;
 
     // --- 1. LEITURA ---
-
     @GetMapping
-    @Operation(summary = "Listar produtos (Resumo)", description = "Retorna dados seguros para listagem (sem custo).")
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String descricao,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "0") Integer page, // Integer para evitar null pointer
+            @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(defaultValue = "descricao") String sort) {
 
         String termoBusca = (termo != null && !termo.isBlank()) ? termo : descricao;
+        // Paginação manual para evitar o erro 400
         Pageable pageable = PageRequest.of(page, size, Sort.by(sort));
 
         return ResponseEntity.ok(produtoService.listarResumo(termoBusca, pageable));
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Buscar por ID")
     public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(produtoService.buscarPorId(id));
     }
@@ -84,9 +81,7 @@ public class ProdutoController {
     }
 
     // --- 2. ESCRITA ---
-
     @PostMapping
-    @Operation(summary = "Cadastrar Novo Produto")
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
             ProdutoDTO salvo = produtoService.salvar(dados);
@@ -111,7 +106,6 @@ public class ProdutoController {
     }
 
     // --- 3. ESTOQUE E PREÇO ---
-
     @PostMapping("/estoque")
     public ResponseEntity<?> adicionarEstoque(
             @RequestParam String ean,
@@ -143,11 +137,8 @@ public class ProdutoController {
 
     @GetMapping("/{id}/sugestao-preco")
     public ResponseEntity<AnalisePrecificacaoDTO> obterSugestao(@PathVariable String codigoBarras) {
-        try {
-            return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
-        } catch (Exception e) {
-            return ResponseEntity.notFound().build();
-        }
+        try { return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras)); }
+        catch (Exception e) { return ResponseEntity.notFound().build(); }
     }
 
     @PatchMapping("/{id}/definir-preco")
@@ -156,18 +147,15 @@ public class ProdutoController {
         return ResponseEntity.ok().build();
     }
 
-    // --- 4. ARQUIVOS E IMAGENS ---
-
+    // --- 4. ARQUIVOS ---
     @PostMapping(value = "/{id}/imagem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Void> uploadImagem(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
         String nomeArquivo = arquivoService.salvarImagem(file);
-        String urlAcesso = "/imagens/" + nomeArquivo;
-        produtoService.atualizarUrlImagem(id, urlAcesso);
+        produtoService.atualizarUrlImagem(id, "/imagens/" + nomeArquivo);
         return ResponseEntity.ok().build();
     }
 
-    // --- 5. AUDITORIA ---
-
+    // --- 5. AUDITORIA E LIXEIRA ---
     @GetMapping("/{id}/historico")
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
         return ResponseEntity.ok(produtoService.buscarHistorico(id));
@@ -175,6 +163,7 @@ public class ProdutoController {
 
     @GetMapping("/lixeira")
     public ResponseEntity<List<Produto>> getLixeira() {
+        // Mantém AuditoriaService se você tiver lógica lá, ou muda para produtoService.listarLixeira()
         return ResponseEntity.ok(auditoriaService.buscarLixeira());
     }
 
@@ -184,29 +173,25 @@ public class ProdutoController {
         return ResponseEntity.ok().build();
     }
 
-    // --- 6. SANEAMENTO FISCAL (NOVO) ---
-    @PostMapping("/saneamento-fiscal")
-    @PreAuthorize("hasRole('ROLE_ADMIN')")
-    @Operation(summary = "Correção Fiscal em Massa", description = "Recalcula CST e Classificação de todos os produtos baseados no NCM.")
-    public ResponseEntity<String> executarSaneamento() {
-        String resultado = produtoService.realizarSaneamentoFiscal();
-        return ResponseEntity.ok(resultado);
-    }
-
-    // --- 7. IMPRESSÃO (NOVO) ---
-    @GetMapping("/{id}/etiqueta")
-    @Operation(summary = "Gerar Etiqueta Térmica", description = "Retorna o código ZPL/Texto para impressão de etiqueta.")
-    public ResponseEntity<String> gerarEtiqueta(@PathVariable Long id) {
-        Produto produto = produtoService.buscarPorId(id);
-        // Agora o método existe no ImpressaoService!
-        String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
-        return ResponseEntity.ok(etiqueta);
-    }
-
+    // [CORREÇÃO] Endpoint EAN para Reactivação (Frontend usa este)
     @PatchMapping("/{ean}/reativar")
     @Operation(summary = "Reativar Produto", description = "Reativa um produto que estava excluído logicamente (Inativo).")
     public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
         produtoService.reativarPorEan(ean);
         return ResponseEntity.ok().build();
+    }
+
+    // --- 6. EXTRAS ---
+    @PostMapping("/saneamento-fiscal")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public ResponseEntity<String> executarSaneamento() {
+        return ResponseEntity.ok(produtoService.realizarSaneamentoFiscal());
+    }
+
+    @GetMapping("/{id}/etiqueta")
+    public ResponseEntity<String> gerarEtiqueta(@PathVariable Long id) {
+        Produto produto = produtoService.buscarPorId(id);
+        String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
+        return ResponseEntity.ok(etiqueta);
     }
 }

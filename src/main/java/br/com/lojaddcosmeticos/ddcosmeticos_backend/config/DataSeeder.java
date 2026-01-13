@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Component
-@Profile("!test") // Não roda em testes para evitar conflitos
+@Profile("!test")
 public class DataSeeder implements CommandLineRunner {
 
     private final UsuarioRepository usuarioRepository;
@@ -84,11 +84,12 @@ public class DataSeeder implements CommandLineRunner {
                     String[] colunas = line.split(";", -1);
                     if (colunas.length < 5) continue;
 
+                    // Trata e limpa o EAN para evitar duplicados por lixo no CSV
                     String codigoBarras = tratarCodigoBarras(colunas[0]);
+
                     if (codigoBarras.isEmpty() || codigoBarras.equals("0")) continue;
 
-                    // [CORREÇÃO CRÍTICA]: Usa findByEanIrrestrito para checar existência física (inclui inativos)
-                    // Isso evita o erro Unique Index Violation
+                    // [CORREÇÃO]: Verifica se o código já existe para evitar DataIntegrityViolationException
                     if (produtoRepository.findByEanIrrestrito(codigoBarras).isPresent()) {
                         pulados++;
                         continue;
@@ -100,7 +101,7 @@ public class DataSeeder implements CommandLineRunner {
 
                     BigDecimal custo = converterValor(colunas[3]);
                     p.setPrecoCusto(custo);
-                    p.setPrecoMedioPonderado(custo); // Inicializa preço médio
+                    p.setPrecoMedioPonderado(custo);
 
                     p.setPrecoVenda(converterValor(colunas[4]));
                     p.setUnidade(limparTexto(colunas[7]));
@@ -109,20 +110,22 @@ public class DataSeeder implements CommandLineRunner {
                     if (colunas.length > 10) p.setSubcategoria(limparTexto(colunas[10]));
                     if (colunas.length > 14) p.setMarca(limparTexto(colunas[14]));
 
-                    // Defaults
+                    // --- NOVOS CAMPOS FISCAIS ---
+                    p.setOrigem("0");
+                    p.setImpostoSeletivo(false);
                     p.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
                     p.setAtivo(true);
 
                     Integer estoque = converterInteiro(colunas[13]);
                     p.setEstoqueNaoFiscal(estoque);
                     p.setEstoqueFiscal(0);
-                    p.setQuantidadeEmEstoque(estoque); // Garante consistência
+                    p.setQuantidadeEmEstoque(estoque);
                     p.setEstoqueMinimo(converterInteiro(colunas[12]));
 
                     if (colunas.length > 20) p.setNcm(limparTexto(colunas[20]));
                     if (colunas.length > 22) p.setCest(limparTexto(colunas[22]));
 
-                    // Aplica Inteligência Fiscal (CST, Monofásico) automaticamente
+                    // Aplica inteligência fiscal (CST, Monofásico)
                     calculadoraFiscalService.aplicarRegrasFiscais(p);
 
                     if (p.getDescricao() != null && !p.getDescricao().isEmpty()) {
@@ -130,21 +133,22 @@ public class DataSeeder implements CommandLineRunner {
                         count++;
                     }
                 }
-                log.info("✅ Importação finalizada! {} cadastrados, {} pulados (já existiam).", count, pulados);
+                log.info("✅ Importação finalizada! {} cadastrados, {} pulados.", count, pulados);
             }
 
         } catch (Exception e) {
-            log.error("❌ Erro ao importar CSV: ", e);
+            log.error("❌ Erro fatal ao importar CSV: ", e);
         }
     }
 
     private String tratarCodigoBarras(String bruto) {
-        String limpo = limparTexto(bruto);
+        String limpo = limparTexto(bruto).replaceAll("\\D", "");
         if (limpo.isEmpty()) return "";
-        if (limpo.toUpperCase().contains("E+")) {
+
+        // Trata notação científica do Excel (ex: 7,89E+12)
+        if (bruto.toUpperCase().contains("E+")) {
             try {
-                limpo = limpo.replace(",", ".");
-                BigDecimal bd = new BigDecimal(limpo);
+                BigDecimal bd = new BigDecimal(bruto.replace(",", "."));
                 return bd.toPlainString();
             } catch (Exception e) {
                 return limpo;

@@ -10,9 +10,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest; // Importante
-import org.springframework.data.domain.Pageable;    // Importante
-import org.springframework.data.domain.Sort;        // Importante
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/produtos")
@@ -43,12 +44,11 @@ public class ProdutoController {
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String descricao,
-            @RequestParam(defaultValue = "0") Integer page, // Integer para evitar null pointer
+            @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(defaultValue = "descricao") String sort) {
 
         String termoBusca = (termo != null && !termo.isBlank()) ? termo : descricao;
-        // Paginação manual para evitar o erro 400
         Pageable pageable = PageRequest.of(page, size, Sort.by(sort));
 
         return ResponseEntity.ok(produtoService.listarResumo(termoBusca, pageable));
@@ -85,8 +85,16 @@ public class ProdutoController {
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
             ProdutoDTO salvo = produtoService.salvar(dados);
-            URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
-                    .buildAndExpand(salvo.id()).toUri();
+
+            // CORREÇÃO LINHA 89: Acessando o campo id corretamente
+            // Se for Record use salvo.id(), se for Classe com @Data use salvo.getId()
+            Long idSalvo = salvo.id();
+
+            URI uri = ServletUriComponentsBuilder.fromCurrentRequest()
+                    .path("/{id}")
+                    .buildAndExpand(idSalvo)
+                    .toUri();
+
             return ResponseEntity.created(uri).body(salvo);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -163,7 +171,6 @@ public class ProdutoController {
 
     @GetMapping("/lixeira")
     public ResponseEntity<List<Produto>> getLixeira() {
-        // Mantém AuditoriaService se você tiver lógica lá, ou muda para produtoService.listarLixeira()
         return ResponseEntity.ok(auditoriaService.buscarLixeira());
     }
 
@@ -173,7 +180,6 @@ public class ProdutoController {
         return ResponseEntity.ok().build();
     }
 
-    // [CORREÇÃO] Endpoint EAN para Reactivação (Frontend usa este)
     @PatchMapping("/{ean}/reativar")
     @Operation(summary = "Reativar Produto", description = "Reativa um produto que estava excluído logicamente (Inativo).")
     public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
@@ -193,5 +199,17 @@ public class ProdutoController {
         Produto produto = produtoService.buscarPorId(id);
         String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
         return ResponseEntity.ok(etiqueta);
+    }
+
+    /**
+     * --- [NOVO] PRÓXIMO SEQUENCIAL PARA EAN INTERNO ---
+     * Chamado pelo Frontend para gerar um código sequencial no padrão 789
+     */
+    @GetMapping("/proximo-sequencial")
+    @Operation(summary = "Obter próximo sequencial", description = "Retorna o próximo número disponível para geração de EAN interno.")
+    public ResponseEntity<Map<String, Object>> obterProximoSequencial() {
+        // Retorna o timestamp atual como sequencial único.
+        // Em produção, isso pode ser trocado por: return ResponseEntity.ok(Map.of("sequencial", produtoRepository.count() + 1));
+        return ResponseEntity.ok(Map.of("sequencial", System.currentTimeMillis()));
     }
 }

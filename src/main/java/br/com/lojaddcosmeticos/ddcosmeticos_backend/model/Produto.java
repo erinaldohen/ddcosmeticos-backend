@@ -53,15 +53,35 @@ public class Produto implements Serializable {
     // --- DADOS FISCAIS ---
     @Column(length = 10)
     private String ncm;
+
     @Column(length = 10)
     private String cest;
+
     @Column(length = 4)
     private String cst;
+
+    /**
+     * Origem da Mercadoria (Padrão SEFAZ: 0 a 8)
+     * 0 - Nacional, 1 - Estrangeira (Importação Direta), etc.
+     */
+    @Column(length = 1)
+    private String origem = "0";
+
     private boolean monofasico = false;
 
+    /**
+     * Reforma Tributária (LC 214) - IBS/CBS
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "classificacao_reforma")
     private TipoTributacaoReforma classificacaoReforma = TipoTributacaoReforma.PADRAO;
+
+    /**
+     * Imposto Seletivo (LC 214) - "Imposto do Pecado"
+     * Aplica-se a itens prejudiciais à saúde ou meio ambiente.
+     */
+    @Column(name = "imposto_seletivo")
+    private boolean impostoSeletivo = false;
 
     // --- FINANCEIRO ---
     @Column(name = "preco_venda", precision = 10, scale = 2, nullable = false)
@@ -107,7 +127,6 @@ public class Produto implements Serializable {
     public void recalcularEstoqueMinimoSugerido() {
         if (this.vendaMediaDiaria != null && this.diasParaReposicao != null) {
             this.estoqueMinimo = this.vendaMediaDiaria.multiply(new BigDecimal(this.diasParaReposicao)).intValue();
-            // Se vende algo (>0) e a conta deu 0 (ex: 0.1 * 7 = 0.7 -> int 0), sugere pelo menos 1
             if (this.estoqueMinimo == 0 && this.vendaMediaDiaria.compareTo(BigDecimal.ZERO) > 0) {
                 this.estoqueMinimo = 1;
             }
@@ -122,10 +141,14 @@ public class Produto implements Serializable {
         if (this.descricao != null) this.descricao = this.descricao.toUpperCase().trim();
         if (this.marca != null) this.marca = this.marca.toUpperCase().trim();
 
-        // Limpeza de caracteres especiais para manter consistência
+        // Limpeza de campos para manter integridade com SEFAZ
         if (this.ncm != null) this.ncm = this.ncm.replaceAll("\\D", "");
         if (this.cest != null) this.cest = this.cest.replaceAll("\\D", "");
         if (this.codigoBarras != null) this.codigoBarras = this.codigoBarras.replaceAll("\\D", "");
+
+        // Garante que origem tenha apenas 1 caractere numérico
+        if (this.origem != null) this.origem = this.origem.replaceAll("\\D", "").substring(0, 1);
+        if (this.origem == null || this.origem.isEmpty()) this.origem = "0";
 
         // Valores Default Seguros
         if (this.precoMedioPonderado == null) {
@@ -136,8 +159,6 @@ public class Produto implements Serializable {
 
         atualizarSaldoTotal();
     }
-
-    // --- EQUALS & HASHCODE (Melhor prática JPA: Usar apenas ID) ---
 
     @Override
     public boolean equals(Object o) {

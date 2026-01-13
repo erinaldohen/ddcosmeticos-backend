@@ -69,7 +69,6 @@ public class ProdutoService {
             pagina = produtoRepository.findByDescricaoContainingIgnoreCaseOrCodigoBarras(termo, termo, pageable);
         }
 
-        // Uso do construtor da Classe DTO
         return pagina.map(p -> new ProdutoListagemDTO(
                 p.getId(), p.getDescricao(), p.getPrecoVenda(), p.getUrlImagem(),
                 p.getQuantidadeEmEstoque(), p.isAtivo(), p.getCodigoBarras(),
@@ -131,7 +130,11 @@ public class ProdutoService {
 
         Produto produto = new Produto();
         copiarDtoParaEntidade(dto, produto);
-        produto.setPrecoMedioPonderado(dto.precoCusto());
+
+        // Inicializa preço médio com o custo, garantindo que não seja nulo
+        BigDecimal custoInicial = dto.precoCusto() != null ? dto.precoCusto() : BigDecimal.ZERO;
+        produto.setPrecoMedioPonderado(custoInicial);
+
         produto.setQuantidadeEmEstoque(0);
         produto.setAtivo(true);
         produto = produtoRepository.save(produto);
@@ -150,7 +153,7 @@ public class ProdutoService {
         Produto produto = buscarPorId(id);
         copiarDtoParaEntidade(dados, produto);
 
-        if (!produto.getCodigoBarras().equals(dados.codigoBarras())) {
+        if (dados.codigoBarras() != null && !dados.codigoBarras().equals(produto.getCodigoBarras())) {
             if (produtoRepository.existsByCodigoBarras(dados.codigoBarras())) {
                 throw new IllegalStateException("Já existe outro produto com este EAN.");
             }
@@ -183,7 +186,6 @@ public class ProdutoService {
         produtoRepository.save(produto);
     }
 
-    // [ESSENCIAL] Reativa usando EAN (chamado pelo Controller)
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public void reativarPorEan(String ean) {
@@ -206,20 +208,28 @@ public class ProdutoService {
     }
 
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
+        // Campos de Identificação e Básicos (Sintaxe de Record)
         produto.setCodigoBarras(dto.codigoBarras());
         produto.setDescricao(dto.descricao());
         produto.setMarca(dto.marca());
         produto.setCategoria(dto.categoria());
         produto.setSubcategoria(dto.subcategoria());
         produto.setUnidade(dto.unidade() != null ? dto.unidade() : "UN");
-        produto.setPrecoCusto(dto.precoCusto());
-        produto.setPrecoVenda(dto.precoVenda());
-        produto.setEstoqueMinimo(dto.estoqueMinimo());
-        produto.setUrlImagem(dto.urlImagem());
+
+        // Dados Fiscais (Incluindo os novos campos da Reforma e SEFAZ)
         produto.setNcm(dto.ncm());
         produto.setCest(dto.cest());
         produto.setCst(dto.cst());
+        produto.setOrigem(dto.origem() != null ? dto.origem() : "0"); // Padrão Nacional
         produto.setMonofasico(Boolean.TRUE.equals(dto.monofasico()));
         produto.setClassificacaoReforma(dto.classificacaoReforma() != null ? dto.classificacaoReforma() : TipoTributacaoReforma.PADRAO);
+        produto.setImpostoSeletivo(Boolean.TRUE.equals(dto.impostoSeletivo()));
+
+        // Financeiro e Estoque
+        produto.setPrecoCusto(dto.precoCusto());
+        produto.setPrecoVenda(dto.precoVenda());
+        produto.setEstoqueMinimo(dto.estoqueMinimo());
+        produto.setDiasParaReposicao(dto.diasParaReposicao());
+        produto.setUrlImagem(dto.urlImagem());
     }
 }

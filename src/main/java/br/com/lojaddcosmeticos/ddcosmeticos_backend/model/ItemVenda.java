@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Data
 @Entity
@@ -18,7 +19,6 @@ public class ItemVenda {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Quantidade agora é BigDecimal para aceitar fracionados (e alinhar com o DTO)
     @Column(nullable = false, precision = 10, scale = 4)
     private BigDecimal quantidade;
 
@@ -28,6 +28,17 @@ public class ItemVenda {
     @Column(name = "custo_unitario_historico", precision = 10, scale = 4)
     private BigDecimal custoUnitarioHistorico;
 
+    // --- NOVOS CAMPOS FISCAIS (LC 214) ---
+    // Grava a alíquota aplicada no momento exato da venda para auditoria
+    @Column(name = "aliquota_ibs_aplicada", precision = 10, scale = 4)
+    private BigDecimal aliquotaIbsAplicada;
+
+    @Column(name = "aliquota_cbs_aplicada", precision = 10, scale = 4)
+    private BigDecimal aliquotaCbsAplicada;
+
+    @Column(name = "valor_imposto_seletivo", precision = 10, scale = 2)
+    private BigDecimal valorImpostoSeletivo = BigDecimal.ZERO;
+
     @ManyToOne
     @JoinColumn(name = "venda_id", nullable = false)
     private Venda venda;
@@ -36,23 +47,35 @@ public class ItemVenda {
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
 
-    // --- MÉTODOS CALCULADOS (CORREÇÃO DO ERRO) ---
+    // --- MÉTODOS CALCULADOS ---
 
-    // Total da Venda deste item (Preço x Qtde)
     public BigDecimal getTotalItem() {
         if (precoUnitario == null || quantidade == null) return BigDecimal.ZERO;
         return precoUnitario.multiply(quantidade);
     }
 
-    // Total de Custo deste item (Custo Histórico x Qtde)
-    // ESTE É O MÉTODO QUE FALTAVA
     public BigDecimal getCustoTotal() {
         if (custoUnitarioHistorico == null || quantidade == null) return BigDecimal.ZERO;
         return custoUnitarioHistorico.multiply(quantidade);
     }
 
-    // Lucro Bruto deste item
     public BigDecimal getLucroItem() {
         return getTotalItem().subtract(getCustoTotal());
+    }
+
+    /**
+     * Calcula o total de impostos da Reforma (IBS + CBS) retidos neste item.
+     */
+    public BigDecimal getTotalImpostosReforma() {
+        if (aliquotaIbsAplicada == null || aliquotaCbsAplicada == null) return BigDecimal.ZERO;
+        BigDecimal aliquotaTotal = aliquotaIbsAplicada.add(aliquotaCbsAplicada);
+        return getTotalItem().multiply(aliquotaTotal).add(valorImpostoSeletivo != null ? valorImpostoSeletivo : BigDecimal.ZERO);
+    }
+
+    /**
+     * Lucro Líquido Real após impostos da Reforma e Imposto Seletivo.
+     */
+    public BigDecimal getLucroLiquidoItem() {
+        return getLucroItem().subtract(getTotalImpostosReforma());
     }
 }

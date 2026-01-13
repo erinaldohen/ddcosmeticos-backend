@@ -41,10 +41,12 @@ public class VendaService {
     @Autowired private ClienteRepository clienteRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
     @Autowired private ConfiguracaoLojaRepository configuracaoLojaRepository;
+    @Autowired private RegraTributariaRepository regraTributariaRepository;
 
     @Autowired private EstoqueService estoqueService;
     @Autowired private FinanceiroService financeiroService;
     @Autowired private NfceService nfceService;
+    @Autowired private CalculadoraFiscalService calculadoraFiscalService;
 
     @Transactional
     public Venda realizarVenda(VendaRequestDTO dto) {
@@ -150,12 +152,10 @@ public class VendaService {
             validarCreditoDoCliente(doc, valorFinal);
         }
 
-        // CORREÇÃO: Usar registrarSaidaVenda em vez de realizarAjusteInventario
         venda.getItens().forEach(item -> {
             estoqueService.registrarSaidaVenda(item.getProduto(), item.getQuantidade().intValue());
         });
 
-        // Lançamento financeiro
         Long clienteId = venda.getCliente() != null ? venda.getCliente().getId() : null;
         financeiroService.lancarReceitaDeVenda(
                 venda.getId(),
@@ -209,19 +209,12 @@ public class VendaService {
             return;
         }
 
-        // CORREÇÃO: No cancelamento, fazemos uma entrada de ajuste para devolver o estoque
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
             ajuste.setQuantidade(item.getQuantidade());
             ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
-            // Aqui usamos realizarAjusteManual porque é uma devolução atípica
-            // Mas precisamos garantir que a "nova quantidade" calculada esteja correta no EstoqueService
-            // Ou criamos um método específico 'estornarVenda' no EstoqueService.
-            // Para simplificar, vou usar registrarEntrada simulando uma devolução sem NF.
-            // Mas o ideal seria ajustar o EstoqueService para suportar estorno.
 
-            // Vamos usar o realizarAjusteManual somando a quantidade
             int qtdAtual = item.getProduto().getQuantidadeEmEstoque();
             ajuste.setQuantidade(new BigDecimal(qtdAtual + item.getQuantidade().intValue()));
             ajuste.setObservacao("Estorno Venda #" + idVenda);
@@ -235,8 +228,17 @@ public class VendaService {
         vendaRepository.save(venda);
     }
 
+    /**
+     * ATUALIZADO: Processa itens e congela alíquotas da Reforma (LC 214)
+     */
     private BigDecimal processarItensDaVenda(Venda venda, VendaRequestDTO dto) {
         BigDecimal totalAcumulado = BigDecimal.ZERO;
+
+        // Busca regra vigente para o split payment
+        LocalDate hoje = LocalDate.now();
+        RegraTributaria regra = regraTributariaRepository.findRegraVigente(hoje)
+                .orElse(new RegraTributaria(hoje.getYear(), hoje, hoje, "0.00", "0.00", "1.0"));
+
         for (ItemVendaDTO itemDto : dto.itens()) {
             Produto produto = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + itemDto.getCodigoBarras()));
@@ -247,8 +249,20 @@ public class VendaService {
             item.setPrecoUnitario(produto.getPrecoVenda());
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
 
+            // --- INTELIGÊNCIA FISCAL LC 214 ---
+            // Congela as alíquotas do momento da venda
+            item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
+            item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
+
+            // Calcula imposto seletivo se aplicável
+            if (produto.isImpostoSeletivo()) {
+                // Simulação ad valorem (ex: 15% sobre o item)
+                BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
+                item.setValorImpostoSeletivo(valorItem.multiply(new BigDecimal("0.15")).setScale(2, RoundingMode.HALF_UP));
+            }
+
             venda.adicionarItem(item);
-            totalAcumulado = totalAcumulado.add(item.getPrecoUnitario().multiply(item.getQuantidade()));
+            totalAcumulado = totalAcumulado.add(item.getTotalItem());
         }
         return totalAcumulado;
     }
@@ -291,7 +305,6 @@ public class VendaService {
     }
 
     private void executarFluxosOperacionais(Venda venda, VendaRequestDTO dto) {
-        // CORREÇÃO: Usar registrarSaidaVenda em vez de realizarAjusteInventario
         venda.getItens().forEach(item -> {
             estoqueService.registrarSaidaVenda(item.getProduto(), item.getQuantidade().intValue());
         });

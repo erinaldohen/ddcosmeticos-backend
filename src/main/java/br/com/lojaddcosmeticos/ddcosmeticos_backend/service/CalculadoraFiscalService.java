@@ -22,14 +22,12 @@ public class CalculadoraFiscalService {
     private RegraTributariaRepository regraRepository;
 
     // ==================================================================================
-    // NOVO MÓDULO: INTELIGÊNCIA FISCAL (CLASSIFICAÇÃO AUTOMÁTICA)
+    // MÓDULO: INTELIGÊNCIA FISCAL (CLASSIFICAÇÃO AUTOMÁTICA ATUALIZADA)
     // ==================================================================================
 
     /**
      * Aplica regras fiscais em uma entidade Produto do banco.
-     * Retorna TRUE se houve alteração (para o saneamento saber se precisa salvar).
-     * * [CORREÇÃO] Renomeado de 'aplicarRegrasNoProduto' para 'aplicarRegrasFiscais'
-     * para bater com a chamada nos testes e no ProdutoService.
+     * Retorna TRUE se houve alteração para que o serviço de saneamento persista os dados.
      */
     public boolean aplicarRegrasFiscais(Produto p) {
         if (p.getNcm() == null || p.getNcm().isEmpty()) return false;
@@ -37,18 +35,27 @@ public class CalculadoraFiscalService {
         RegraFiscalResultado resultado = calcularRegras(p.getNcm());
         boolean alterou = false;
 
+        // Verifica e atualiza Monofásico
         if (p.isMonofasico() != resultado.monofasico) {
             p.setMonofasico(resultado.monofasico);
             alterou = true;
         }
+        // Verifica e atualiza CST/CSOSN
         if (p.getCst() == null || !p.getCst().equals(resultado.cst)) {
             p.setCst(resultado.cst);
             alterou = true;
         }
+        // Verifica e atualiza Classificação da Reforma
         if (p.getClassificacaoReforma() != resultado.classificacaoReforma) {
             p.setClassificacaoReforma(resultado.classificacaoReforma);
             alterou = true;
         }
+        // [NOVO] Verifica e atualiza Imposto Seletivo (LC 214)
+        if (p.isImpostoSeletivo() != resultado.impostoSeletivo) {
+            p.setImpostoSeletivo(resultado.impostoSeletivo);
+            alterou = true;
+        }
+
         return alterou;
     }
 
@@ -66,43 +73,60 @@ public class CalculadoraFiscalService {
         dto.setMonofasico(resultado.monofasico);
         dto.setCst(resultado.cst);
         dto.setClassificacaoReforma(resultado.classificacaoReforma.name());
+        // Se o seu DTO externo suportar o campo, adicione: dto.setImpostoSeletivo(resultado.impostoSeletivo);
     }
 
-    // Lógica baseada no NCM (Lei 10.147/2000 e LC 214/2025)
+    /**
+     * Lógica central de classificação baseada em NCM e Legislação Vigente.
+     */
     private RegraFiscalResultado calcularRegras(String ncm) {
         String ncmLimpo = ncm.replace(".", "").trim();
 
-        // 1. Monofásico (Cosméticos e Higiene Pessoal)
+        // 1. Monofásico (Lei 10.147/2000 - Cosméticos, Higiene e Toucador)
         boolean isMonofasico =
-                ncmLimpo.startsWith("3303") ||
-                        ncmLimpo.startsWith("3304") ||
-                        ncmLimpo.startsWith("3305") ||
-                        ncmLimpo.startsWith("3307") ||
-                        ncmLimpo.startsWith("3401") ||
-                        ncmLimpo.startsWith("9619");
+                ncmLimpo.startsWith("3303") || // Perfumes
+                        ncmLimpo.startsWith("3304") || // Maquiagem/Cremes
+                        ncmLimpo.startsWith("3305") || // Shampoos
+                        ncmLimpo.startsWith("3307") || // Desodorantes
+                        ncmLimpo.startsWith("3401") || // Sabões
+                        ncmLimpo.startsWith("9619");   // Absorventes/Fraldas
 
         // 2. CST / CSOSN (Simples Nacional)
-        // 500 = ICMS cobrado anteriormente por ST ou antecipação (Monofásico)
-        // 102 = Tributado pelo Simples
+        // 500 = ICMS cobrado anteriormente por ST ou Monofásico
         String cst = isMonofasico ? "500" : "102";
 
-        // 3. Reforma Tributária
+        // 3. Reforma Tributária (LC 214)
         TipoTributacaoReforma classificacao;
-        if (ncmLimpo.startsWith("9619")) {
+        boolean impostoSeletivo = false;
+
+        if (ncmLimpo.startsWith("9619") || ncmLimpo.startsWith("0201") ||
+                ncmLimpo.startsWith("1006") || ncmLimpo.startsWith("0713")) {
+            // Itens de higiene básica ou alimentos da Cesta Básica Nacional
             classificacao = TipoTributacaoReforma.CESTA_BASICA;
         } else if (ncmLimpo.startsWith("3306") || ncmLimpo.startsWith("3401")) {
+            // Higiene Bucal e Sabões (Alíquota reduzida em 60%)
             classificacao = TipoTributacaoReforma.REDUZIDA_60;
+        } else if (ncmLimpo.startsWith("2203") || ncmLimpo.startsWith("2204") || ncmLimpo.startsWith("2402")) {
+            // Cervejas, Vinhos ou Tabaco (Sujeito ao Imposto Seletivo)
+            classificacao = TipoTributacaoReforma.IMPOSTO_SELETIVO;
+            impostoSeletivo = true;
         } else {
             classificacao = TipoTributacaoReforma.PADRAO;
         }
 
-        return new RegraFiscalResultado(isMonofasico, cst, classificacao);
+        return new RegraFiscalResultado(isMonofasico, cst, classificacao, impostoSeletivo);
     }
 
-    private record RegraFiscalResultado(boolean monofasico, String cst, TipoTributacaoReforma classificacaoReforma) {}
+    // Record atualizado para incluir o novo campo de Imposto Seletivo
+    private record RegraFiscalResultado(
+            boolean monofasico,
+            String cst,
+            TipoTributacaoReforma classificacaoReforma,
+            boolean impostoSeletivo
+    ) {}
 
     // ==================================================================================
-    // MÓDULO 1 E 2: LÓGICA EXISTENTE (MANTIDA INTEGRALMENTE)
+    // LÓGICA EXISTENTE: MANTIDA INTEGRALMENTE
     // ==================================================================================
 
     private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205");
@@ -137,14 +161,20 @@ public class CalculadoraFiscalService {
             Produto p = item.getProduto();
             BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
             totalVenda = totalVenda.add(valorItem);
+
             BigDecimal aliquotaItem = aliquotaCheiaPeriodo;
 
             if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
+                // Se a redução é de 60%, paga-se apenas 40% da alíquota
                 aliquotaItem = aliquotaCheiaPeriodo.multiply(new BigDecimal("0.40"));
             } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA ||
                     p.getClassificacaoReforma() == TipoTributacaoReforma.IMUNE) {
                 aliquotaItem = BigDecimal.ZERO;
+            } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.IMPOSTO_SELETIVO) {
+                // [NOVO] Adição de sobretaxa estimada para o imposto seletivo
+                aliquotaItem = aliquotaCheiaPeriodo.add(new BigDecimal("0.15"));
             }
+
             totalImpostoRetido = totalImpostoRetido.add(valorItem.multiply(aliquotaItem));
         }
 

@@ -2,7 +2,9 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity; // [IMPORTANTE] Import da entidade customizada
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.AuditoriaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -23,6 +25,9 @@ public class AuditoriaService {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Autowired
+    private AuditoriaRepository auditoriaRepository;
 
     @Autowired
     private ProdutoRepository produtoRepository;
@@ -98,5 +103,9 @@ public class AuditoriaService {
     @Transactional
     public void restaurarProduto(Long id) {
         produtoRepository.reativarProduto(id);
+    }
+
+    public void registrarEvento(Auditoria auditoria) {
+        auditoriaRepository.save(auditoria);
     }
 }

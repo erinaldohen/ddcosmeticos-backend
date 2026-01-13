@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoExternoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoFiscalCarrinhoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SplitPaymentDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
@@ -229,5 +230,54 @@ public class CalculadoraFiscalService {
         return itens.stream()
                 .map(i -> i.getPrecoUnitario().multiply(i.getQuantidade()).multiply(new BigDecimal("0.18")))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public ResumoFiscalCarrinhoDTO calcularTotaisCarrinho(List<ItemVenda> itens) {
+        BigDecimal totalVenda = BigDecimal.ZERO;
+        BigDecimal somaIbs = BigDecimal.ZERO;
+        BigDecimal somaCbs = BigDecimal.ZERO;
+        BigDecimal somaIs = BigDecimal.ZERO;
+
+        for (ItemVenda item : itens) {
+            Produto p = item.getProduto();
+            BigDecimal subtotal = item.getPrecoUnitario().multiply(item.getQuantidade());
+
+            // Lógica simplificada de busca de alíquota (Ideal: buscar por NCM no banco)
+            // Aqui simulamos a regra geral da LC 214 se não tiver específica
+            BigDecimal aliqIbs = new BigDecimal("17.5"); // Exemplo padrão
+            BigDecimal aliqCbs = new BigDecimal("9.0");  // Exemplo padrão
+            BigDecimal aliqIs = BigDecimal.ZERO;
+
+            // Se o produto for "do pecado" (ex: cigarro, bebida), adiciona IS
+            // if (p.isSujeitoImpostoSeletivo()) aliqIs = new BigDecimal("10.0");
+
+            // Cálculos item a item
+            BigDecimal valorIbs = subtotal.multiply(aliqIbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
+            BigDecimal valorCbs = subtotal.multiply(aliqCbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
+            BigDecimal valorIs  = subtotal.multiply(aliqIs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
+
+            // Acumuladores
+            totalVenda = totalVenda.add(subtotal);
+            somaIbs = somaIbs.add(valorIbs);
+            somaCbs = somaCbs.add(valorCbs);
+            somaIs = somaIs.add(valorIs);
+        }
+
+        BigDecimal totalImpostos = somaIbs.add(somaCbs).add(somaIs);
+        BigDecimal totalLiquido = totalVenda.subtract(totalImpostos);
+
+        // Evita divisão por zero
+        BigDecimal aliquotaEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
+                ? totalImpostos.divide(totalVenda, 4, RoundingMode.HALF_EVEN).multiply(new BigDecimal("100"))
+                : BigDecimal.ZERO;
+
+        return new ResumoFiscalCarrinhoDTO(
+                totalVenda,
+                somaIbs,
+                somaCbs,
+                somaIs,
+                totalLiquido,
+                aliquotaEfetiva
+        );
     }
 }

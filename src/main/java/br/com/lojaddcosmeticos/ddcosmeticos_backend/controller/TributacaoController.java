@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoFiscalCarrinhoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SplitPaymentDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
@@ -27,6 +28,28 @@ public class TributacaoController {
     @Autowired
     private ProdutoService produtoService;
 
+
+    @PostMapping("/simular-carrinho")
+    public ResponseEntity<ResumoFiscalCarrinhoDTO> simularCarrinho(@RequestBody List<ItemSplitRequest> itensDto) {
+
+        List<ItemVenda> itensParaCalculo = new ArrayList<>();
+
+        for (ItemSplitRequest req : itensDto) {
+            // Busca produto real no banco para pegar preço e dados fiscais
+            Produto p = produtoService.buscarPorId(req.idProduto());
+
+            ItemVenda item = new ItemVenda();
+            item.setProduto(p);
+            item.setQuantidade(req.quantidade());
+            // Usa o preço do cadastro (ou o enviado pelo front se permitir alteração)
+            item.setPrecoUnitario(p.getPrecoVenda());
+
+            itensParaCalculo.add(item);
+        }
+
+        ResumoFiscalCarrinhoDTO resumo = calculadoraFiscalService.calcularTotaisCarrinho(itensParaCalculo);
+        return ResponseEntity.ok(resumo);
+    }
     // --- Endpoint Simples (Mantido) ---
     @GetMapping("/simular-iva-2026")
     public ResponseEntity<Map<String, BigDecimal>> simularIva2026(

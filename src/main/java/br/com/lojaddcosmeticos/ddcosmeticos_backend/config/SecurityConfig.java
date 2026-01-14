@@ -22,7 +22,6 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
-import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -43,27 +42,23 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // 1. REGRAS PÚBLICAS GERAIS
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll()
-                        .requestMatchers("/h2-console/**").permitAll()
-                        .requestMatchers("/imagens/**").permitAll()
-                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
+                        // 1. PÚBLICO
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**", "/auth/**").permitAll()
+                        .requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 
-                        // 2. PDV (LIBERADO PARA TESTES E OPERAÇÃO RÁPIDA)
-                        .requestMatchers("/api/v1/tributacao/**").permitAll()
-                        .requestMatchers("/api/v1/auditoria/**").permitAll() // Resolve o 403/500 da auditoria
-                        .requestMatchers("/api/v1/vendas/**").permitAll()    // [CORREÇÃO] Resolve o 403 ao finalizar venda
+                        // 2. LEITURAS DASHBOARD (Seguro: Exige Autenticação)
+                                // Regras específicas no TOPO
+                                .requestMatchers(HttpMethod.GET, "/api/v1/caixa/status").authenticated()
+                                .requestMatchers(HttpMethod.GET, "/api/v1/auditoria/eventos").authenticated() // ESSENCIAL
+                                .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/**").authenticated()
 
-                        // 3. PRODUTOS E CATÁLOGO
-                        .requestMatchers("/api/v1/catalogo/**").permitAll()
-                        .requestMatchers("/api/v1/produtos/**").permitAll()
-
-                        // 4. REGRAS ADMINISTRATIVAS
-                        .requestMatchers("/admin/**").hasAuthority(PerfilDoUsuario.ROLE_ADMIN.name())
+                        // 3. ADMINISTRAÇÃO (Bloqueio duro no nível da rede)
+                        .requestMatchers("/api/v1/auditoria/**").hasAuthority(PerfilDoUsuario.ROLE_ADMIN.name())
+                        .requestMatchers("/api/v1/fiscal/**").hasAuthority(PerfilDoUsuario.ROLE_ADMIN.name())
                         .requestMatchers("/api/v1/usuarios/**").hasAuthority(PerfilDoUsuario.ROLE_ADMIN.name())
-                        .requestMatchers("/api/v1/relatorios/**").hasAnyAuthority(PerfilDoUsuario.ROLE_ADMIN.name(), PerfilDoUsuario.ROLE_USUARIO.name())
 
-                        .anyRequest().permitAll() // Fallback para dev
+                        // 4. RESTO (Vendas, Produtos, etc)
+                        .anyRequest().authenticated()
                 )
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
@@ -71,23 +66,14 @@ public class SecurityConfig {
         return http.build();
     }
 
+    // ... Mantenha os outros métodos (Cors, AuthManager, PasswordEncoder) iguais ...
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-
-        // --- MUDANÇA CRÍTICA AQUI ---
-        // Em vez de usar "*" ou patterns, vamos colocar EXATAMENTE onde seu front roda.
-        // Se o seu front rodar em outra porta, ajuste aqui (ex: 3000, 8081).
         configuration.setAllowedOrigins(Arrays.asList("http://localhost:5173", "http://localhost:3000"));
-
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "TRACE", "CONNECT"));
-
-        // Headers essenciais para o login funcionar (Authorization envia o token)
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Cache-Control", "Content-Type"));
-
-        // Permite credenciais (Cookies/Auth Headers) - ISSO É O QUE CAUSA O ERRO COM "*"
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Cache-Control"));
         configuration.setAllowCredentials(true);
-
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

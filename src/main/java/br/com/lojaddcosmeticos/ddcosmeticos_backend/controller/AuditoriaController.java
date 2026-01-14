@@ -1,9 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.AuditoriaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.AuditoriaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -16,35 +15,44 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/auditoria")
-@PreAuthorize("hasRole('ADMIN')")
-@CrossOrigin(origins = "*")
+// REMOVIDO DAQUI: @PreAuthorize("hasRole('ADMIN')") -> Isso estava bloqueando tudo!
+// REMOVIDO: @CrossOrigin -> O SecurityConfig já resolve isso.
 public class AuditoriaController {
 
     @Autowired private AuditoriaService auditoriaService;
-    @Autowired private AuditoriaRepository auditoriaRepository;
 
+    // --- LIBERADO PARA O DASHBOARD (Qualquer um logado) ---
     @GetMapping("/eventos")
-    public ResponseEntity<List<Auditoria>> listarEventos() {
-        return ResponseEntity.ok(auditoriaRepository.findAllByOrderByDataHoraDesc());
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<AuditoriaRequestDTO>> listarUltimosEventos() {
+        return ResponseEntity.ok(auditoriaService.listarUltimasAlteracoes(10));
     }
 
+    // --- RESTRITO: HISTÓRICO DE PRODUTO (Apenas Admin) ---
     @GetMapping("/produto/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistoricoProduto(@PathVariable Long id) {
         return ResponseEntity.ok(auditoriaService.buscarHistoricoDoProduto(id));
     }
 
+    // --- RESTRITO: LIXEIRA (Apenas Admin) ---
     @GetMapping("/lixeira")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<Produto>> listarLixeira() {
         return ResponseEntity.ok(auditoriaService.buscarLixeira());
     }
 
+    // --- RESTRITO: RESTAURAR (Apenas Admin) ---
     @PostMapping("/restaurar/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> restaurarProduto(@PathVariable Long id) {
         auditoriaService.restaurarProduto(id);
         return ResponseEntity.ok().build();
     }
 
+    // --- RESTRITO: RELATÓRIO PDF (Apenas Admin) ---
     @GetMapping("/relatorio/pdf")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<byte[]> baixarRelatorio() {
         byte[] pdf = auditoriaService.gerarRelatorioMensalPDF();
         return ResponseEntity.ok()

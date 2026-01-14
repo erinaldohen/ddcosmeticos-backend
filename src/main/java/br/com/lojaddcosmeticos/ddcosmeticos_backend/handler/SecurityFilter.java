@@ -28,32 +28,40 @@ public class SecurityFilter extends OncePerRequestFilter {
         var token = this.recoverToken(request);
 
         if (token != null) {
-            // O JwtService deve retornar o "subject" do token (que definimos como a matrícula/login)
-            var login = jwtService.validateToken(token);
+            try {
+                // Valida o token e recupera o sujeito (Matrícula)
+                // Se o token estiver expirado ou inválido, o JwtService deve retornar "" ou lançar exceção
+                var matricula = jwtService.validateToken(token);
 
-            if (login != null && !login.isEmpty()) {
-                // --- CORREÇÃO AQUI ---
-                // Alterado de findByEmail para findByMatricula para bater com o login via 'admin'
-                UserDetails user = usuarioRepository.findByMatricula(login).orElse(null);
+                if (matricula != null && !matricula.isEmpty()) {
+                    // Busca usuário pela matrícula (Identificador principal do sistema)
+                    UserDetails user = usuarioRepository.findByMatricula(matricula).orElse(null);
 
-                if (user != null) {
-                    var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
-                    // Define a autenticação no contexto do Spring Security
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                } else {
-                    // Se o token existe mas o usuário foi deletado do banco, limpamos o contexto
-                    SecurityContextHolder.clearContext();
+                    if (user != null) {
+                        // Usuário encontrado e token válido: Autentica no contexto
+                        var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                    }
                 }
+            } catch (Exception e) {
+                // Em caso de erro na validação (token expirado/inválido), apenas limpamos o contexto
+                // O Spring Security tratará isso retornando 403 Forbidden mais à frente
+                SecurityContextHolder.clearContext();
             }
         }
 
-        // Continua a execução para os próximos filtros ou para o Controller
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * Recupera e LIMPA o token do cabeçalho.
+     * A correcao aqui remove aspas e espaços que o Frontend possa ter enviado errado.
+     */
     private String recoverToken(HttpServletRequest request) {
         var authHeader = request.getHeader("Authorization");
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
-        return authHeader.substring(7); // Forma mais limpa de remover o "Bearer "
+        if (authHeader == null) return null;
+
+        // Remove "Bearer ", remove aspas duplas (se houver) e remove espaços em branco extras
+        return authHeader.replace("Bearer ", "").replace("\"", "").trim();
     }
 }

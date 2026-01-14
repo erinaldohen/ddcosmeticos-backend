@@ -31,6 +31,7 @@ import java.util.Map;
 @Tag(name = "Produtos", description = "Gestão do catálogo de produtos e imagens")
 public class ProdutoController {
 
+    // --- DEPENDÊNCIAS ---
     @Autowired private ProdutoService produtoService;
     @Autowired private CosmosService cosmosService;
     @Autowired private PrecificacaoService precificacaoService;
@@ -38,9 +39,14 @@ public class ProdutoController {
     @Autowired private ArquivoService arquivoService;
     @Autowired private AuditoriaService auditoriaService;
     @Autowired private ImpressaoService impressaoService;
+    @Autowired private ImportacaoService importacaoService; // Injeção corrigida
 
-    // --- 1. LEITURA ---
+    // ==================================================================================
+    // 1. LEITURA E CONSULTAS (GET)
+    // ==================================================================================
+
     @GetMapping
+    @Operation(summary = "Listar produtos com paginação", description = "Busca produtos por termo ou descrição")
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String descricao,
@@ -55,11 +61,13 @@ public class ProdutoController {
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Buscar produto por ID")
     public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(produtoService.buscarPorId(id));
     }
 
     @GetMapping("/analisar/{codigoBarras}")
+    @Operation(summary = "Análise de precificação", description = "Sugere preço com base em regras e concorrentes")
     public ResponseEntity<AnalisePrecificacaoDTO> analisarIndividual(@PathVariable String codigoBarras) {
         try {
             return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
@@ -69,6 +77,7 @@ public class ProdutoController {
     }
 
     @GetMapping("/consulta-externa/{ean}")
+    @Operation(summary = "Consultar API Cosmos", description = "Busca dados do produto na base nacional de códigos de barras")
     public ResponseEntity<?> consultarExterno(@PathVariable String ean) {
         return cosmosService.consultarEan(ean)
                 .map(ResponseEntity::ok)
@@ -76,19 +85,28 @@ public class ProdutoController {
     }
 
     @GetMapping("/alerta-reposicao")
+    @Operation(summary = "Produtos com estoque baixo")
     public ResponseEntity<List<Produto>> listarBaixoEstoque() {
         return ResponseEntity.ok(produtoService.listarBaixoEstoque());
     }
 
-    // --- 2. ESCRITA ---
+    @GetMapping("/proximo-sequencial")
+    @Operation(summary = "Obter próximo sequencial", description = "Retorna o próximo número disponível para geração de EAN interno.")
+    public ResponseEntity<Map<String, Object>> obterProximoSequencial() {
+        return ResponseEntity.ok(Map.of("sequencial", System.currentTimeMillis()));
+    }
+
+    // ==================================================================================
+    // 2. CADASTRO E EDIÇÃO (POST / PUT)
+    // ==================================================================================
+
     @PostMapping
+    @Operation(summary = "Cadastrar novo produto")
     public ResponseEntity<?> cadastrar(@RequestBody @Valid ProdutoDTO dados) {
         try {
             ProdutoDTO salvo = produtoService.salvar(dados);
 
-            // CORREÇÃO LINHA 89: Acessando o campo id corretamente
-            // Se for Record use salvo.id(), se for Classe com @Data use salvo.getId()
-            Long idSalvo = salvo.id();
+            Long idSalvo = salvo.id(); // Record
 
             URI uri = ServletUriComponentsBuilder.fromCurrentRequest()
                     .path("/{id}")
@@ -102,19 +120,31 @@ public class ProdutoController {
     }
 
     @PutMapping("/{id}")
+    @Operation(summary = "Atualizar produto")
     public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody @Valid ProdutoDTO dados) {
         return ResponseEntity.ok(produtoService.atualizar(id, dados));
     }
 
-    @DeleteMapping("/{ean}")
-    @PreAuthorize("hasRole('ROLE_ADMIN')")
-    public ResponseEntity<Void> inativar(@PathVariable String ean) {
-        produtoService.inativarPorEan(ean);
-        return ResponseEntity.noContent().build();
+    @PatchMapping("/{id}/definir-preco")
+    @Operation(summary = "Alterar apenas o preço de venda")
+    public ResponseEntity<Void> definirPreco(@PathVariable Long id, @RequestParam BigDecimal novoPreco) {
+        produtoService.definirPrecoVenda(id, novoPreco);
+        return ResponseEntity.ok().build();
     }
 
-    // --- 3. ESTOQUE E PREÇO ---
+    @PostMapping("/importar")
+    @Operation(summary = "Importar CSV de produtos")
+    public ResponseEntity<String> importarProdutos(@RequestParam("arquivo") MultipartFile arquivo) {
+        importacaoService.importarProdutos(arquivo);
+        return ResponseEntity.ok("Importação concluída com sucesso!");
+    }
+
+    // ==================================================================================
+    // 3. MOVIMENTAÇÃO DE ESTOQUE (POST)
+    // ==================================================================================
+
     @PostMapping("/estoque")
+    @Operation(summary = "Registrar entrada de estoque")
     public ResponseEntity<?> adicionarEstoque(
             @RequestParam String ean,
             @RequestParam Integer qtd,
@@ -143,73 +173,72 @@ public class ProdutoController {
         }
     }
 
-    @GetMapping("/{id}/sugestao-preco")
-    public ResponseEntity<AnalisePrecificacaoDTO> obterSugestao(@PathVariable String codigoBarras) {
-        try { return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras)); }
-        catch (Exception e) { return ResponseEntity.notFound().build(); }
-    }
+    // ==================================================================================
+    // 4. GESTÃO DE ARQUIVOS E IMAGENS
+    // ==================================================================================
 
-    @PatchMapping("/{id}/definir-preco")
-    public ResponseEntity<Void> definirPreco(@PathVariable Long id, @RequestParam BigDecimal novoPreco) {
-        produtoService.definirPrecoVenda(id, novoPreco);
-        return ResponseEntity.ok().build();
-    }
-
-    // --- 4. ARQUIVOS ---
     @PostMapping(value = "/{id}/imagem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Upload de imagem do produto")
     public ResponseEntity<Void> uploadImagem(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
         String nomeArquivo = arquivoService.salvarImagem(file);
         produtoService.atualizarUrlImagem(id, "/imagens/" + nomeArquivo);
         return ResponseEntity.ok().build();
     }
 
-    // --- 5. AUDITORIA E LIXEIRA ---
-    @GetMapping("/{id}/historico")
-    public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
-        return ResponseEntity.ok(produtoService.buscarHistorico(id));
-    }
-
-    @GetMapping("/lixeira")
-    public ResponseEntity<List<Produto>> getLixeira() {
-        return ResponseEntity.ok(auditoriaService.buscarLixeira());
-    }
-
-    @PutMapping("/{id}/restaurar")
-    public ResponseEntity<Void> restaurar(@PathVariable Long id) {
-        auditoriaService.restaurarProduto(id);
-        return ResponseEntity.ok().build();
-    }
-
-    @PatchMapping("/{ean}/reativar")
-    @Operation(summary = "Reativar Produto", description = "Reativa um produto que estava excluído logicamente (Inativo).")
-    public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
-        produtoService.reativarPorEan(ean);
-        return ResponseEntity.ok().build();
-    }
-
-    // --- 6. EXTRAS ---
-    @PostMapping("/saneamento-fiscal")
-    @PreAuthorize("hasRole('ROLE_ADMIN')")
-    public ResponseEntity<String> executarSaneamento() {
-        return ResponseEntity.ok(produtoService.realizarSaneamentoFiscal());
-    }
-
     @GetMapping("/{id}/etiqueta")
+    @Operation(summary = "Gerar código ZPL para etiqueta térmica")
     public ResponseEntity<String> gerarEtiqueta(@PathVariable Long id) {
         Produto produto = produtoService.buscarPorId(id);
         String etiqueta = impressaoService.gerarEtiquetaTermica(produto);
         return ResponseEntity.ok(etiqueta);
     }
 
-    /**
-     * --- [NOVO] PRÓXIMO SEQUENCIAL PARA EAN INTERNO ---
-     * Chamado pelo Frontend para gerar um código sequencial no padrão 789
-     */
-    @GetMapping("/proximo-sequencial")
-    @Operation(summary = "Obter próximo sequencial", description = "Retorna o próximo número disponível para geração de EAN interno.")
-    public ResponseEntity<Map<String, Object>> obterProximoSequencial() {
-        // Retorna o timestamp atual como sequencial único.
-        // Em produção, isso pode ser trocado por: return ResponseEntity.ok(Map.of("sequencial", produtoRepository.count() + 1));
-        return ResponseEntity.ok(Map.of("sequencial", System.currentTimeMillis()));
+    // ==================================================================================
+    // 5. AUDITORIA E CICLO DE VIDA (DELETE / RESTORE)
+    // ==================================================================================
+
+    @GetMapping("/{id}/historico")
+    @Operation(summary = "Ver histórico de alterações (Envers)")
+    public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
+        return ResponseEntity.ok(produtoService.buscarHistorico(id));
+    }
+
+    @DeleteMapping("/{ean}")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Inativar produto (Exclusão Lógica)")
+    public ResponseEntity<Void> inativar(@PathVariable String ean) {
+        produtoService.inativarPorEan(ean);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{ean}/reativar")
+    @Operation(summary = "Reativar produto excluído")
+    public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
+        produtoService.reativarPorEan(ean);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/lixeira")
+    @Operation(summary = "Listar produtos na lixeira")
+    public ResponseEntity<List<Produto>> getLixeira() {
+        return ResponseEntity.ok(auditoriaService.buscarLixeira());
+    }
+
+    @PutMapping("/{id}/restaurar")
+    @Operation(summary = "Restaurar produto da lixeira pelo ID")
+    public ResponseEntity<Void> restaurar(@PathVariable Long id) {
+        auditoriaService.restaurarProduto(id);
+        return ResponseEntity.ok().build();
+    }
+
+    // ==================================================================================
+    // 6. FERRAMENTAS ADMINISTRATIVAS
+    // ==================================================================================
+
+    @PostMapping("/saneamento-fiscal")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    @Operation(summary = "Rodar saneamento fiscal em massa", description = "Reaplica regras tributárias em todos os produtos")
+    public ResponseEntity<String> executarSaneamento() {
+        return ResponseEntity.ok(produtoService.realizarSaneamentoFiscal());
     }
 }

@@ -1,8 +1,10 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import org.springframework.cache.annotation.CacheEvict;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
@@ -42,14 +44,18 @@ public class VendaService {
     @Autowired private NfceService nfceService;
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
 
+    // [NOVO] Injeção necessária para registrar o alerta sem travar a venda
+    @Autowired private AuditoriaService auditoriaService;
+
     @Transactional
+    @CacheEvict(value = "dashboard", allEntries = true)
     public VendaResponseDTO realizarVenda(VendaRequestDTO dto) {
         Venda venda = new Venda();
         venda.setDataVenda(LocalDateTime.now());
         venda.setClienteNome(dto.clienteNome());
         venda.setClienteDocumento(dto.clienteDocumento());
         venda.setFormaDePagamento(dto.formaDePagamento());
-        venda.setQuantidadeParcelas(dto.quantidadeParcelas());
+        venda.setQuantidadeParcelas(dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
 
         LocalDate hoje = LocalDate.now();
@@ -60,7 +66,28 @@ public class VendaService {
             Produto produto = produtoRepository.findById(itemDto.produtoId())
                     .orElseThrow(() -> new RuntimeException("Produto não encontrado: " + itemDto.produtoId()));
 
-            estoqueService.registrarSaidaVenda(produto, itemDto.quantidade().intValue());
+            // --- ALTERAÇÃO SOLICITADA: PERMITIR VENDA COM ESTOQUE NEGATIVO + ALERTA ---
+            int qtdVenda = itemDto.quantidade().intValue();
+
+            if (produto.getQuantidadeEmEstoque() < qtdVenda) {
+                // Não lançamos mais throw new ValidationException(...)
+
+                // Em vez disso, registramos um Alerta de Auditoria para o Gerente
+                String msgAuditoria = String.format(
+                        "ALERTA: Venda de item sem estoque sistêmico. Produto: %s (Cód: %s). Estoque Atual: %d, Vendido: %d. O estoque ficará negativo.",
+                        produto.getDescricao(),
+                        produto.getCodigoBarras(),
+                        produto.getQuantidadeEmEstoque(),
+                        qtdVenda
+                );
+
+                // Grava no banco de dados na tabela 'auditoria'
+                auditoriaService.registrar("ESTOQUE_NEGATIVO", msgAuditoria);
+                log.warn(msgAuditoria);
+            }
+
+            // O EstoqueService deve estar preparado para aceitar números negativos (Matematicamente o Java aceita)
+            estoqueService.registrarSaidaVenda(produto, qtdVenda);
 
             ItemVenda item = new ItemVenda();
             item.setProduto(produto);
@@ -104,10 +131,7 @@ public class VendaService {
                 .map(ItemVendaResponseDTO::new)
                 .collect(Collectors.toList());
 
-        // Correção para statusNfce que é Enum
-        // Se VendaResponseDTO espera StatusFiscal, passe direto. Se espera String, use .name()
-        // No seu DTO colado: StatusFiscal statusNfce
-        StatusFiscal status = venda.getStatusNfce(); // Se for null, o Jackson serializa como null ou trate aqui se necessário
+        StatusFiscal status = venda.getStatusNfce();
 
         return new VendaResponseDTO(
                 venda.getIdVenda(),
@@ -135,7 +159,7 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa - " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
         venda.setFormaDePagamento(dto.formaDePagamento() != null ? dto.formaDePagamento() : FormaDePagamento.DINHEIRO);
-        venda.setQuantidadeParcelas(dto.quantidadeParcelas());
+        venda.setQuantidadeParcelas(dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1);
         venda.setStatusNfce(StatusFiscal.EM_ESPERA);
 
         if (dto.clienteDocumento() != null) {
@@ -150,7 +174,6 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public List<VendaResponseDTO> listarVendasSuspensas() {
-        // CORREÇÃO: Usando findByStatusNfceOrderByDataVendaDesc que agora existe no repository
         return vendaRepository.findByStatusNfceOrderByDataVendaDesc(StatusFiscal.EM_ESPERA).stream()
                 .map(this::converterParaDTO)
                 .collect(Collectors.toList());
@@ -203,7 +226,7 @@ public class VendaService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
         return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable)
-                .map(this::converterParaDTO); // Reuso para consistência
+                .map(this::converterParaDTO);
     }
 
     @Transactional(readOnly = true)
@@ -211,8 +234,6 @@ public class VendaService {
         return vendaRepository.findByIdComItens(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
     }
-
-    // ... (restante do arquivo mantido igual, métodos de cancelamento e processamento já estavam OK)
 
     @Transactional
     public void cancelarVenda(Long idVenda, String motivo) {
@@ -268,6 +289,28 @@ public class VendaService {
             totalAcumulado = totalAcumulado.add(item.getTotalItem());
         }
         return totalAcumulado;
+    }
+
+    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
+        if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
+        if (totalVenda.compareTo(BigDecimal.ZERO) == 0) return;
+
+        ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElseGet(() -> {
+            ConfiguracaoLoja nova = new ConfiguracaoLoja();
+            nova.setPercentualMaximoDescontoCaixa(new BigDecimal("5.00"));
+            nova.setPercentualMaximoDescontoGerente(new BigDecimal("100.00"));
+            return nova;
+        });
+
+        BigDecimal percentualAplicado = descontoAplicado.divide(totalVenda, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+
+        BigDecimal limitePermitido = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN || usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_USUARIO)
+                ? config.getPercentualMaximoDescontoGerente()
+                : config.getPercentualMaximoDescontoCaixa();
+
+        if (percentualAplicado.compareTo(limitePermitido) > 0) {
+            throw new ValidationException(String.format("Desconto não autorizado. Aplicado: %.2f%% | Limite: %.2f%%", percentualAplicado, limitePermitido));
+        }
     }
 
     private void validarCreditoDoCliente(String documento, BigDecimal valorDaCompra) {

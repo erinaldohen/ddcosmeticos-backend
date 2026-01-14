@@ -5,15 +5,10 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import lombok.extern.slf4j.Slf4j;
-import org.hibernate.envers.AuditReaderFactory;
-import org.hibernate.envers.RevisionType;
-import org.hibernate.envers.query.AuditEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
@@ -23,8 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 @Slf4j
@@ -33,7 +26,9 @@ public class ProdutoService {
 
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
-    @PersistenceContext private EntityManager entityManager;
+
+    // [REFATORAÇÃO] Injeção do serviço especialista para evitar duplicidade de código Envers
+    @Autowired private AuditoriaService auditoriaService;
 
     // --- MÉTODOS DE CÁLCULO FINANCEIRO ---
     @Transactional
@@ -41,8 +36,7 @@ public class ProdutoService {
         if (quantidadeEntrada <= 0) return;
 
         BigDecimal estoqueAtual = new BigDecimal(produto.getQuantidadeEmEstoque());
-        BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado();
-        if (custoMedioAtual == null) custoMedioAtual = BigDecimal.ZERO;
+        BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
 
         BigDecimal valorTotalAtual = estoqueAtual.multiply(custoMedioAtual);
         BigDecimal valorTotalEntrada = custoEntrada.multiply(new BigDecimal(quantidadeEntrada));
@@ -87,33 +81,11 @@ public class ProdutoService {
         return produtoRepository.findProdutosComBaixoEstoque();
     }
 
+    // [REFATORAÇÃO] Método simplificado delegando para AuditoriaService
     @Transactional(readOnly = true)
     public List<HistoricoProdutoDTO> buscarHistorico(Long id) {
-        var reader = AuditReaderFactory.get(entityManager);
-        List<Object[]> results = reader.createQuery()
-                .forRevisionsOfEntity(Produto.class, false, true)
-                .add(AuditEntity.id().eq(id))
-                .getResultList();
-
-        List<HistoricoProdutoDTO> historico = new ArrayList<>();
-        for (Object[] row : results) {
-            Produto pAntigo = (Produto) row[0];
-            CustomRevisionEntity info = (CustomRevisionEntity) row[1];
-            RevisionType type = (RevisionType) row[2];
-
-            String tipoString = switch (type) {
-                case ADD -> "CRIADO";
-                case MOD -> "ALTERADO";
-                case DEL -> "EXCLUÍDO";
-            };
-            historico.add(new HistoricoProdutoDTO(
-                    info.getId(), new Date(info.getTimestamp()), tipoString,
-                    pAntigo.getDescricao(), pAntigo.getPrecoVenda(),
-                    pAntigo.getPrecoCusto(), pAntigo.getQuantidadeEmEstoque()
-            ));
-        }
-        historico.sort((a, b) -> b.getDataAlteracao().compareTo(a.getDataAlteracao()));
-        return historico;
+        // Delega a responsabilidade para o serviço correto, removendo duplicidade de lógica do Hibernate Envers
+        return auditoriaService.buscarHistoricoDoProduto(id);
     }
 
     // --- ESCRITA ---
@@ -123,15 +95,15 @@ public class ProdutoService {
         if (produtoRepository.existsByCodigoBarras(dto.codigoBarras())) {
             var existente = produtoRepository.findByEanIrrestrito(dto.codigoBarras());
             if(existente.isPresent() && !existente.get().isAtivo()) {
-                throw new IllegalArgumentException("Produto existe mas está inativo. Reative-o.");
+                throw new ValidationException("Produto existe mas está inativo. Reative-o.");
             }
-            throw new IllegalArgumentException("Já existe um produto com este código de barras.");
+            throw new ValidationException("Já existe um produto com este código de barras.");
         }
 
         Produto produto = new Produto();
         copiarDtoParaEntidade(dto, produto);
 
-        // Inicializa preço médio com o custo, garantindo que não seja nulo
+        // Inicializa preço médio com o custo
         BigDecimal custoInicial = dto.precoCusto() != null ? dto.precoCusto() : BigDecimal.ZERO;
         produto.setPrecoMedioPonderado(custoInicial);
 
@@ -151,14 +123,14 @@ public class ProdutoService {
     @CacheEvict(value = "produtos", allEntries = true)
     public Produto atualizar(Long id, ProdutoDTO dados) {
         Produto produto = buscarPorId(id);
-        copiarDtoParaEntidade(dados, produto);
 
         if (dados.codigoBarras() != null && !dados.codigoBarras().equals(produto.getCodigoBarras())) {
             if (produtoRepository.existsByCodigoBarras(dados.codigoBarras())) {
-                throw new IllegalStateException("Já existe outro produto com este EAN.");
+                throw new ValidationException("Já existe outro produto com este EAN.");
             }
-            produto.setCodigoBarras(dados.codigoBarras());
         }
+
+        copiarDtoParaEntidade(dados, produto);
         return produtoRepository.save(produto);
     }
 
@@ -208,7 +180,7 @@ public class ProdutoService {
     }
 
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
-        // Campos de Identificação e Básicos (Sintaxe de Record)
+        // Campos de Identificação e Básicos
         produto.setCodigoBarras(dto.codigoBarras());
         produto.setDescricao(dto.descricao());
         produto.setMarca(dto.marca());
@@ -216,11 +188,11 @@ public class ProdutoService {
         produto.setSubcategoria(dto.subcategoria());
         produto.setUnidade(dto.unidade() != null ? dto.unidade() : "UN");
 
-        // Dados Fiscais (Incluindo os novos campos da Reforma e SEFAZ)
+        // Dados Fiscais
         produto.setNcm(dto.ncm());
         produto.setCest(dto.cest());
         produto.setCst(dto.cst());
-        produto.setOrigem(dto.origem() != null ? dto.origem() : "0"); // Padrão Nacional
+        produto.setOrigem(dto.origem() != null ? dto.origem() : "0");
         produto.setMonofasico(Boolean.TRUE.equals(dto.monofasico()));
         produto.setClassificacaoReforma(dto.classificacaoReforma() != null ? dto.classificacaoReforma() : TipoTributacaoReforma.PADRAO);
         produto.setImpostoSeletivo(Boolean.TRUE.equals(dto.impostoSeletivo()));

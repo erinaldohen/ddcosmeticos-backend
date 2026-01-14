@@ -2,32 +2,25 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
 import java.util.List;
 
-// Usando Record (Java 16+) que gera getters automáticos, ex: dto.pagamentos()
 public record VendaRequestDTO(
-
-        @Pattern(regexp = "^[0-9]*$", message = "O documento deve conter apenas números")
-        String clienteDocumento,
-
+        String clienteDocumento, // Pode ser null
         String clienteNome,
 
-        // ALTERAÇÃO CRÍTICA: Mudou de "FormaDePagamento formaPagamento" para Lista
-        FormaDePagamento formaDePagamento,
+        @NotNull(message = "A forma de pagamento é obrigatória")
+        FormaDePagamento formaDePagamento, // Certifique-se que o Enum no Java tem os valores: PIX, DINHEIRO, CREDITO, DEBITO, CREDIARIO
 
-        Integer quantidadeParcelas,
+        // O front manda 'pagamentosDetalhados', mas se não usarmos no backend agora,
+        // não precisa declarar aqui (o Jackson ignora) ou pode declarar uma List genérica se quiser receber.
 
-        @NotEmpty(message = "A venda deve conter pelo menos um item")
+        @NotEmpty(message = "A venda deve ter pelo menos um item")
         List<ItemVendaDTO> itens,
 
-        @PositiveOrZero(message = "O desconto não pode ser negativo")
         BigDecimal descontoTotal,
-
-        Boolean apenasItensComNfEntrada,
-
-        Boolean ehOrcamento
+        Boolean ehOrcamento,
+        Integer quantidadeParcelas
 ) {}

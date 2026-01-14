@@ -32,8 +32,18 @@ public class DataSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        carregarUsuarios();
-        carregarProdutosDoCSV();
+        if (usuarioRepository.findByMatricula("admin").isEmpty()) {
+            Usuario admin = new Usuario();
+            admin.setNome("Administrador");
+            admin.setMatricula("admin");
+            admin.setEmail("admin@lojaddcosmeticos.com.br"); // <-- ADICIONE ESTA LINHA
+            admin.setSenha(passwordEncoder.encode("123456"));
+            admin.setPerfilDoUsuario(PerfilDoUsuario.ROLE_ADMIN);
+            admin.setAtivo(true); // Garanta que ele esteja ativo também
+
+            usuarioRepository.save(admin);
+            System.out.println("✅ Usuário 'admin' criado com sucesso!");
+        }
     }
 
     private void carregarUsuarios() {

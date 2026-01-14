@@ -28,26 +28,32 @@ public class SecurityFilter extends OncePerRequestFilter {
         var token = this.recoverToken(request);
 
         if (token != null) {
-            var email = jwtService.validateToken(token);
-            // Verifica se o token é válido (retornou matrícula)
-            if (email != null && !email.isEmpty()) {
-                UserDetails user = usuarioRepository.findByEmail(email).orElse(null);
+            // O JwtService deve retornar o "subject" do token (que definimos como a matrícula/login)
+            var login = jwtService.validateToken(token);
+
+            if (login != null && !login.isEmpty()) {
+                // --- CORREÇÃO AQUI ---
+                // Alterado de findByEmail para findByMatricula para bater com o login via 'admin'
+                UserDetails user = usuarioRepository.findByMatricula(login).orElse(null);
 
                 if (user != null) {
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                    // Define a autenticação no contexto do Spring Security
                     SecurityContextHolder.getContext().setAuthentication(authentication);
+                } else {
+                    // Se o token existe mas o usuário foi deletado do banco, limpamos o contexto
+                    SecurityContextHolder.clearContext();
                 }
             }
         }
 
-        // --- CORREÇÃO CRÍTICA AQUI ---
-        // Sem essa linha, a requisição para no filtro e não chega no H2/Swagger/API
+        // Continua a execução para os próximos filtros ou para o Controller
         filterChain.doFilter(request, response);
     }
 
     private String recoverToken(HttpServletRequest request) {
         var authHeader = request.getHeader("Authorization");
-        if (authHeader == null) return null;
-        return authHeader.replace("Bearer ", "");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        return authHeader.substring(7); // Forma mais limpa de remover o "Bearer "
     }
 }

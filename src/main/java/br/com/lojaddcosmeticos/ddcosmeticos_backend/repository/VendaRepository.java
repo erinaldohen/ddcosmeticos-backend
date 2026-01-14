@@ -22,6 +22,12 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
 
+    // --- MÉTODOS DE CAIXA (ADICIONADO AGORA) ---
+    @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    List<Venda> buscarVendasDoUsuarioNoPeriodo(@Param("usuarioId") Long usuarioId,
+                                               @Param("inicio") LocalDateTime inicio,
+                                               @Param("fim") LocalDateTime fim);
+
     // --- CORREÇÃO: Soma tudo que NÃO for CANCELADA (Inclui Pendente/Concluída) ---
     @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);

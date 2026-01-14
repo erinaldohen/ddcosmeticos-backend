@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO; // <--- O IMPORT IMPORTANTE
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,23 +14,22 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class DashboardResumoDTO {
-    // --- Card 1: Saúde do Estoque ---
+
+    // --- Estoque ---
     private Long produtosAbaixoMinimo;
     private Long produtosEsgotados;
-
-    // --- Card 2: Financeiro (Estoque) ---
     private BigDecimal valorTotalEstoqueCusto;
-    private Long produtosMargemCritica;
 
-    // --- Card 3: Vendas e Fluxo (Adicionados para corrigir o Teste) ---
+    // --- Financeiro & Vendas ---
     private Long quantidadeVendasHoje;
     private BigDecimal totalVendidoHoje;
-    private BigDecimal saldoDoDia;        // (Recebido + Vendido - Pago)
-    private BigDecimal totalVencidoPagar; // Contas atrasadas
+    private BigDecimal saldoDoDia;
+    private BigDecimal totalVencidoPagar;
 
-    // --- Card 4: Atividade Recente ---
-    private List<HistoricoProdutoDTO> ultimasAlteracoes;
-
-    // --- Card 5: Alertas Fiscais ---
+    // --- Fiscal & Auditoria ---
+    private Long produtosMargemCritica;
     private Long produtosSemNcmOuCest;
+
+    // CORREÇÃO AQUI: O tipo da lista deve ser AuditoriaRequestDTO
+    private List<AuditoriaRequestDTO> ultimasAlteracoes;
 }

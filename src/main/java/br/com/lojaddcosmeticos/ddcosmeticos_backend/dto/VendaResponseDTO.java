@@ -23,4 +23,6 @@ public record VendaResponseDTO(
         BigDecimal valorLiquido,
         StatusFiscal statusNfce,
         String chaveAcessoNfce
+
+        // [ADICIONADO] Campos para Auditoria e Impressão de Cupom
 ) {}

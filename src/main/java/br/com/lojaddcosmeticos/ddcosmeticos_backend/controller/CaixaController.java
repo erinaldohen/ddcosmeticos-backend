@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -21,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -38,25 +40,27 @@ public class CaixaController {
     public ResponseEntity<CaixaDiario> verificarStatus() {
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth == null || !auth.isAuthenticated()) {
+
+            // Se não houver autenticação, retorna 401 explicitamente
+            if (auth == null || !auth.isAuthenticated() || auth.getPrincipal().equals("anonymousUser")) {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
             }
 
             String login = auth.getName();
+            Usuario usuario = usuarioRepository.findByMatricula(login).orElse(null);
 
-            // Busca usuário
-            Usuario usuario = usuarioRepository.findByMatricula(login)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faça login novamente."));
+            if (usuario == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            }
 
-            // --- USO SEGURO DO FINDFIRST ---
+            // Busca o caixa. Se não houver, o orElse retorna 204 No Content (sem erro 500)
             return caixaRepository.findFirstByUsuarioAberturaAndStatus(usuario, StatusCaixa.ABERTO)
                     .map(ResponseEntity::ok)
-                    .orElse(ResponseEntity.noContent().build()); // Retorna 204 (Fechado)
+                    .orElse(ResponseEntity.noContent().build());
 
         } catch (Exception e) {
-            log.error("Erro ao verificar status (Recuperando de falha crítica): ", e);
-            // Se der qualquer erro bizarro, assumimos que o caixa está fechado para não travar o usuário
-            return ResponseEntity.noContent().build();
+            log.error("Erro ao verificar status: ", e);
+            return ResponseEntity.noContent().build(); // Retorna vazio em vez de erro 500
         }
     }
 
@@ -70,6 +74,21 @@ public class CaixaController {
         }
 
         return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
+    }
+
+    // br.com.lojaddcosmeticos.ddcosmeticos_backend.controller.CaixaController
+    @GetMapping("/historico")
+    public ResponseEntity<List<CaixaDiario>> listarHistorico(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime fim
+    ) {
+        // Se ambas as datas estiverem presentes, filtra. Caso contrário, traz tudo ordenado.
+        if (inicio != null && fim != null) {
+            return ResponseEntity.ok(caixaRepository.findByDataAberturaBetweenOrderByDataAberturaDesc(inicio, fim));
+        }
+
+        // Agora este método existe e a compilação passará
+        return ResponseEntity.ok(caixaRepository.findAllByOrderByDataAberturaDesc());
     }
 
     @PostMapping("/fechar")

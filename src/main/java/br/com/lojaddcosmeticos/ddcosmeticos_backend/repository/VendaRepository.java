@@ -22,6 +22,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
 
+    List<Venda> findByStatusNfce(StatusFiscal status);
+
     // --- MÉTODOS DE CAIXA (ADICIONADO AGORA) ---
     @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
     List<Venda> buscarVendasDoUsuarioNoPeriodo(@Param("usuarioId") Long usuarioId,

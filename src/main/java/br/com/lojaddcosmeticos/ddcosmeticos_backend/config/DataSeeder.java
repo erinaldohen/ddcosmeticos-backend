@@ -1,12 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CalculadoraFiscalService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ImportacaoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
@@ -14,10 +11,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
 
 @Slf4j
 @Component
@@ -25,18 +19,15 @@ import java.nio.charset.StandardCharsets;
 public class DataSeeder implements CommandLineRunner {
 
     private final UsuarioRepository usuarioRepository;
-    private final ProdutoRepository produtoRepository;
     private final PasswordEncoder passwordEncoder;
-    private final CalculadoraFiscalService calculadoraFiscalService;
+    private final ImportacaoService importacaoService;
 
     public DataSeeder(UsuarioRepository usuarioRepository,
-                      ProdutoRepository produtoRepository,
                       PasswordEncoder passwordEncoder,
-                      CalculadoraFiscalService calculadoraFiscalService) {
+                      ImportacaoService importacaoService) {
         this.usuarioRepository = usuarioRepository;
-        this.produtoRepository = produtoRepository;
         this.passwordEncoder = passwordEncoder;
-        this.calculadoraFiscalService = calculadoraFiscalService;
+        this.importacaoService = importacaoService;
     }
 
     @Override
@@ -63,123 +54,18 @@ public class DataSeeder implements CommandLineRunner {
         try {
             ClassPathResource resource = new ClassPathResource("produtos.csv");
             if (!resource.exists()) {
-                log.warn("⚠️ Arquivo produtos.csv não encontrado.");
-                return;
+                return; // Arquivo não existe, segue a vida
             }
 
-            log.info("📦 Iniciando importação de produtos.csv...");
+            log.info("📦 Iniciando carga inicial de produtos...");
 
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                boolean header = true;
-                int count = 0;
-                int pulados = 0;
-
-                while ((line = reader.readLine()) != null) {
-                    if (header) {
-                        header = false;
-                        continue;
-                    }
-
-                    String[] colunas = line.split(";", -1);
-                    if (colunas.length < 5) continue;
-
-                    // Trata e limpa o EAN para evitar duplicados por lixo no CSV
-                    String codigoBarras = tratarCodigoBarras(colunas[0]);
-
-                    if (codigoBarras.isEmpty() || codigoBarras.equals("0")) continue;
-
-                    // [CORREÇÃO]: Verifica se o código já existe para evitar DataIntegrityViolationException
-                    if (produtoRepository.findByEanIrrestrito(codigoBarras).isPresent()) {
-                        pulados++;
-                        continue;
-                    }
-
-                    Produto p = new Produto();
-                    p.setCodigoBarras(codigoBarras);
-                    p.setDescricao(limparTexto(colunas[2]));
-
-                    BigDecimal custo = converterValor(colunas[3]);
-                    p.setPrecoCusto(custo);
-                    p.setPrecoMedioPonderado(custo);
-
-                    p.setPrecoVenda(converterValor(colunas[4]));
-                    p.setUnidade(limparTexto(colunas[7]));
-
-                    if (colunas.length > 9) p.setCategoria(limparTexto(colunas[9]));
-                    if (colunas.length > 10) p.setSubcategoria(limparTexto(colunas[10]));
-                    if (colunas.length > 14) p.setMarca(limparTexto(colunas[14]));
-
-                    // --- NOVOS CAMPOS FISCAIS ---
-                    p.setOrigem("0");
-                    p.setImpostoSeletivo(false);
-                    p.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
-                    p.setAtivo(true);
-
-                    Integer estoque = converterInteiro(colunas[13]);
-                    p.setEstoqueNaoFiscal(estoque);
-                    p.setEstoqueFiscal(0);
-                    p.setQuantidadeEmEstoque(estoque);
-                    p.setEstoqueMinimo(converterInteiro(colunas[12]));
-
-                    if (colunas.length > 20) p.setNcm(limparTexto(colunas[20]));
-                    if (colunas.length > 22) p.setCest(limparTexto(colunas[22]));
-
-                    // Aplica inteligência fiscal (CST, Monofásico)
-                    calculadoraFiscalService.aplicarRegrasFiscais(p);
-
-                    if (p.getDescricao() != null && !p.getDescricao().isEmpty()) {
-                        produtoRepository.save(p);
-                        count++;
-                    }
-                }
-                log.info("✅ Importação finalizada! {} cadastrados, {} pulados.", count, pulados);
+            // AGORA PASSAMOS O INPUTSTREAM DIRETO, SEM MOCKMULTIPARTFILE
+            try (InputStream inputStream = resource.getInputStream()) {
+                importacaoService.importarViaInputStream(inputStream);
             }
 
         } catch (Exception e) {
-            log.error("❌ Erro fatal ao importar CSV: ", e);
-        }
-    }
-
-    private String tratarCodigoBarras(String bruto) {
-        String limpo = limparTexto(bruto).replaceAll("\\D", "");
-        if (limpo.isEmpty()) return "";
-
-        // Trata notação científica do Excel (ex: 7,89E+12)
-        if (bruto.toUpperCase().contains("E+")) {
-            try {
-                BigDecimal bd = new BigDecimal(bruto.replace(",", "."));
-                return bd.toPlainString();
-            } catch (Exception e) {
-                return limpo;
-            }
-        }
-        return limpo;
-    }
-
-    private String limparTexto(String texto) {
-        if (texto == null) return "";
-        return texto.replace("\"", "").trim();
-    }
-
-    private BigDecimal converterValor(String valor) {
-        try {
-            String limpo = limparTexto(valor).replace(",", ".");
-            if (limpo.isEmpty()) return BigDecimal.ZERO;
-            return new BigDecimal(limpo);
-        } catch (Exception e) {
-            return BigDecimal.ZERO;
-        }
-    }
-
-    private Integer converterInteiro(String valor) {
-        try {
-            String limpo = limparTexto(valor).replace(",", ".");
-            if (limpo.contains(".")) limpo = limpo.substring(0, limpo.indexOf("."));
-            if (limpo.isEmpty()) return 0;
-            return Integer.parseInt(limpo);
-        } catch (Exception e) {
-            return 0;
+            log.error("❌ Erro ao carregar produtos.csv na inicialização: ", e);
         }
     }
 }

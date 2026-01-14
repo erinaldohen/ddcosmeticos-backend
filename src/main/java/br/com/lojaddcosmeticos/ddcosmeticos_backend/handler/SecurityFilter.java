@@ -25,27 +25,36 @@ public class SecurityFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
+        // Pula validação para rotas públicas (Login/Swagger) para não sujar o log
+        String path = request.getRequestURI();
+        if (path.contains("/auth") || path.contains("/swagger") || path.contains("/api-docs")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         var token = this.recoverToken(request);
 
         if (token != null) {
             try {
-                // Valida o token e recupera o sujeito (Matrícula)
-                // Se o token estiver expirado ou inválido, o JwtService deve retornar "" ou lançar exceção
-                var matricula = jwtService.validateToken(token);
+                // 1. Valida o token e recupera o "subject" (pode ser matricula ou email)
+                var login = jwtService.validateToken(token);
 
-                if (matricula != null && !matricula.isEmpty()) {
-                    // Busca usuário pela matrícula (Identificador principal do sistema)
-                    UserDetails user = usuarioRepository.findByMatricula(matricula).orElse(null);
+                if (login != null && !login.isEmpty()) {
+                    // 2. CORREÇÃO CRÍTICA: Busca por Matrícula OU E-mail
+                    // Isso garante que o usuário seja encontrado independente de como o token foi gerado
+                    UserDetails user = usuarioRepository.findByMatriculaOrEmail(login, login).orElse(null);
 
                     if (user != null) {
-                        // Usuário encontrado e token válido: Autentica no contexto
+                        // 3. Sucesso: Autentica
                         var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                         SecurityContextHolder.getContext().setAuthentication(authentication);
+                        // System.out.println("✅ Acesso liberado para: " + login);
+                    } else {
+                        System.out.println("❌ Token válido, mas usuário não encontrado no banco (Busca por Matrícula/Email): " + login);
                     }
                 }
             } catch (Exception e) {
-                // Em caso de erro na validação (token expirado/inválido), apenas limpamos o contexto
-                // O Spring Security tratará isso retornando 403 Forbidden mais à frente
+                System.out.println("❌ Erro na validação do token: " + e.getMessage());
                 SecurityContextHolder.clearContext();
             }
         }
@@ -53,15 +62,10 @@ public class SecurityFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    /**
-     * Recupera e LIMPA o token do cabeçalho.
-     * A correcao aqui remove aspas e espaços que o Frontend possa ter enviado errado.
-     */
     private String recoverToken(HttpServletRequest request) {
         var authHeader = request.getHeader("Authorization");
         if (authHeader == null) return null;
-
-        // Remove "Bearer ", remove aspas duplas (se houver) e remove espaços em branco extras
-        return authHeader.replace("Bearer ", "").replace("\"", "").trim();
+        // Limpeza robusta do token
+        return authHeader.replace("Bearer ", "").replace("\"", "").replace("'", "").trim();
     }
 }

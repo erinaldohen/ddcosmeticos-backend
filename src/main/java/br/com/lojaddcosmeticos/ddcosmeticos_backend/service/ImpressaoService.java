@@ -74,21 +74,21 @@ public class ImpressaoService {
 
             // --- TOTAIS ---
             document.add(new Paragraph(String.format("QTD TOTAL DE ITENS: %d", venda.getItens().size()), fontNormal));
-            document.add(new Paragraph(String.format("VALOR TOTAL R$: %.2f", venda.getTotalVenda()), fontBold));
+            document.add(new Paragraph(String.format("VALOR TOTAL R$: %.2f", venda.getValorTotal()), fontBold));
 
             if (venda.getDescontoTotal() != null && venda.getDescontoTotal().compareTo(BigDecimal.ZERO) > 0) {
                 document.add(new Paragraph(String.format("DESCONTOS R$: -%.2f", venda.getDescontoTotal()), fontNormal));
             }
 
-            BigDecimal valorPagar = venda.getTotalVenda().subtract(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO);
+            BigDecimal valorPagar = venda.getValorTotal().subtract(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO);
             document.add(new Paragraph(String.format("VALOR A PAGAR R$: %.2f", valorPagar), fontBold));
-            document.add(new Paragraph("FORMA PAGAMENTO: " + venda.getFormaPagamento(), fontNormal));
+            document.add(new Paragraph("FORMA PAGAMENTO: " + venda.getFormaDePagamento(), fontNormal));
             document.add(new Paragraph("--------------------------------", fontNormal));
 
             // --- RODAPÉ FISCAL (DADOS DA SEFAZ) ---
             document.add(new Paragraph("EMISSÃO: " + venda.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")), fontNormal));
 
-            if (venda.getXmlNfce() != null) {
+            if (venda.getChaveAcessoNfce() != null) {
                 document.add(new Paragraph("CHAVE DE ACESSO:", fontNormal));
                 // Chave simulada para layout (a real estaria no XML)
                 document.add(new Paragraph("43250157648950000144550010000057141000000000", fontSmall));

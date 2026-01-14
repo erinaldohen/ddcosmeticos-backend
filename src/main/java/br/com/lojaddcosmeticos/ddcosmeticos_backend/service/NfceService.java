@@ -40,8 +40,8 @@ public class NfceService {
         String xmlAssinado = "<nfe><infNFeId=\"" + chaveAcesso + "\"> ... </infNFeId></nfe>";
 
         // 3. Atualizar Venda
-        venda.setStatusFiscal(StatusFiscal.APROVADA);
-        venda.setXmlNfce(xmlAssinado);
+        venda.setStatusNfce(StatusFiscal.APROVADA);
+        venda.setChaveAcessoNfce(xmlAssinado);
 
         // Persistir a venda atualizada
         vendaRepository.save(venda);

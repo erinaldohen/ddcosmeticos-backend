@@ -42,7 +42,7 @@ public class FinanceiroService {
 
         for (int i = 1; i <= parcelas; i++) {
             ContaReceber conta = new ContaReceber();
-            conta.setIdVendaRef(venda.getId());
+            conta.setIdVendaRef(venda.getIdVenda());
             conta.setCliente(cliente);
             conta.setValorTotal(valorPorParcela);
             conta.setValorLiquido(valorPorParcela);

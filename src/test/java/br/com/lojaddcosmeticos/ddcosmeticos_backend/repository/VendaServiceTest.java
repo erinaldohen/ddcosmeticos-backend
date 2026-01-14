@@ -1,13 +1,14 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository; // Mantenha no pacote que está, mas mova para .service depois
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository; // Pacote correto para teste de serviço
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemVendaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoFiscalCarrinhoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario; // Import necessário
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*; // Importa todos os repositórios necessários
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.*; // Importa todos os serviços necessários
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -24,10 +25,11 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT) // <--- CORREÇÃO: Evita erro de UnnecessaryStubbing
+@MockitoSettings(strictness = Strictness.LENIENT)
 class VendaServiceTest {
 
     @InjectMocks
@@ -35,12 +37,9 @@ class VendaServiceTest {
 
     @Mock private VendaRepository vendaRepository;
     @Mock private ProdutoRepository produtoRepository;
-    @Mock private ClienteRepository clienteRepository;
-    @Mock private EstoqueService estoqueService;
-    @Mock private FinanceiroService financeiroService;
-    @Mock private NfceService nfceService;
-    @Mock private UsuarioRepository usuarioRepository;
-    @Mock private ConfiguracaoLojaRepository configuracaoLojaRepository;
+
+    // IMPORTANTE: Adicionado Mock da Calculadora Fiscal (Necessário após as atualizações recentes)
+    @Mock private CalculadoraFiscalService calculadoraFiscalService;
 
     // Mocks para simular autenticação
     @Mock private SecurityContext securityContext;
@@ -48,7 +47,7 @@ class VendaServiceTest {
 
     @Test
     void deveCalcularTotalVendaCorretamente() {
-        // 1. Simular Usuário Logado (Obrigatório no VendaService)
+        // 1. Simular Usuario Logado
         Usuario usuarioMock = new Usuario();
         usuarioMock.setId(1L);
         usuarioMock.setNome("Vendedor Teste");
@@ -60,50 +59,66 @@ class VendaServiceTest {
         // 2. Configurar Cenário (Produto no Banco)
         Produto produtoMock = new Produto();
         produtoMock.setId(1L);
+        produtoMock.setDescricao("Produto Teste");
         produtoMock.setPrecoVenda(new BigDecimal("100.00"));
         produtoMock.setCodigoBarras("789");
-        produtoMock.setQuantidadeEmEstoque(100); // Estoque suficiente
+        produtoMock.setQuantidadeEmEstoque(100);
 
-        // 3. Preparar Item do Pedido
-        ItemVendaDTO item = new ItemVendaDTO();
-        item.setCodigoBarras("789");
-        item.setQuantidade(new BigDecimal("2")); // 2 * 100.00 = 200.00
+        // 3. Preparar Item do Pedido (Usando construtor do Record)
+        // Ordem: idProduto, codigoBarras, quantidade, precoUnitario
+        ItemVendaDTO item = new ItemVendaDTO(null, "789", new BigDecimal("2"), null);
 
-        // 4. Criar Request
+        // 4. Criar Request (Usando construtor do Record)
         VendaRequestDTO request = new VendaRequestDTO(
                 "12345678900",
                 "Cliente Teste",
                 FormaDePagamento.DINHEIRO,
-                1,
+                1, // Parcelas
                 List.of(item),
-                new BigDecimal("10.00"), // Desconto de 10.00
-                false,
-                false
+                new BigDecimal("10.00"), // Desconto
+                false, // Apenas com NF entrada
+                false  // Orçamento
         );
 
         // 5. Configurar Comportamento dos Mocks
-        // IMPORTANTE: O serviço busca o produto item a item pelo código de barras, não por lista "In"
         when(produtoRepository.findByCodigoBarras("789")).thenReturn(Optional.of(produtoMock));
+        // Fallback caso busque por ID
+        when(produtoRepository.findById(any())).thenReturn(Optional.of(produtoMock));
 
-        // Simula salvamento
+        // Mock da Calculadora Fiscal (Essencial para não dar NullPointerException no valorIbs, etc.)
+        when(calculadoraFiscalService.calcularTotaisCarrinho(anyList())).thenReturn(
+                new ResumoFiscalCarrinhoDTO(
+                        new BigDecimal("200.00"), // Total Venda
+                        BigDecimal.ZERO, // IBS
+                        BigDecimal.ZERO, // CBS
+                        BigDecimal.ZERO, // IS
+                        new BigDecimal("200.00"), // Liquido
+                        BigDecimal.ZERO // Alíquota
+                )
+        );
+
+        // Simula salvamento e retorno da entidade com ID
         when(vendaRepository.save(any(Venda.class))).thenAnswer(invocation -> {
             Venda v = invocation.getArgument(0);
-            v.setId(1L);
+            v.setIdVenda(1L); // Simula o ID gerado pelo banco
             return v;
         });
 
-        // Simula validação de cliente (se documento foi passado)
-        when(clienteRepository.findByDocumento(anyString())).thenReturn(Optional.empty());
-
-        // 6. Executar o método real (Agora descomentado!)
-        Venda vendaRealizada = vendaService.realizarVenda(request);
+        // 6. Executar o método real
+        // CORREÇÃO: O serviço retorna um DTO, não a entidade Venda
+        VendaResponseDTO response = vendaService.realizarVenda(request);
 
         // 7. Validações (Asserts)
-        // Valor total esperado: (2 * 100) - 10 = 190.00
-        BigDecimal esperado = new BigDecimal("190.00");
-        BigDecimal obtido = vendaRealizada.getTotalVenda().subtract(vendaRealizada.getDescontoTotal());
+        // Cálculo esperado: (2 qtd * 100 preço) - 10 desconto = 190.00
+        BigDecimal totalEsperado = new BigDecimal("190.00");
 
-        // Compara ignorando casas decimais extras
-        assert obtido.compareTo(esperado) == 0 : "Valor total incorreto. Esperado: " + esperado + ", Obtido: " + obtido;
+        // Em records usa-se .valorTotal() e não .getValorTotal()
+        BigDecimal totalObtido = response.valorTotal();
+
+        assert totalObtido.compareTo(totalEsperado) == 0
+                : "Valor total incorreto. Esperado: " + totalEsperado + ", Obtido: " + totalObtido;
+
+        // Verifica se chamou a calculadora fiscal
+        verify(calculadoraFiscalService, times(1)).calcularTotaisCarrinho(anyList());
     }
 }

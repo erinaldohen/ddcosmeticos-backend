@@ -17,7 +17,7 @@ public class SplitPaymentService {
         BigDecimal totalIBS = BigDecimal.ZERO;
         BigDecimal totalCBS = BigDecimal.ZERO;
         BigDecimal totalSeletivo = BigDecimal.ZERO;
-        BigDecimal totalVenda = venda.getTotalVenda().subtract(venda.getDescontoTotal());
+        BigDecimal totalVenda = venda.getValorTotal().subtract(venda.getDescontoTotal());
 
         for (ItemVenda item : venda.getItens()) {
             BigDecimal valorItem = item.getTotalItem();

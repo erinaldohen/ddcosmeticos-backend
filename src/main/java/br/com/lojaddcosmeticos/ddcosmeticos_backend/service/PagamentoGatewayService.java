@@ -20,7 +20,7 @@ public class PagamentoGatewayService {
      * Processa a venda e executa a partilha real dos valores (Split Payment).
      */
     public void processarPagamentoComSplit(Venda venda) {
-        log.info("Iniciando processamento financeiro para Venda #{}", venda.getId());
+        log.info("Iniciando processamento financeiro para Venda #{}", venda.getIdVenda());
 
         // Gera as instruções baseadas na inteligência fiscal da LC 214
         List<SplitPaymentInstructionDTO> instrucoes = splitPaymentService.gerarInstrucoesSplit(venda);
@@ -30,7 +30,7 @@ public class PagamentoGatewayService {
             executarTransferenciaEspecifica(instrucao);
         }
 
-        log.info("Processo de Split Payment concluído para Venda #{}", venda.getId());
+        log.info("Processo de Split Payment concluído para Venda #{}", venda.getIdVenda());
     }
 
     /**

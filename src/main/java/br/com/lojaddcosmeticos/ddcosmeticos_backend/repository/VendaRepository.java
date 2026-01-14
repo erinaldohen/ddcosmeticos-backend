@@ -24,15 +24,18 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
 
-    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    // CORREÇÃO: totalVenda -> valorTotal
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     // --- OPERAÇÃO ---
 
-    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.id = :id")
+    // CORREÇÃO: v.id -> v.idVenda
+    @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.idVenda = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
 
-    List<Venda> findByStatusFiscalOrderByDataVendaDesc(StatusFiscal statusFiscal);
+    // CORREÇÃO: findByStatusFiscal -> findByStatusNfce
+    List<Venda> findByStatusNfceOrderByDataVendaDesc(StatusFiscal statusNfce);
 
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
@@ -41,14 +44,15 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     // --- RELATÓRIOS AVANÇADOS (DTOs) ---
 
-    // [ADICIONADO] Correção para o RelatorioService
-    @Query("SELECT COALESCE(SUM(v.totalVenda), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    // CORREÇÃO: totalVenda -> valorTotal
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
+    // CORREÇÃO: totalVenda -> valorTotal
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
             v.dataVenda, 
-            SUM(v.totalVenda),
+            SUM(v.valorTotal),
             COUNT(v) 
         )
         FROM Venda v 
@@ -58,15 +62,16 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
+    // CORREÇÃO: formaPagamento -> formaDePagamento, totalVenda -> valorTotal
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
-            v.formaPagamento, 
-            SUM(v.totalVenda),
+            v.formaDePagamento, 
+            SUM(v.valorTotal),
             COUNT(v)
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        GROUP BY v.formaPagamento
+        GROUP BY v.formaDePagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 

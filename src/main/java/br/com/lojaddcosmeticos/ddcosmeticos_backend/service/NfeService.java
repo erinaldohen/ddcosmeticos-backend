@@ -6,6 +6,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationExceptio
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Cliente;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ClienteRepository; // Import necessário
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 
 // Imports da Biblioteca Java-NFe
@@ -44,6 +45,9 @@ public class NfeService {
     private VendaRepository vendaRepository;
 
     @Autowired
+    private ClienteRepository clienteRepository; // Repositório para buscar o Cliente
+
+    @Autowired
     private ConfiguracoesNfe configuracoesNfe;
 
     @Transactional
@@ -52,8 +56,18 @@ public class NfeService {
         Venda venda = vendaRepository.findById(idVenda)
                 .orElseThrow(() -> new ValidationException("Venda não encontrada."));
 
-        // 2. Valida Cliente
-        validarDadosDestinatario(venda.getCliente());
+        // CORREÇÃO: Busca o Cliente pelo documento
+        Cliente cliente = null;
+        if (venda.getClienteDocumento() != null) {
+            String docLimpo = venda.getClienteDocumento().replaceAll("\\D", "");
+            cliente = clienteRepository.findByDocumento(docLimpo)
+                    .orElseThrow(() -> new ValidationException("Cliente não encontrado para o documento: " + venda.getClienteDocumento()));
+        } else {
+            throw new ValidationException("Venda sem documento de cliente. Não é possível emitir NF-e.");
+        }
+
+        // 2. Valida Cliente (agora passando o objeto Cliente)
+        validarDadosDestinatario(cliente);
 
         try {
             // 3. Preparação dos Dados para a Chave
@@ -64,7 +78,7 @@ public class NfeService {
             String serie = "1";
             String tipoEmissao = "1"; // 1 = Normal
 
-            // GERAÇÃO MANUAL DA CHAVE (Substitui o ChaveUtil que estava dando erro)
+            // GERAÇÃO MANUAL DA CHAVE
             String chaveSemDigito = gerarChaveAcessoManual(
                     configuracoesNfe.getEstado().getCodigoUF(),
                     LocalDateTime.now(),
@@ -88,7 +102,9 @@ public class NfeService {
 
             infNFe.setIde(montarIdentificacao(cnf, nNF, dv));
             infNFe.setEmit(montarEmitente());
-            infNFe.setDest(montarDestinatario(venda.getCliente()));
+
+            // CORREÇÃO: Passando o objeto Cliente buscado
+            infNFe.setDest(montarDestinatario(cliente));
 
             // Adiciona os Itens
             List<TNFe.InfNFe.Det> detalhes = montarDetalhes(venda.getItens());
@@ -125,8 +141,8 @@ public class NfeService {
             }
 
             if (status.equals("100")) {
-                venda.setStatusFiscal(StatusFiscal.APROVADA);
-                venda.setXmlNfce(xmlFinal);
+                venda.setStatusNfce(StatusFiscal.APROVADA);
+                venda.setChaveAcessoNfce(xmlFinal);
                 vendaRepository.save(venda);
             } else {
                 throw new ValidationException("Nota Rejeitada pela SEFAZ: " + status + " - " + motivo);
@@ -205,6 +221,7 @@ public class NfeService {
         }
 
         TEndereco enderDest = new TEndereco();
+        // Em um cenário real, pegar do objeto Cliente
         enderDest.setXLgr("RUA DO CLIENTE");
         enderDest.setNro("999");
         enderDest.setXBairro("BOA VIAGEM");
@@ -231,15 +248,12 @@ public class NfeService {
             prod.setCProd(String.valueOf(item.getProduto().getId()));
             prod.setCEAN("SEM GTIN");
 
-            // Verifica se é getNome() ou getDescricao()
             prod.setXProd(item.getProduto().getDescricao());
 
-            prod.setNCM("33049990");
+            prod.setNCM("33049990"); // Deveria vir do produto
             prod.setCFOP("5102");
             prod.setUCom("UN");
 
-            // --- CORREÇÃO DA LINHA 238 E SEGUINTES ---
-            // Usamos BigDecimal.valueOf ou String.valueOf para evitar erro com tipos primitivos (double/int)
             BigDecimal quantidade = new BigDecimal(String.valueOf(item.getQuantidade()));
             BigDecimal valorUnitario = new BigDecimal(String.valueOf(item.getPrecoUnitario()));
             BigDecimal subtotalCalculado = quantidade.multiply(valorUnitario);
@@ -255,7 +269,7 @@ public class NfeService {
             prod.setIndTot("1");
             det.setProd(prod);
 
-            // TRIBUTOS
+            // TRIBUTOS (Simplificado para Simples Nacional)
             TNFe.InfNFe.Det.Imposto imposto = new TNFe.InfNFe.Det.Imposto();
 
             TNFe.InfNFe.Det.Imposto.ICMS icms = new TNFe.InfNFe.Det.Imposto.ICMS();
@@ -302,8 +316,7 @@ public class NfeService {
         icmsTot.setVFCPST("0.00");
         icmsTot.setVFCPSTRet("0.00");
 
-        // CORREÇÃO DE FORMATAÇÃO (LINHA 299)
-        String valorTotal = formatarValor(venda.getTotalVenda(), 2);
+        String valorTotal = formatarValor(venda.getValorTotal(), 2);
 
         icmsTot.setVProd(valorTotal);
         icmsTot.setVFrete("0.00");
@@ -329,9 +342,8 @@ public class NfeService {
     private TNFe.InfNFe.Pag montarPagamento(Venda venda) {
         TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
         TNFe.InfNFe.Pag.DetPag detPag = new TNFe.InfNFe.Pag.DetPag();
-        detPag.setTPag("01");
-        // CORREÇÃO DE FORMATAÇÃO (LINHA 327)
-        detPag.setVPag(formatarValor(venda.getTotalVenda(), 2));
+        detPag.setTPag("01"); // Dinheiro
+        detPag.setVPag(formatarValor(venda.getValorTotal(), 2));
         pag.getDetPag().add(detPag);
         return pag;
     }
@@ -340,14 +352,13 @@ public class NfeService {
         if (cliente == null) {
             throw new ValidationException("Para emitir NF-e, a venda deve ter um cliente identificado.");
         }
+        if (cliente.getDocumento() == null || cliente.getDocumento().length() < 11) {
+            throw new ValidationException("CPF/CNPJ do cliente inválido.");
+        }
     }
 
     // ================= MÉTODOS AUXILIARES BLINDADOS =================
 
-    /**
-     * Formata qualquer valor numérico (Double, BigDecimal) para String com ponto decimal
-     * Evita erros de "String.format" com Locale.
-     */
     private String formatarValor(Object valor, int casasDecimais) {
         if (valor == null) return "0.00";
         BigDecimal bd;
@@ -361,35 +372,19 @@ public class NfeService {
         return bd.setScale(casasDecimais, RoundingMode.HALF_EVEN).toString();
     }
 
-    /**
-     * Gera a chave de acesso 44 dígitos manualmente (UF+AAMM+CNPJ+MOD+SERIE+NNF+TPEMIS+CNF+DV)
-     * Substitui o ChaveUtil da biblioteca para evitar erros de versão.
-     */
     private String gerarChaveAcessoManual(String cUF, LocalDateTime data, String cnpj, String mod, String serie, String nNF, String tpEmis, String cNF) {
         StringBuilder chave = new StringBuilder();
-        // 1. cUF (2 posições)
         chave.append(String.format("%02d", Integer.parseInt(cUF)));
-        // 2. AAMM (4 posições)
         chave.append(data.format(DateTimeFormatter.ofPattern("yyMM")));
-        // 3. CNPJ (14 posições)
         chave.append(String.format("%014d", Long.parseLong(cnpj.replaceAll("\\D", ""))));
-        // 4. Modelo (2 posições)
         chave.append(String.format("%02d", Integer.parseInt(mod)));
-        // 5. Série (3 posições)
         chave.append(String.format("%03d", Integer.parseInt(serie)));
-        // 6. Número da Nota (9 posições)
         chave.append(String.format("%09d", Long.parseLong(nNF)));
-        // 7. Tipo Emissão (1 posição)
         chave.append(tpEmis);
-        // 8. Código Numérico (8 posições)
         chave.append(String.format("%08d", Long.parseLong(cNF)));
-
         return chave.toString();
     }
 
-    /**
-     * Calcula o Dígito Verificador (Módulo 11) da chave de 43 posições
-     */
     private String calcularDigitoVerificador(String chave43) {
         int soma = 0;
         int peso = 2;

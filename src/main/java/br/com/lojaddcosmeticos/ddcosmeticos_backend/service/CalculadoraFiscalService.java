@@ -26,43 +26,34 @@ public class CalculadoraFiscalService {
     // MÓDULO: INTELIGÊNCIA FISCAL (CLASSIFICAÇÃO AUTOMÁTICA ATUALIZADA)
     // ==================================================================================
 
-    /**
-     * Aplica regras fiscais em uma entidade Produto do banco.
-     * Retorna TRUE se houve alteração para que o serviço de saneamento persista os dados.
-     */
     public boolean aplicarRegrasFiscais(Produto p) {
         if (p.getNcm() == null || p.getNcm().isEmpty()) return false;
 
         RegraFiscalResultado resultado = calcularRegras(p.getNcm());
         boolean alterou = false;
 
-        // Verifica e atualiza Monofásico
         if (p.isMonofasico() != resultado.monofasico) {
             p.setMonofasico(resultado.monofasico);
             alterou = true;
         }
-        // Verifica e atualiza CST/CSOSN
         if (p.getCst() == null || !p.getCst().equals(resultado.cst)) {
             p.setCst(resultado.cst);
             alterou = true;
         }
-        // Verifica e atualiza Classificação da Reforma
         if (p.getClassificacaoReforma() != resultado.classificacaoReforma) {
             p.setClassificacaoReforma(resultado.classificacaoReforma);
             alterou = true;
         }
-        // [NOVO] Verifica e atualiza Imposto Seletivo (LC 214)
-        if (p.isImpostoSeletivo() != resultado.impostoSeletivo) {
-            p.setImpostoSeletivo(resultado.impostoSeletivo);
-            alterou = true;
-        }
+        try {
+            if (p.isImpostoSeletivo() != resultado.impostoSeletivo) {
+                p.setImpostoSeletivo(resultado.impostoSeletivo);
+                alterou = true;
+            }
+        } catch (Exception ignored) {}
 
         return alterou;
     }
 
-    /**
-     * Aplica regras fiscais no DTO que vem da API Externa.
-     */
     public void aplicarRegras(ProdutoExternoDTO dto) {
         if (dto.getNcm() == null || dto.getNcm().isEmpty()) {
             dto.setMonofasico(false);
@@ -74,41 +65,30 @@ public class CalculadoraFiscalService {
         dto.setMonofasico(resultado.monofasico);
         dto.setCst(resultado.cst);
         dto.setClassificacaoReforma(resultado.classificacaoReforma.name());
-        // Se o seu DTO externo suportar o campo, adicione: dto.setImpostoSeletivo(resultado.impostoSeletivo);
     }
 
-    /**
-     * Lógica central de classificação baseada em NCM e Legislação Vigente.
-     */
     private RegraFiscalResultado calcularRegras(String ncm) {
         String ncmLimpo = ncm.replace(".", "").trim();
 
-        // 1. Monofásico (Lei 10.147/2000 - Cosméticos, Higiene e Toucador)
         boolean isMonofasico =
-                ncmLimpo.startsWith("3303") || // Perfumes
-                        ncmLimpo.startsWith("3304") || // Maquiagem/Cremes
-                        ncmLimpo.startsWith("3305") || // Shampoos
-                        ncmLimpo.startsWith("3307") || // Desodorantes
-                        ncmLimpo.startsWith("3401") || // Sabões
-                        ncmLimpo.startsWith("9619");   // Absorventes/Fraldas
+                ncmLimpo.startsWith("3303") ||
+                        ncmLimpo.startsWith("3304") ||
+                        ncmLimpo.startsWith("3305") ||
+                        ncmLimpo.startsWith("3307") ||
+                        ncmLimpo.startsWith("3401") ||
+                        ncmLimpo.startsWith("9619");
 
-        // 2. CST / CSOSN (Simples Nacional)
-        // 500 = ICMS cobrado anteriormente por ST ou Monofásico
         String cst = isMonofasico ? "500" : "102";
 
-        // 3. Reforma Tributária (LC 214)
         TipoTributacaoReforma classificacao;
         boolean impostoSeletivo = false;
 
         if (ncmLimpo.startsWith("9619") || ncmLimpo.startsWith("0201") ||
                 ncmLimpo.startsWith("1006") || ncmLimpo.startsWith("0713")) {
-            // Itens de higiene básica ou alimentos da Cesta Básica Nacional
             classificacao = TipoTributacaoReforma.CESTA_BASICA;
         } else if (ncmLimpo.startsWith("3306") || ncmLimpo.startsWith("3401")) {
-            // Higiene Bucal e Sabões (Alíquota reduzida em 60%)
             classificacao = TipoTributacaoReforma.REDUZIDA_60;
         } else if (ncmLimpo.startsWith("2203") || ncmLimpo.startsWith("2204") || ncmLimpo.startsWith("2402")) {
-            // Cervejas, Vinhos ou Tabaco (Sujeito ao Imposto Seletivo)
             classificacao = TipoTributacaoReforma.IMPOSTO_SELETIVO;
             impostoSeletivo = true;
         } else {
@@ -118,7 +98,6 @@ public class CalculadoraFiscalService {
         return new RegraFiscalResultado(isMonofasico, cst, classificacao, impostoSeletivo);
     }
 
-    // Record atualizado para incluir o novo campo de Imposto Seletivo
     private record RegraFiscalResultado(
             boolean monofasico,
             String cst,
@@ -127,7 +106,7 @@ public class CalculadoraFiscalService {
     ) {}
 
     // ==================================================================================
-    // LÓGICA EXISTENTE: MANTIDA INTEGRALMENTE
+    // LÓGICA EXISTENTE: MANTIDA E CORRIGIDA
     // ==================================================================================
 
     private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205");
@@ -160,19 +139,20 @@ public class CalculadoraFiscalService {
 
         for (ItemVenda item : itens) {
             Produto p = item.getProduto();
-            BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
+            // CORREÇÃO: Conversão segura de Quantidade (Integer -> BigDecimal)
+            BigDecimal qtd = new BigDecimal(item.getQuantidade().toString());
+            BigDecimal valorItem = item.getPrecoUnitario().multiply(qtd);
+
             totalVenda = totalVenda.add(valorItem);
 
             BigDecimal aliquotaItem = aliquotaCheiaPeriodo;
 
             if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
-                // Se a redução é de 60%, paga-se apenas 40% da alíquota
                 aliquotaItem = aliquotaCheiaPeriodo.multiply(new BigDecimal("0.40"));
             } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA ||
                     p.getClassificacaoReforma() == TipoTributacaoReforma.IMUNE) {
                 aliquotaItem = BigDecimal.ZERO;
             } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.IMPOSTO_SELETIVO) {
-                // [NOVO] Adição de sobretaxa estimada para o imposto seletivo
                 aliquotaItem = aliquotaCheiaPeriodo.add(new BigDecimal("0.15"));
             }
 
@@ -222,16 +202,21 @@ public class CalculadoraFiscalService {
         LocalDate hoje = LocalDate.now();
         return regraRepository.findRegraVigente(hoje)
                 .orElseGet(() -> new RegraTributaria(
-                        hoje.getYear(), hoje, hoje, "0.00", "0.00", "1.0"
+                        hoje.getYear(), hoje, hoje, "0.175", "0.090", "1.0"
                 ));
     }
 
     public BigDecimal calcularImpostosTotais(List<ItemVenda> itens) {
         return itens.stream()
-                .map(i -> i.getPrecoUnitario().multiply(i.getQuantidade()).multiply(new BigDecimal("0.18")))
+                .map(i -> {
+                    // CORREÇÃO: Conversão segura
+                    BigDecimal qtd = new BigDecimal(i.getQuantidade().toString());
+                    return i.getPrecoUnitario().multiply(qtd).multiply(new BigDecimal("0.18"));
+                })
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    // --- CORREÇÃO DA LINHA 243 E ATUALIZAÇÃO DA LÓGICA DE CÁLCULO ---
     public ResumoFiscalCarrinhoDTO calcularTotaisCarrinho(List<ItemVenda> itens) {
         BigDecimal totalVenda = BigDecimal.ZERO;
         BigDecimal somaIbs = BigDecimal.ZERO;
@@ -240,16 +225,35 @@ public class CalculadoraFiscalService {
 
         for (ItemVenda item : itens) {
             Produto p = item.getProduto();
-            BigDecimal subtotal = item.getPrecoUnitario().multiply(item.getQuantidade());
+            // CORREÇÃO: Conversão de Integer/Double para BigDecimal de forma segura
+            BigDecimal qtd = (item.getQuantidade() != null)
+                    ? new BigDecimal(item.getQuantidade().toString())
+                    : BigDecimal.ZERO;
 
-            // Lógica simplificada de busca de alíquota (Ideal: buscar por NCM no banco)
-            // Aqui simulamos a regra geral da LC 214 se não tiver específica
-            BigDecimal aliqIbs = new BigDecimal("17.5"); // Exemplo padrão
-            BigDecimal aliqCbs = new BigDecimal("9.0");  // Exemplo padrão
+            BigDecimal preco = (item.getPrecoUnitario() != null)
+                    ? item.getPrecoUnitario()
+                    : BigDecimal.ZERO;
+
+            BigDecimal subtotal = preco.multiply(qtd);
+
+            // Alíquotas Padrão LC 214 (Estimativa Geral)
+            BigDecimal aliqIbs = new BigDecimal("17.5"); // IBS
+            BigDecimal aliqCbs = new BigDecimal("9.0");  // CBS
             BigDecimal aliqIs = BigDecimal.ZERO;
 
-            // Se o produto for "do pecado" (ex: cigarro, bebida), adiciona IS
-            // if (p.isSujeitoImpostoSeletivo()) aliqIs = new BigDecimal("10.0");
+            // Lógica de Inteligência Fiscal (Aplica as reduções/acréscimos)
+            if (p.getClassificacaoReforma() != null) {
+                if (p.getClassificacaoReforma() == TipoTributacaoReforma.IMPOSTO_SELETIVO) {
+                    aliqIs = new BigDecimal("10.0"); // Exemplo de seletivo
+                } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
+                    aliqIbs = aliqIbs.multiply(new BigDecimal("0.4"));
+                    aliqCbs = aliqCbs.multiply(new BigDecimal("0.4"));
+                } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA ||
+                        p.getClassificacaoReforma() == TipoTributacaoReforma.IMUNE) {
+                    aliqIbs = BigDecimal.ZERO;
+                    aliqCbs = BigDecimal.ZERO;
+                }
+            }
 
             // Cálculos item a item
             BigDecimal valorIbs = subtotal.multiply(aliqIbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
@@ -266,7 +270,6 @@ public class CalculadoraFiscalService {
         BigDecimal totalImpostos = somaIbs.add(somaCbs).add(somaIs);
         BigDecimal totalLiquido = totalVenda.subtract(totalImpostos);
 
-        // Evita divisão por zero
         BigDecimal aliquotaEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
                 ? totalImpostos.divide(totalVenda, 4, RoundingMode.HALF_EVEN).multiply(new BigDecimal("100"))
                 : BigDecimal.ZERO;

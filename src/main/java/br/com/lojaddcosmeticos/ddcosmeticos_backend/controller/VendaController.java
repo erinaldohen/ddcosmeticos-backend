@@ -18,7 +18,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -33,6 +32,14 @@ public class VendaController {
     // ==================================================================================
     // SESSÃO 1: OPERAÇÕES PRINCIPAIS
     // ==================================================================================
+
+    @PostMapping
+    @Operation(summary = "Realizar Venda (PDV)")
+    public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
+        // O serviço já retorna o DTO pronto com os cálculos fiscais.
+        VendaResponseDTO response = vendaService.realizarVenda(dto);
+        return ResponseEntity.ok(response);
+    }
 
     @PostMapping("/suspender")
     @Operation(summary = "Suspender Venda (Fila de Espera)")
@@ -55,8 +62,6 @@ public class VendaController {
     @GetMapping("/suspensas")
     @Operation(summary = "Listar Vendas Suspensas")
     public ResponseEntity<List<VendaResponseDTO>> listarSuspensas() {
-        // CORREÇÃO: Usamos o método do service que já retorna a lista de DTOs pronta
-        // Isso evita duplicar a lógica de conversão aqui no controller
         return ResponseEntity.ok(vendaService.listarVendasSuspensas());
     }
 
@@ -90,34 +95,20 @@ public class VendaController {
     // ==================================================================================
 
     private VendaCompletaResponseDTO converterParaDTO(Venda venda) {
+        // CORREÇÃO LINHA 102: Conversão segura de Enum para String
+        String status = (venda.getStatusNfce() != null) ? venda.getStatusNfce().name() : "N/A";
+
         return new VendaCompletaResponseDTO(
-                venda.getId(),
+                venda.getIdVenda(),
                 venda.getDataVenda(),
                 venda.getClienteNome(),
                 venda.getClienteDocumento(),
-                venda.getTotalVenda(),
+                venda.getValorTotal(),
                 venda.getDescontoTotal(),
-                venda.getStatusFiscal().name(),
+                status,
                 venda.getItens().stream()
                         .map(i -> i.getProduto().getDescricao())
                         .collect(Collectors.toList())
         );
-    }
-
-    @PostMapping
-    @Operation(summary = "Realizar Venda")
-    public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        Venda venda = vendaService.realizarVenda(dto);
-        // Conversão manual usando Builder (padrão do projeto)
-        return ResponseEntity.ok(VendaResponseDTO.builder()
-                .idVenda(venda.getId())
-                .dataVenda(venda.getDataVenda())
-                .clienteNome(venda.getClienteNome())
-                .clienteDocumento(venda.getClienteCpf())
-                .valorTotal(venda.getTotalVenda().subtract(venda.getDescontoTotal()))
-                .totalItens(venda.getItens().size())
-                .statusFiscal(venda.getStatusFiscal())
-                .alertas(new ArrayList<>())
-                .build());
     }
 }

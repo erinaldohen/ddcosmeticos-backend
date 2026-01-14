@@ -8,12 +8,12 @@ import java.io.Serializable;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor // Gera um construtor com TODOS os campos automaticamente
-public class LoginResponseDTO implements Serializable { // <--- Implementar
+@AllArgsConstructor
+public class LoginResponseDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private String token;
-    private String matricula;
+    private String matricula; // Campo solicitado
     private String nome;
     private String perfil;
 }

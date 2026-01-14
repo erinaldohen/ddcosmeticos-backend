@@ -12,8 +12,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Arrays;
 import java.util.Optional;
 
 @Slf4j
@@ -25,43 +24,77 @@ public class ImportacaoService {
 
     @Transactional
     public void importarProdutos(MultipartFile arquivo) {
-        // Tenta usar ISO-8859-1 (comum em CSVs do Excel no Brasil)
+        log.info("Iniciando importação do arquivo: {}", arquivo.getOriginalFilename());
+
+        // Tenta ler com ISO-8859-1 (comum em Excel BR)
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(arquivo.getInputStream(), StandardCharsets.ISO_8859_1))) {
 
-            String linha = reader.readLine(); // Lê a primeira linha (Cabeçalho)
-            if (linha == null) return;
+            String linhaCabecalho = reader.readLine();
+            if (linhaCabecalho == null) {
+                throw new RuntimeException("O arquivo está vazio.");
+            }
 
-            // --- 1. MAPEAMENTO DINÂMICO DE COLUNAS ---
-            // Isso resolve o problema de trocar CEST por ORIGEM se a ordem mudar
-            String[] headers = linha.split(";");
-            Map<String, Integer> mapaColunas = new HashMap<>();
+            // 1. LIMPEZA DE CARACTERES OCULTOS (BOM)
+            // Remove o caractere invisível que o Excel coloca no início do arquivo
+            if (linhaCabecalho.startsWith("\uFEFF")) {
+                linhaCabecalho = linhaCabecalho.substring(1);
+            }
+
+            // 2. DETECÇÃO AUTOMÁTICA DE SEPARADOR
+            String separador = linhaCabecalho.contains(";") ? ";" : ",";
+            log.info("Separador detectado: '{}'", separador);
+
+            String[] headers = linhaCabecalho.split(separador);
+
+            // Log para debug: Mostra o que o Java está "vendo" no cabeçalho
+            log.info("Cabeçalhos lidos: " + Arrays.toString(headers));
+
+            // 3. MAPEAMENTO DE ÍNDICES (FLEXÍVEL)
+            int idxEan = -1;
+            int idxDescricao = -1;
+            int idxPreco = -1;
+            int idxNcm = -1;
+            int idxCest = -1;
+            int idxOrigem = -1;
 
             for (int i = 0; i < headers.length; i++) {
-                // Remove espaços e deixa maiúsculo para garantir o "match"
-                mapaColunas.put(headers[i].trim().toUpperCase(), i);
+                // Normaliza o texto: Maiúsculo, sem espaços nas pontas e sem aspas
+                String h = headers[i].toUpperCase().trim().replace("\"", "");
+
+                if (h.contains("BARRAS") || h.equals("EAN") || h.equals("GTIN")) idxEan = i;
+                else if (h.contains("DESC") || h.contains("NOME")) idxDescricao = i;
+                else if (h.contains("PRECO") || h.contains("VALOR")) idxPreco = i;
+                else if (h.contains("NCM")) idxNcm = i;
+                    // Busca por palavra chave (resolve se estiver escrito "COD_CEST" ou "C.E.S.T")
+                else if (h.contains("CEST")) idxCest = i;
+                    // Busca por palavra chave (resolve se estiver "ORIGEM_MERCADORIA")
+                else if (h.contains("ORIGEM")) idxOrigem = i;
             }
 
-            // Verifica colunas obrigatórias mínimas
-            if (!mapaColunas.containsKey("CODIGO_BARRAS") && !mapaColunas.containsKey("EAN")) {
-                throw new RuntimeException("O arquivo CSV precisa ter uma coluna 'CODIGO_BARRAS' ou 'EAN'.");
+            log.info("Mapeamento -> CEST: Coluna {}, ORIGEM: Coluna {}", idxCest, idxOrigem);
+
+            if (idxEan == -1) {
+                throw new RuntimeException("Não foi encontrada a coluna de 'CODIGO_BARRAS' ou 'EAN'. Verifique o cabeçalho.");
             }
 
-            // --- 2. LEITURA DAS LINHAS ---
+            // 4. LEITURA DOS DADOS
+            String linha;
+            int linhaAtual = 1;
+            int produtosSalvos = 0;
+
             while ((linha = reader.readLine()) != null) {
-                // split(..., -1) garante que colunas vazias no final não sejam ignoradas
-                String[] dados = linha.split(";", -1);
+                linhaAtual++;
+                // split com -1 preserva colunas vazias no final
+                String[] dados = linha.split(separador, -1);
 
-                // Evita erro se a linha estiver em branco ou incompleta
-                if (dados.length < 2) continue;
+                // Se a linha estiver incompleta, pula
+                if (dados.length <= idxEan) continue;
 
-                // Identifica o EAN (Chave do produto)
-                int indexEan = mapaColunas.getOrDefault("CODIGO_BARRAS", mapaColunas.getOrDefault("EAN", -1));
-                if (indexEan == -1 || indexEan >= dados.length) continue;
-
-                String ean = dados[indexEan].replaceAll("\\D", ""); // Limpa caracteres não numéricos
+                // Limpeza do EAN
+                String ean = dados[idxEan].replaceAll("\\D", "");
                 if (ean.isBlank()) continue;
 
-                // Busca existente ou cria novo
+                // Busca ou cria novo
                 Optional<Produto> existenteOpt = produtoRepository.findByCodigoBarras(ean);
                 Produto produto = existenteOpt.orElse(new Produto());
 
@@ -71,48 +104,47 @@ public class ImportacaoService {
                     produto.setQuantidadeEmEstoque(0);
                 }
 
-                // --- PREENCHIMENTO SEGURO ---
+                // Preenchimento Seguro
+                if (idxDescricao != -1 && dados.length > idxDescricao)
+                    produto.setDescricao(dados[idxDescricao].toUpperCase().trim().replace("\"", ""));
 
-                // DESCRICAO
-                if (mapaColunas.containsKey("DESCRICAO")) {
-                    produto.setDescricao(dados[mapaColunas.get("DESCRICAO")].toUpperCase().trim());
+                if (idxPreco != -1 && dados.length > idxPreco) {
+                    try {
+                        String p = dados[idxPreco].replace("R$", "").replace(".", "").replace(",", ".").trim().replace("\"", "");
+                        if (!p.isBlank()) produto.setPrecoVenda(new BigDecimal(p));
+                    } catch (Exception ignored) {}
                 }
 
-                // PRECO DE VENDA
-                if (mapaColunas.containsKey("PRECO_VENDA")) {
-                    String val = dados[mapaColunas.get("PRECO_VENDA")].replace("R$", "").replace(".", "").replace(",", ".").trim();
-                    try {
-                        produto.setPrecoVenda(new BigDecimal(val));
-                    } catch (Exception e) {
-                        if (produto.getId() == null) produto.setPrecoVenda(BigDecimal.ZERO);
+                if (idxNcm != -1 && dados.length > idxNcm) {
+                    String n = dados[idxNcm].replaceAll("\\D", "");
+                    if (!n.isBlank()) produto.setNcm(n);
+                }
+
+                // --- CORREÇÃO DO CEST E ORIGEM ---
+
+                // Pega CEST apenas se a coluna foi encontrada e existe dado na linha
+                if (idxCest != -1 && dados.length > idxCest) {
+                    String c = dados[idxCest].replaceAll("\\D", ""); // Remove pontos
+                    if (!c.isBlank()) {
+                        produto.setCest(c);
                     }
                 }
 
-                // NCM
-                if (mapaColunas.containsKey("NCM")) {
-                    String ncm = dados[mapaColunas.get("NCM")].replaceAll("\\D", "");
-                    produto.setNcm(ncm.isEmpty() ? null : ncm);
+                // Pega ORIGEM apenas se a coluna foi encontrada
+                if (idxOrigem != -1 && dados.length > idxOrigem) {
+                    String o = dados[idxOrigem].replaceAll("\\D", "");
+                    // Origem é sempre 1 dígito (0, 1, 2...). Se vier vazio, assume 0 (Nacional)
+                    produto.setOrigem(o.isEmpty() ? "0" : o.substring(0, 1));
                 }
 
-                // CEST (Correção do seu problema anterior)
-                if (mapaColunas.containsKey("CEST")) {
-                    String cest = dados[mapaColunas.get("CEST")].replaceAll("\\D", "");
-                    produto.setCest(cest.isEmpty() ? null : cest);
-                }
-
-                // ORIGEM (Correção do seu problema anterior)
-                if (mapaColunas.containsKey("ORIGEM")) {
-                    String origem = dados[mapaColunas.get("ORIGEM")].replaceAll("\\D", "");
-                    // Pega só o primeiro dígito e garante que não é vazio
-                    produto.setOrigem(origem.isEmpty() ? "0" : origem.substring(0, 1));
-                }
-
-                // Salva no banco
                 produtoRepository.save(produto);
+                produtosSalvos++;
             }
 
+            log.info("Importação finalizada. {} produtos processados.", produtosSalvos);
+
         } catch (Exception e) {
-            log.error("Erro ao importar CSV", e);
+            log.error("Erro fatal na importação", e);
             throw new RuntimeException("Erro ao processar arquivo: " + e.getMessage());
         }
     }

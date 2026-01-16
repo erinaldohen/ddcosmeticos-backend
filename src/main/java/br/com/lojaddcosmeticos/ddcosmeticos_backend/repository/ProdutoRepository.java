@@ -25,6 +25,11 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findAllByAtivoTrue();
 
+    // --- NOVO MÉTODO (Correção do Erro) ---
+    // Usado pelo EstoqueService para filtrar produtos pelo NCM antes da comparação de nomes
+    List<Produto> findByNcm(String ncm);
+    // --------------------------------------
+
     // Busca Paginada (Para o Grid)
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
 

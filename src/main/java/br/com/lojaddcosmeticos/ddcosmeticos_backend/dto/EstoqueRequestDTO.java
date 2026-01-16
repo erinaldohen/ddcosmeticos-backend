@@ -14,6 +14,15 @@ public class EstoqueRequestDTO {
 
     @NotBlank(message = "O código de barras é obrigatório")
     private String codigoBarras;
+    private Long idProduto; // O ID do produto que o usuário confirmou (pode ser da sugestão ou busca manual)
+    private String codigoNoFornecedor; // O código original do XML para criar o vínculo
+
+    // --- NOVOS CAMPOS PARA AUTO-CADASTRO (IMPORTANTE) ---
+    // Se o produto não existir, usaremos esses dados para criá-lo
+    private String descricao;
+    private String ncm;
+    private String unidade;
+    // ----------------------------------------------------
 
     // Agora suporta ID ou CNPJ
     private Long fornecedorId;

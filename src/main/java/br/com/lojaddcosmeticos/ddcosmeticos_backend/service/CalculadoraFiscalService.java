@@ -3,18 +3,19 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoExternoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoFiscalCarrinhoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SplitPaymentDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ValidacaoFiscalDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.RegraTributaria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.RegraTributariaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
+import java.text.Normalizer;
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Service
 public class CalculadoraFiscalService {
@@ -23,104 +24,222 @@ public class CalculadoraFiscalService {
     private RegraTributariaRepository regraRepository;
 
     // ==================================================================================
-    // MÓDULO: INTELIGÊNCIA FISCAL (CLASSIFICAÇÃO AUTOMÁTICA ATUALIZADA)
+    // MÓDULO 1: INTELIGÊNCIA DE CADASTRO (DESCRIÇÃO -> NCM/CEST)
     // ==================================================================================
 
-    public boolean aplicarRegrasFiscais(Produto p) {
-        if (p.getNcm() == null || p.getNcm().isEmpty()) return false;
+    private record DadosFiscais(String ncm, String cest) {}
+    private static final Map<String, DadosFiscais> MAPA_INTELIGENCIA = new HashMap<>();
 
-        RegraFiscalResultado resultado = calcularRegras(p.getNcm());
+    static {
+        // CABELOS
+        DadosFiscais shampoo = new DadosFiscais("33051000", "2002100");
+        MAPA_INTELIGENCIA.put("SHAMPOO", shampoo);
+        MAPA_INTELIGENCIA.put("XAMPU", shampoo);
+
+        DadosFiscais capilares = new DadosFiscais("33059000", "2002400");
+        MAPA_INTELIGENCIA.put("CONDICIONADOR", capilares);
+        MAPA_INTELIGENCIA.put("MASCARA", capilares);
+        MAPA_INTELIGENCIA.put("CREME", capilares);
+        MAPA_INTELIGENCIA.put("LEAVE", capilares);
+        MAPA_INTELIGENCIA.put("TINTURA", capilares);
+
+        // CORPO
+        DadosFiscais sabonete = new DadosFiscais("34011190", "2003300");
+        MAPA_INTELIGENCIA.put("SABONETE", sabonete);
+
+        DadosFiscais desodorante = new DadosFiscais("33072010", "2003700");
+        MAPA_INTELIGENCIA.put("DESODORANTE", desodorante);
+
+        // MAQUIAGEM & UNHAS
+        MAPA_INTELIGENCIA.put("BATOM", new DadosFiscais("33041000", "2001300"));
+        MAPA_INTELIGENCIA.put("RIMEL", new DadosFiscais("33042010", "2001400"));
+        MAPA_INTELIGENCIA.put("ESMALTE", new DadosFiscais("33043000", "2001500"));
+        MAPA_INTELIGENCIA.put("BASE UNHA", new DadosFiscais("33043000", "2001500"));
+    }
+
+    public ValidacaoFiscalDTO.Response simularValidacao(String descricao, String ncmDigitado) {
+        return processarInteligencia(descricao, ncmDigitado);
+    }
+
+    public boolean aplicarRegrasFiscais(Produto p) {
+        ValidacaoFiscalDTO.Response dados = processarInteligencia(p.getDescricao(), p.getNcm());
         boolean alterou = false;
 
-        if (p.isMonofasico() != resultado.monofasico) {
-            p.setMonofasico(resultado.monofasico);
+        if (!Objects.equals(p.getNcm(), dados.ncm())) { p.setNcm(dados.ncm()); alterou = true; }
+        if (!Objects.equals(p.getCest(), dados.cest())) { p.setCest(dados.cest()); alterou = true; }
+        if (!Objects.equals(p.getCst(), dados.cst())) { p.setCst(dados.cst()); alterou = true; }
+        if (p.isMonofasico() != dados.monofasico()) { p.setMonofasico(dados.monofasico()); alterou = true; }
+
+        if (p.getClassificacaoReforma() == null) {
+            p.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
             alterou = true;
         }
-        if (p.getCst() == null || !p.getCst().equals(resultado.cst)) {
-            p.setCst(resultado.cst);
-            alterou = true;
-        }
-        if (p.getClassificacaoReforma() != resultado.classificacaoReforma) {
-            p.setClassificacaoReforma(resultado.classificacaoReforma);
-            alterou = true;
-        }
-        try {
-            if (p.isImpostoSeletivo() != resultado.impostoSeletivo) {
-                p.setImpostoSeletivo(resultado.impostoSeletivo);
-                alterou = true;
-            }
-        } catch (Exception ignored) {}
 
         return alterou;
     }
 
-    public void aplicarRegras(ProdutoExternoDTO dto) {
-        if (dto.getNcm() == null || dto.getNcm().isEmpty()) {
-            dto.setMonofasico(false);
-            dto.setCst("102");
-            dto.setClassificacaoReforma("PADRAO");
-            return;
+    private ValidacaoFiscalDTO.Response processarInteligencia(String descricao, String ncmDigitado) {
+        String descLimpa = limparString(descricao);
+        String ncmFinal = (ncmDigitado != null) ? ncmDigitado.replaceAll("\\D", "") : "";
+        String cestFinal = "";
+
+        boolean achou = false;
+        for (Map.Entry<String, DadosFiscais> regra : MAPA_INTELIGENCIA.entrySet()) {
+            if (descLimpa.contains(regra.getKey())) {
+                ncmFinal = regra.getValue().ncm();
+                cestFinal = regra.getValue().cest();
+                achou = true;
+                break;
+            }
         }
-        RegraFiscalResultado resultado = calcularRegras(dto.getNcm());
-        dto.setMonofasico(resultado.monofasico);
-        dto.setCst(resultado.cst);
-        dto.setClassificacaoReforma(resultado.classificacaoReforma.name());
+
+        if (!achou && !ncmFinal.isEmpty()) {
+            cestFinal = inferirCestPorNcm(ncmFinal);
+        }
+
+        RegraFiscalResultado regras = calcularRegras(ncmFinal);
+
+        return new ValidacaoFiscalDTO.Response(
+                ncmFinal.isEmpty() ? "00000000" : ncmFinal,
+                cestFinal == null ? "" : cestFinal,
+                regras.cst(),
+                regras.monofasico(),
+                regras.impostoSeletivo(),
+                "0"
+        );
     }
+
+    // ==================================================================================
+    // MÓDULO 2: CÁLCULOS TRIBUTÁRIOS VENDA (LC 214 / REFORMA)
+    // ==================================================================================
+
+    private record RegraFiscalResultado(boolean monofasico, String cst, TipoTributacaoReforma classificacaoReforma, boolean impostoSeletivo) {}
 
     private RegraFiscalResultado calcularRegras(String ncm) {
         String ncmLimpo = ncm.replace(".", "").trim();
+        boolean isMonofasico = ncmLimpo.startsWith("3303") || ncmLimpo.startsWith("3304") ||
+                ncmLimpo.startsWith("3305") || ncmLimpo.startsWith("3307") ||
+                ncmLimpo.startsWith("3401");
+        String cst = isMonofasico ? "04" : "00";
 
-        boolean isMonofasico =
-                ncmLimpo.startsWith("3303") ||
-                        ncmLimpo.startsWith("3304") ||
-                        ncmLimpo.startsWith("3305") ||
-                        ncmLimpo.startsWith("3307") ||
-                        ncmLimpo.startsWith("3401") ||
-                        ncmLimpo.startsWith("9619");
-
-        String cst = isMonofasico ? "500" : "102";
-
-        TipoTributacaoReforma classificacao;
+        TipoTributacaoReforma classificacao = TipoTributacaoReforma.PADRAO;
         boolean impostoSeletivo = false;
 
-        if (ncmLimpo.startsWith("9619") || ncmLimpo.startsWith("0201") ||
-                ncmLimpo.startsWith("1006") || ncmLimpo.startsWith("0713")) {
-            classificacao = TipoTributacaoReforma.CESTA_BASICA;
-        } else if (ncmLimpo.startsWith("3306") || ncmLimpo.startsWith("3401")) {
+        if (ncmLimpo.startsWith("3306") || ncmLimpo.startsWith("3401")) {
             classificacao = TipoTributacaoReforma.REDUZIDA_60;
-        } else if (ncmLimpo.startsWith("2203") || ncmLimpo.startsWith("2204") || ncmLimpo.startsWith("2402")) {
-            classificacao = TipoTributacaoReforma.IMPOSTO_SELETIVO;
-            impostoSeletivo = true;
-        } else {
-            classificacao = TipoTributacaoReforma.PADRAO;
         }
 
         return new RegraFiscalResultado(isMonofasico, cst, classificacao, impostoSeletivo);
     }
 
-    private record RegraFiscalResultado(
-            boolean monofasico,
-            String cst,
-            TipoTributacaoReforma classificacaoReforma,
-            boolean impostoSeletivo
-    ) {}
+    public ResumoFiscalCarrinhoDTO calcularTotaisCarrinho(List<ItemVenda> itens) {
+        BigDecimal totalVenda = BigDecimal.ZERO;
+        BigDecimal somaIbs = BigDecimal.ZERO;
+        BigDecimal somaCbs = BigDecimal.ZERO;
+        BigDecimal somaIs = BigDecimal.ZERO;
+
+        for (ItemVenda item : itens) {
+            Produto p = item.getProduto();
+            BigDecimal qtd = (item.getQuantidade() != null) ? new BigDecimal(item.getQuantidade().toString()) : BigDecimal.ZERO;
+            BigDecimal subtotal = item.getPrecoUnitario().multiply(qtd);
+
+            BigDecimal aliqIbs = new BigDecimal("17.5");
+            BigDecimal aliqCbs = new BigDecimal("9.0");
+            BigDecimal aliqIs = BigDecimal.ZERO;
+
+            if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
+                aliqIbs = aliqIbs.multiply(new BigDecimal("0.4"));
+                aliqCbs = aliqCbs.multiply(new BigDecimal("0.4"));
+            } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA) {
+                aliqIbs = BigDecimal.ZERO;
+                aliqCbs = BigDecimal.ZERO;
+            }
+
+            somaIbs = somaIbs.add(subtotal.multiply(aliqIbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
+            somaCbs = somaCbs.add(subtotal.multiply(aliqCbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
+            somaIs = somaIs.add(subtotal.multiply(aliqIs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
+            totalVenda = totalVenda.add(subtotal);
+        }
+
+        BigDecimal totalImpostos = somaIbs.add(somaCbs).add(somaIs);
+        return new ResumoFiscalCarrinhoDTO(totalVenda, somaIbs, somaCbs, somaIs, totalVenda.subtract(totalImpostos), BigDecimal.ZERO);
+    }
 
     // ==================================================================================
-    // LÓGICA EXISTENTE: MANTIDA E CORRIGIDA
+    // MÓDULO 3: SIMULAÇÕES E SPLIT PAYMENT
     // ==================================================================================
 
-    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205");
+    public Map<String, BigDecimal> simularTributacao2026(BigDecimal valorVenda, boolean isMonofasico) {
+        BigDecimal aliqIbs = new BigDecimal("0.175");
+        BigDecimal aliqCbs = new BigDecimal("0.090");
+
+        if (isMonofasico) {
+            aliqIbs = BigDecimal.ZERO;
+            aliqCbs = BigDecimal.ZERO;
+        }
+
+        Map<String, BigDecimal> simulacao = new HashMap<>();
+        BigDecimal valorIBS = valorVenda.multiply(aliqIbs);
+        BigDecimal valorCBS = valorVenda.multiply(aliqCbs);
+
+        simulacao.put("IBS_VALOR", valorIBS.setScale(2, RoundingMode.HALF_UP));
+        simulacao.put("CBS_VALOR", valorCBS.setScale(2, RoundingMode.HALF_UP));
+        simulacao.put("TOTAL_NOVO", valorIBS.add(valorCBS).setScale(2, RoundingMode.HALF_UP));
+
+        return simulacao;
+    }
+
+    public String analisarCenarioMaisVantajoso(BigDecimal faturamentoMensal, BigDecimal comprasMensais) {
+        return "Simulação: Para faturamento de " + faturamentoMensal + ", o regime atual ainda é vantajoso até 2027.";
+    }
+
+    public SplitPaymentDTO calcularSplitPayment(List<ItemVenda> itens) {
+        BigDecimal totalVenda = BigDecimal.ZERO;
+        BigDecimal totalImposto = BigDecimal.ZERO;
+
+        for (ItemVenda item : itens) {
+            BigDecimal subtotal = item.getPrecoUnitario().multiply(new BigDecimal(item.getQuantidade().toString()));
+            totalVenda = totalVenda.add(subtotal);
+
+            BigDecimal aliqTotal = new BigDecimal("0.265");
+            if (item.getProduto().getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
+                aliqTotal = aliqTotal.multiply(new BigDecimal("0.4"));
+            } else if (item.getProduto().getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA) {
+                aliqTotal = BigDecimal.ZERO;
+            }
+            totalImposto = totalImposto.add(subtotal.multiply(aliqTotal));
+        }
+
+        BigDecimal liquido = totalVenda.subtract(totalImposto);
+        BigDecimal aliqEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
+                ? totalImposto.divide(totalVenda, 4, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
+
+        return new SplitPaymentDTO(totalVenda, liquido, totalImposto, aliqEfetiva, "Simulação Split Payment 2026");
+    }
+
+    // ==================================================================================
+    // MÓDULO 4: CÁLCULOS DE COMPRA (ICMS-ST / MVA) - O QUE ESTAVA FALTANDO!
+    // ==================================================================================
+
+    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // Média 20.5%
     private static final Set<String> ESTADOS_7_PORCENTO = Set.of("SP", "MG", "RJ", "RS", "SC", "PR");
 
     public BigDecimal calcularImposto(BigDecimal valorProduto, BigDecimal mvaPercentual, String ufOrigem, String ufDestino) {
         if (ufOrigem == null || ufDestino == null || ufOrigem.equalsIgnoreCase(ufDestino)) {
             return BigDecimal.ZERO;
         }
+
         BigDecimal aliqInterestadual = obterAliquotaInterestadual(ufOrigem, ufDestino);
-        BigDecimal mvaDecimal = mvaPercentual.divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
+
+        // Cálculo do ICMS ST
+        BigDecimal mvaDecimal = (mvaPercentual != null ? mvaPercentual : BigDecimal.ZERO)
+                .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
+
         BigDecimal baseCalculoSt = valorProduto.multiply(BigDecimal.ONE.add(mvaDecimal));
         BigDecimal debitoDestino = baseCalculoSt.multiply(ALIQ_INTERNA_DESTINO);
         BigDecimal creditoOrigem = valorProduto.multiply(aliqInterestadual);
+
         return debitoDestino.subtract(creditoOrigem).max(BigDecimal.ZERO);
     }
 
@@ -131,156 +250,27 @@ public class CalculadoraFiscalService {
         return new BigDecimal("0.12");
     }
 
-    public SplitPaymentDTO calcularSplitPayment(List<ItemVenda> itens) {
-        BigDecimal totalVenda = BigDecimal.ZERO;
-        BigDecimal totalImpostoRetido = BigDecimal.ZERO;
-        RegraTributaria regra = buscarRegraVigente();
-        BigDecimal aliquotaCheiaPeriodo = regra.getAliquotaIbs().add(regra.getAliquotaCbs());
+    // --- UTILITÁRIOS ---
 
-        for (ItemVenda item : itens) {
-            Produto p = item.getProduto();
-            // CORREÇÃO: Conversão segura de Quantidade (Integer -> BigDecimal)
-            BigDecimal qtd = new BigDecimal(item.getQuantidade().toString());
-            BigDecimal valorItem = item.getPrecoUnitario().multiply(qtd);
-
-            totalVenda = totalVenda.add(valorItem);
-
-            BigDecimal aliquotaItem = aliquotaCheiaPeriodo;
-
-            if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
-                aliquotaItem = aliquotaCheiaPeriodo.multiply(new BigDecimal("0.40"));
-            } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA ||
-                    p.getClassificacaoReforma() == TipoTributacaoReforma.IMUNE) {
-                aliquotaItem = BigDecimal.ZERO;
-            } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.IMPOSTO_SELETIVO) {
-                aliquotaItem = aliquotaCheiaPeriodo.add(new BigDecimal("0.15"));
-            }
-
-            totalImpostoRetido = totalImpostoRetido.add(valorItem.multiply(aliquotaItem));
-        }
-
-        BigDecimal valorLiquidoLojista = totalVenda.subtract(totalImpostoRetido);
-        BigDecimal aliquotaEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
-                ? totalImpostoRetido.divide(totalVenda, 4, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
-
-        String mensagemStatus = (regra.getAnoReferencia() < 2026)
-                ? "Regime Atual (Simples/Presumido) - Sem retenção de IBS/CBS."
-                : "Regra de Transição " + regra.getAnoReferencia() + " aplicada.";
-
-        return new SplitPaymentDTO(
-                totalVenda.setScale(2, RoundingMode.HALF_UP),
-                valorLiquidoLojista.setScale(2, RoundingMode.HALF_UP),
-                totalImpostoRetido.setScale(2, RoundingMode.HALF_UP),
-                aliquotaEfetiva,
-                mensagemStatus
-        );
+    private String inferirCestPorNcm(String ncm) {
+        if (ncm == null) return "";
+        if (ncm.startsWith("330510")) return "2002100";
+        if (ncm.startsWith("330590")) return "2002400";
+        if (ncm.startsWith("3304")) return "2001600";
+        if (ncm.startsWith("3401")) return "2003300";
+        return "";
     }
 
-    public Map<String, BigDecimal> simularTributacao2026(BigDecimal valorVenda, boolean isMonofasico) {
-        RegraTributaria regra = buscarRegraVigente();
-        Map<String, BigDecimal> simulacao = new HashMap<>();
-        BigDecimal valorCBS = isMonofasico ? BigDecimal.ZERO : valorVenda.multiply(regra.getAliquotaCbs());
-        BigDecimal valorIBS = valorVenda.multiply(regra.getAliquotaIbs());
-        BigDecimal totalNovo = valorCBS.add(valorIBS);
-        BigDecimal impostoAntigoEstimado = valorVenda.multiply(new BigDecimal("0.18"))
-                .multiply(regra.getFatorReducaoAntigo());
-
-        simulacao.put("CBS_VALOR", valorCBS.setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("IBS_VALOR", valorIBS.setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("IMPOSTO_ANTIGO_RESIDUAL", impostoAntigoEstimado.setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("CARGA_TOTAL_ESTIMADA", totalNovo.add(impostoAntigoEstimado).setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("ANO_REGRA_APLICADA", new BigDecimal(regra.getAnoReferencia()));
-        return simulacao;
+    private String limparString(String s) {
+        if (s == null) return "";
+        String nfd = Normalizer.normalize(s, Normalizer.Form.NFD);
+        return Pattern.compile("\\p{InCombiningDiacriticalMarks}+").matcher(nfd).replaceAll("").toUpperCase().trim();
     }
 
-    public String analisarCenarioMaisVantajoso(BigDecimal faturamentoMensal, BigDecimal comprasMensais) {
-        return "Para análise detalhada, utilize o Relatório de Simulação de Impacto 2026 no Painel Fiscal.";
-    }
-
-    private RegraTributaria buscarRegraVigente() {
-        LocalDate hoje = LocalDate.now();
-        return regraRepository.findRegraVigente(hoje)
-                .orElseGet(() -> new RegraTributaria(
-                        hoje.getYear(), hoje, hoje, "0.175", "0.090", "1.0"
-                ));
-    }
-
-    public BigDecimal calcularImpostosTotais(List<ItemVenda> itens) {
-        return itens.stream()
-                .map(i -> {
-                    // CORREÇÃO: Conversão segura
-                    BigDecimal qtd = new BigDecimal(i.getQuantidade().toString());
-                    return i.getPrecoUnitario().multiply(qtd).multiply(new BigDecimal("0.18"));
-                })
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    // --- CORREÇÃO DA LINHA 243 E ATUALIZAÇÃO DA LÓGICA DE CÁLCULO ---
-    public ResumoFiscalCarrinhoDTO calcularTotaisCarrinho(List<ItemVenda> itens) {
-        BigDecimal totalVenda = BigDecimal.ZERO;
-        BigDecimal somaIbs = BigDecimal.ZERO;
-        BigDecimal somaCbs = BigDecimal.ZERO;
-        BigDecimal somaIs = BigDecimal.ZERO;
-
-        for (ItemVenda item : itens) {
-            Produto p = item.getProduto();
-            // CORREÇÃO: Conversão de Integer/Double para BigDecimal de forma segura
-            BigDecimal qtd = (item.getQuantidade() != null)
-                    ? new BigDecimal(item.getQuantidade().toString())
-                    : BigDecimal.ZERO;
-
-            BigDecimal preco = (item.getPrecoUnitario() != null)
-                    ? item.getPrecoUnitario()
-                    : BigDecimal.ZERO;
-
-            BigDecimal subtotal = preco.multiply(qtd);
-
-            // Alíquotas Padrão LC 214 (Estimativa Geral)
-            BigDecimal aliqIbs = new BigDecimal("17.5"); // IBS
-            BigDecimal aliqCbs = new BigDecimal("9.0");  // CBS
-            BigDecimal aliqIs = BigDecimal.ZERO;
-
-            // Lógica de Inteligência Fiscal (Aplica as reduções/acréscimos)
-            if (p.getClassificacaoReforma() != null) {
-                if (p.getClassificacaoReforma() == TipoTributacaoReforma.IMPOSTO_SELETIVO) {
-                    aliqIs = new BigDecimal("10.0"); // Exemplo de seletivo
-                } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
-                    aliqIbs = aliqIbs.multiply(new BigDecimal("0.4"));
-                    aliqCbs = aliqCbs.multiply(new BigDecimal("0.4"));
-                } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA ||
-                        p.getClassificacaoReforma() == TipoTributacaoReforma.IMUNE) {
-                    aliqIbs = BigDecimal.ZERO;
-                    aliqCbs = BigDecimal.ZERO;
-                }
-            }
-
-            // Cálculos item a item
-            BigDecimal valorIbs = subtotal.multiply(aliqIbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
-            BigDecimal valorCbs = subtotal.multiply(aliqCbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
-            BigDecimal valorIs  = subtotal.multiply(aliqIs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
-
-            // Acumuladores
-            totalVenda = totalVenda.add(subtotal);
-            somaIbs = somaIbs.add(valorIbs);
-            somaCbs = somaCbs.add(valorCbs);
-            somaIs = somaIs.add(valorIs);
-        }
-
-        BigDecimal totalImpostos = somaIbs.add(somaCbs).add(somaIs);
-        BigDecimal totalLiquido = totalVenda.subtract(totalImpostos);
-
-        BigDecimal aliquotaEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
-                ? totalImpostos.divide(totalVenda, 4, RoundingMode.HALF_EVEN).multiply(new BigDecimal("100"))
-                : BigDecimal.ZERO;
-
-        return new ResumoFiscalCarrinhoDTO(
-                totalVenda,
-                somaIbs,
-                somaCbs,
-                somaIs,
-                totalLiquido,
-                aliquotaEfetiva
-        );
+    public void aplicarRegras(ProdutoExternoDTO dto) {
+        RegraFiscalResultado r = calcularRegras(dto.getNcm() != null ? dto.getNcm() : "");
+        dto.setMonofasico(r.monofasico());
+        dto.setCst(r.cst());
+        dto.setClassificacaoReforma(r.classificacaoReforma().name());
     }
 }

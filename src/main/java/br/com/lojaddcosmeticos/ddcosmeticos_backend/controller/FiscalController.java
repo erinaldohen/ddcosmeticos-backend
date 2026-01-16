@@ -1,8 +1,10 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SimulacaoTributariaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ValidacaoFiscalDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CalculadoraFiscalService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FiscalComplianceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -14,7 +16,8 @@ public class FiscalController {
 
     @Autowired
     private FiscalComplianceService fiscalService;
-
+    @Autowired
+    private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired
     private ProdutoRepository produtoRepository;
 
@@ -44,5 +47,11 @@ public class FiscalController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    @PostMapping("/validar")
+    public ResponseEntity<ValidacaoFiscalDTO.Response> validarDados(@RequestBody ValidacaoFiscalDTO.Request dados) {
+        var resultado = calculadoraFiscalService.simularValidacao(dados.descricao(), dados.ncm());
+        return ResponseEntity.ok(resultado);
     }
 }

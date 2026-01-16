@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,8 +27,6 @@ public class EstoqueService {
 
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private MovimentoEstoqueRepository movimentoRepository;
-    @Autowired private ProdutoService produtoService; // Use se existir lógica lá, senão implemente aqui
-
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private FornecedorRepository fornecedorRepository;
 
@@ -36,32 +35,22 @@ public class EstoqueService {
         return produtoRepository.findProdutosComBaixoEstoque();
     }
 
-    // --- NOVO MÉTODO (CORREÇÃO DO ERRO) ---
+    // --- ENTRADA VIA PEDIDO DE COMPRA (AUTOMÁTICA) ---
     @Transactional
-    public void processarEntradaDePedido(Produto produto, BigDecimal quantidade, BigDecimal custoUnitario,
+    public void processarEntradaDePedido(Produto produto, BigDecimal quantidade, BigDecimal custoUnitarioNota,
                                          Fornecedor fornecedor, String numeroNotaFiscal) {
 
-        Integer qtdEntrada = quantidade.intValue();
+        BigDecimal qtdEntrada = quantidade; // Mantém BigDecimal para cálculo preciso
 
-        // 1. Atualiza Preço Médio e Custo
-        if (produto.getQuantidadeEmEstoque() + qtdEntrada > 0) {
-            BigDecimal valorAtual = produto.getPrecoMedioPonderado().multiply(new BigDecimal(produto.getQuantidadeEmEstoque()));
-            BigDecimal valorEntrada = custoUnitario.multiply(quantidade);
+        // 1. Calcula o novo Preço Médio Ponderado
+        BigDecimal novoPrecoMedio = calcularNovoPrecoMedio(produto, qtdEntrada, custoUnitarioNota);
 
-            // Evita divisão por zero
-            BigDecimal divisor = new BigDecimal(produto.getQuantidadeEmEstoque() + qtdEntrada);
-            BigDecimal novoPrecoMedio = valorAtual.add(valorEntrada).divide(divisor, 4, java.math.RoundingMode.HALF_UP);
-
-            produto.setPrecoMedioPonderado(novoPrecoMedio);
-        } else {
-            // Se estoque estava negativo e agora zera ou fica positivo, o preço médio é o da entrada
-            produto.setPrecoMedioPonderado(custoUnitario);
-        }
-
-        produto.setPrecoCusto(custoUnitario);
+        // Atualiza os preços do produto
+        produto.setPrecoMedioPonderado(novoPrecoMedio);
+        produto.setPrecoCusto(novoPrecoMedio); // O Custo oficial passa a ser a média
 
         // 2. Atualiza Saldos (Entrada de Pedido sempre é Fiscal)
-        produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada);
+        produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada.intValue());
         produto.atualizarSaldoTotal();
 
         produtoRepository.save(produto);
@@ -71,48 +60,46 @@ public class EstoqueService {
         movimento.setProduto(produto);
         movimento.setDataMovimento(LocalDateTime.now());
         movimento.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
-        movimento.setQuantidadeMovimentada(quantidade);
-        movimento.setCustoMovimentado(custoUnitario);
+        movimento.setQuantidadeMovimentada(qtdEntrada);
+        movimento.setCustoMovimentado(custoUnitarioNota); // No histórico fica o valor real pago na nota
         movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL);
         movimento.setObservacao("Recebimento Pedido | NF: " + numeroNotaFiscal);
         movimento.setDocumentoReferencia(numeroNotaFiscal);
-        movimento.setFornecedor(fornecedor); // Associa o fornecedor
+        movimento.setFornecedor(fornecedor);
         movimento.setSaldoAtual(produto.getQuantidadeEmEstoque());
 
         movimentoRepository.save(movimento);
     }
-    // --------------------------------------
 
+    // --- ENTRADA MANUAL (TELA DE ESTOQUE) ---
     @Transactional
     public void registrarEntrada(EstoqueRequestDTO dados) {
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado: " + dados.getCodigoBarras()));
 
-        Integer qtdEntrada = dados.getQuantidade().intValue();
+        BigDecimal qtdEntrada = dados.getQuantidade();
         BigDecimal custoUnitario = dados.getPrecoCusto();
 
-        // Reutiliza a lógica se possível ou mantém duplicado por simplicidade agora
-        if (produto.getQuantidadeEmEstoque() + qtdEntrada > 0) {
-            BigDecimal valorAtual = produto.getPrecoMedioPonderado().multiply(new BigDecimal(produto.getQuantidadeEmEstoque()));
-            BigDecimal valorEntrada = custoUnitario.multiply(new BigDecimal(qtdEntrada));
-            BigDecimal novoPrecoMedio = valorAtual.add(valorEntrada).divide(new BigDecimal(produto.getQuantidadeEmEstoque() + qtdEntrada), 4, java.math.RoundingMode.HALF_UP);
-            produto.setPrecoMedioPonderado(novoPrecoMedio);
-        }
-        produto.setPrecoCusto(custoUnitario);
+        // 1. Calcula Média Ponderada (Lógica centralizada)
+        BigDecimal novoPrecoMedio = calcularNovoPrecoMedio(produto, qtdEntrada, custoUnitario);
+        produto.setPrecoMedioPonderado(novoPrecoMedio);
+        produto.setPrecoCusto(novoPrecoMedio);
 
+        // 2. Atualiza Saldos
         if (dados.getNumeroNotaFiscal() != null && !dados.getNumeroNotaFiscal().isBlank()) {
-            produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada);
+            produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada.intValue());
         } else {
-            produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + qtdEntrada);
+            produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + qtdEntrada.intValue());
         }
         produto.atualizarSaldoTotal();
         produtoRepository.save(produto);
 
+        // 3. Registra Movimentação
         MovimentoEstoque movimento = new MovimentoEstoque();
         movimento.setProduto(produto);
         movimento.setDataMovimento(LocalDateTime.now());
         movimento.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
-        movimento.setQuantidadeMovimentada(new BigDecimal(qtdEntrada));
+        movimento.setQuantidadeMovimentada(qtdEntrada);
         movimento.setCustoMovimentado(custoUnitario);
         movimento.setMotivoMovimentacaoDeEstoque(dados.getNumeroNotaFiscal() != null ?
                 MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL : MotivoMovimentacaoDeEstoque.COMPRA_SEM_NOTA_FISCAL);
@@ -121,7 +108,31 @@ public class EstoqueService {
         movimento.setSaldoAtual(produto.getQuantidadeEmEstoque());
         movimentoRepository.save(movimento);
 
-        gerarFinanceiroEntrada(dados, custoUnitario, qtdEntrada);
+        gerarFinanceiroEntrada(dados, custoUnitario, qtdEntrada.intValue());
+    }
+
+    // --- MÉTODO AUXILIAR: CÁLCULO DE MÉDIA PONDERADA (EVITA DUPLICAÇÃO) ---
+    private BigDecimal calcularNovoPrecoMedio(Produto produto, BigDecimal qtdEntrada, BigDecimal custoNovo) {
+        BigDecimal estoqueAtual = new BigDecimal(produto.getQuantidadeEmEstoque());
+
+        // Proteção contra nulos
+        BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado() != null ?
+                produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
+
+        // Se o estoque for zero ou negativo, a média é o próprio valor da entrada
+        if (produto.getQuantidadeEmEstoque() <= 0) {
+            return custoNovo;
+        }
+
+        BigDecimal valorTotalEstoqueAntigo = estoqueAtual.multiply(custoMedioAtual);
+        BigDecimal valorTotalEntrada = qtdEntrada.multiply(custoNovo);
+        BigDecimal novoEstoqueTotal = estoqueAtual.add(qtdEntrada);
+
+        // Fórmula: (ValorTotalAntigo + ValorTotalEntrada) / NovoEstoqueTotal
+        if (novoEstoqueTotal.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
+
+        return valorTotalEstoqueAntigo.add(valorTotalEntrada)
+                .divide(novoEstoqueTotal, 4, RoundingMode.HALF_UP);
     }
 
     private void gerarFinanceiroEntrada(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {
@@ -131,12 +142,11 @@ public class EstoqueService {
 
         Fornecedor fornecedor = null;
         if (dados.getFornecedorCnpj() != null) {
-            // Ajuste para usar o método correto do repositório se necessário (findByCnpjCpf ou findByCpfOuCnpj)
             fornecedor = fornecedorRepository.findByCpfOuCnpj(dados.getFornecedorCnpj()).orElse(null);
         }
 
         int parcelas = dados.getQuantidadeParcelas() != null && dados.getQuantidadeParcelas() > 0 ? dados.getQuantidadeParcelas() : 1;
-        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, java.math.RoundingMode.HALF_UP);
+        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
 
         for (int i = 1; i <= parcelas; i++) {
             ContaPagar conta = new ContaPagar();

@@ -254,7 +254,7 @@ public class ProdutoController {
     @PostMapping("/saneamento-fiscal")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Rodar saneamento fiscal em massa")
-    public ResponseEntity<String> executarSaneamento() {
+    public ResponseEntity<ResponseEntity<Map<String, Object>>> executarSaneamento() {
         return ResponseEntity.ok(produtoService.realizarSaneamentoFiscal());
     }
 }

@@ -13,12 +13,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -168,16 +171,32 @@ public class ProdutoService {
     }
 
     @Transactional
-    public String realizarSaneamentoFiscal() {
-        List<Produto> todos = produtoRepository.findAll();
-        int atualizados = 0;
-        for (Produto p : todos) {
-            if (calculadoraFiscalService.aplicarRegrasFiscais(p)) {
-                atualizados++;
+        public ResponseEntity<Map<String, Object>> realizarSaneamentoFiscal() {
+            List<Produto> produtos = produtoRepository.findAll();
+            int total = produtos.size();
+            int atualizados = 0;
+
+            log.info("⚡ Iniciando Saneamento Fiscal em {} produtos...", total);
+
+            for (Produto p : produtos) {
+                // APLICA A INTELIGÊNCIA: Descrição "Shampoo" -> NCM 33051000 + CST 04
+                boolean alterou = calculadoraFiscalService.aplicarRegrasFiscais(p);
+
+                if (alterou) {
+                    produtoRepository.save(p);
+                    atualizados++;
+                }
             }
+
+            log.info("✅ Saneamento concluído. {} produtos corrigidos.", atualizados);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Saneamento concluído com sucesso!");
+            response.put("totalProdutos", total);
+            response.put("produtosCorrigidos", atualizados);
+
+            return ResponseEntity.ok(response);
         }
-        return String.format("Saneamento concluído. %d produtos atualizados.", atualizados);
-    }
 
     private void copiarDtoParaEntidade(ProdutoDTO dto, Produto produto) {
         // Campos de Identificação e Básicos

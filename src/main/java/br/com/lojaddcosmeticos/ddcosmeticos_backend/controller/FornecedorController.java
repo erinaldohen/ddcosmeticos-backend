@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConsultaCnpjDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FornecedorService;
@@ -60,5 +61,10 @@ public class FornecedorController {
             return ResponseEntity.noContent().build();
         }
         return ResponseEntity.ok(sugestoes);
+    }
+
+    @GetMapping("/consulta-cnpj/{cnpj}")
+    public ResponseEntity<ConsultaCnpjDTO> consultarCnpj(@PathVariable String cnpj) {
+        return ResponseEntity.ok(fornecedorService.consultarDadosPublicosCnpj(cnpj));
     }
 }

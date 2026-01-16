@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConsultaCnpjDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto; // <--- Novo Import
@@ -8,6 +9,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.List; // <--- Novo Import
 import java.util.Optional;
@@ -71,5 +73,17 @@ public class FornecedorService {
     public List<Produto> obterSugestaoDeCompra(Long fornecedorId) {
         // Chama a query personalizada que criamos no ProdutoRepository
         return produtoRepository.findSugestaoCompraPorFornecedor(fornecedorId);
+    }
+
+    public ConsultaCnpjDTO consultarDadosPublicosCnpj(String cnpj) {
+        String cnpjLimpo = cnpj.replaceAll("\\D", "");
+        String url = "https://brasilapi.com.br/api/cnpj/v1/" + cnpjLimpo;
+
+        RestTemplate restTemplate = new RestTemplate();
+        try {
+            return restTemplate.getForObject(url, ConsultaCnpjDTO.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao consultar CNPJ: " + e.getMessage());
+        }
     }
 }

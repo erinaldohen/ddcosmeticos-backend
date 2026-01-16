@@ -63,12 +63,11 @@ public class EstoqueService {
     public void registrarEntrada(EstoqueRequestDTO dados) {
         Produto produto;
 
-        // CENÁRIO 1: O Frontend mandou um ID de produto existente (Vínculo manual ou Aceite de sugestão)
+        // CENÁRIO 1: O Frontend mandou um ID de produto existente
         if (dados.getIdProduto() != null) {
             produto = produtoRepository.findById(dados.getIdProduto())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto informado não existe ID: " + dados.getIdProduto()));
 
-            // APRENDIZADO: Salva vínculo para o futuro
             if (dados.getFornecedorId() != null && dados.getCodigoNoFornecedor() != null) {
                 salvarVinculoSeNaoExistir(dados.getFornecedorId(), produto, dados.getCodigoNoFornecedor());
             }
@@ -77,7 +76,7 @@ public class EstoqueService {
         else {
             produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                     .orElseGet(() -> {
-                        // CENÁRIO 3: Produto realmente novo (Auto-Cadastro)
+                        // CENÁRIO 3: Produto realmente novo
                         Produto novo = criarProdutoAutomatico(dados);
                         if (dados.getFornecedorId() != null && dados.getCodigoNoFornecedor() != null) {
                             salvarVinculoSeNaoExistir(dados.getFornecedorId(), novo, dados.getCodigoNoFornecedor());
@@ -89,12 +88,10 @@ public class EstoqueService {
         BigDecimal qtdEntrada = dados.getQuantidade();
         BigDecimal custoUnitario = dados.getPrecoCusto();
 
-        // Atualiza Preços
         BigDecimal novoPrecoMedio = calcularNovoPrecoMedio(produto, qtdEntrada, custoUnitario);
         produto.setPrecoMedioPonderado(novoPrecoMedio);
         produto.setPrecoCusto(novoPrecoMedio);
 
-        // Atualiza Saldos
         if (dados.getNumeroNotaFiscal() != null && !dados.getNumeroNotaFiscal().isBlank()) {
             produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada.intValue());
         } else {
@@ -103,7 +100,6 @@ public class EstoqueService {
         produto.atualizarSaldoTotal();
         produtoRepository.save(produto);
 
-        // Movimentação
         MotivoMovimentacaoDeEstoque motivo = dados.getNumeroNotaFiscal() != null ?
                 MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL : MotivoMovimentacaoDeEstoque.COMPRA_SEM_NOTA_FISCAL;
 
@@ -111,7 +107,6 @@ public class EstoqueService {
                 "NF: " + (dados.getNumeroNotaFiscal() != null ? dados.getNumeroNotaFiscal() : "S/N"),
                 dados.getNumeroNotaFiscal(), null);
 
-        // GERA O FINANCEIRO (O MÉTODO QUE FALTAVA)
         gerarFinanceiroEntrada(dados, custoUnitario, qtdEntrada.intValue());
     }
 
@@ -133,13 +128,14 @@ public class EstoqueService {
             if (nListEmit.getLength() > 0) {
                 Element emit = (Element) nListEmit.item(0);
                 String cnpj = getElementValue(emit, "CNPJ");
-                String xNome = getElementValue(emit, "xNome");
+
                 if (cnpj != null) {
                     fornecedorDoXml = fornecedorService.buscarOuCriarRapido(cnpj);
-                    if (fornecedorDoXml.getRazaoSocial().contains("Fornecedor " + cnpj)) {
-                        fornecedorDoXml.setRazaoSocial(xNome);
-                        fornecedorService.salvar(fornecedorDoXml);
-                    }
+
+                    // --- ATUALIZA DADOS COMPLETOS DO FORNECEDOR ---
+                    atualizarDadosFornecedorPeloXml(emit, fornecedorDoXml);
+                    // ----------------------------------------------
+
                     retorno.setFornecedorId(fornecedorDoXml.getId());
                     retorno.setNomeFornecedor(fornecedorDoXml.getRazaoSocial());
                 }
@@ -178,7 +174,7 @@ public class EstoqueService {
                 StatusMatch status = StatusMatch.NOVO_PRODUTO;
                 String motivo = "Novo Produto";
 
-                // Camada 1: Vínculo Exato
+                // Camada 1: Vínculo
                 if (fornecedorDoXml != null) {
                     Optional<ProdutoFornecedor> vinculo = produtoFornecedorRepository
                             .findByFornecedorAndCodigoNoFornecedor(fornecedorDoXml, codXml);
@@ -189,7 +185,7 @@ public class EstoqueService {
                     }
                 }
 
-                // Camada 2: EAN Global
+                // Camada 2: EAN
                 if (produtoEncontrado == null && isValidEAN(eanXml)) {
                     Optional<Produto> pEan = produtoRepository.findByCodigoBarras(eanXml);
                     if (pEan.isPresent()) {
@@ -199,7 +195,7 @@ public class EstoqueService {
                     }
                 }
 
-                // Camada 3: Similaridade (Fuzzy)
+                // Camada 3: Similaridade
                 if (produtoEncontrado == null && ncmXml != null) {
                     List<Produto> candidatos = produtoRepository.findByNcm(ncmXml);
                     Produto melhorCandidato = null;
@@ -227,7 +223,6 @@ public class EstoqueService {
                     item.setNomeProdutoSugerido(produtoEncontrado.getDescricao());
                     item.setNovoProduto(false);
 
-                    // Alerta de Preço
                     BigDecimal precoAtual = produtoEncontrado.getPrecoCusto() != null ? produtoEncontrado.getPrecoCusto() : BigDecimal.ZERO;
                     if (precoAtual.compareTo(BigDecimal.ZERO) > 0) {
                         BigDecimal variacao = item.getPrecoCusto().subtract(precoAtual).abs().divide(precoAtual, 2, RoundingMode.HALF_UP);
@@ -253,9 +248,43 @@ public class EstoqueService {
         return retorno;
     }
 
-    // --- MÉTODOS DE SUPORTE (INCLUINDO O FINANCEIRO) ---
+    // --- MÉTODOS DE SUPORTE (INCLUINDO O QUE FALTAVA) ---
 
-    // 1. GERAÇÃO DE CONTAS A PAGAR
+    // MÉTODO NOVO: Atualiza dados do fornecedor baseado nas tags do XML
+    private void atualizarDadosFornecedorPeloXml(Element emit, Fornecedor fornecedor) {
+        try {
+            String xNome = getElementValue(emit, "xNome");
+            String xFant = getElementValue(emit, "xFant");
+            String ie = getElementValue(emit, "IE");
+
+            if (fornecedor.getRazaoSocial() == null || fornecedor.getRazaoSocial().contains("Fornecedor") || fornecedor.getRazaoSocial().isEmpty()) {
+                fornecedor.setRazaoSocial(xNome);
+            }
+            if (fornecedor.getNomeFantasia() == null || fornecedor.getNomeFantasia().isEmpty()) {
+                fornecedor.setNomeFantasia(xFant != null ? xFant : xNome);
+            }
+            if (fornecedor.getInscricaoEstadual() == null || fornecedor.getInscricaoEstadual().isEmpty()) {
+                fornecedor.setInscricaoEstadual(ie);
+            }
+
+            NodeList nListEnder = emit.getElementsByTagName("enderEmit");
+            if (nListEnder.getLength() > 0) {
+                Element ender = (Element) nListEnder.item(0);
+                if (fornecedor.getCep() == null) fornecedor.setCep(getElementValue(ender, "CEP"));
+                if (fornecedor.getLogradouro() == null) fornecedor.setLogradouro(getElementValue(ender, "xLgr"));
+                if (fornecedor.getNumero() == null) fornecedor.setNumero(getElementValue(ender, "nro"));
+                if (fornecedor.getBairro() == null) fornecedor.setBairro(getElementValue(ender, "xBairro"));
+                if (fornecedor.getCidade() == null) fornecedor.setCidade(getElementValue(ender, "xMun"));
+                if (fornecedor.getEstado() == null) fornecedor.setEstado(getElementValue(ender, "UF"));
+            }
+
+            fornecedorRepository.save(fornecedor);
+
+        } catch (Exception e) {
+            System.err.println("Erro ao atualizar dados do fornecedor pelo XML: " + e.getMessage());
+        }
+    }
+
     private void gerarFinanceiroEntrada(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {
         if (dados.getFormaPagamento() == null) return;
 
@@ -296,7 +325,6 @@ public class EstoqueService {
         }
     }
 
-    // 2. APRENDIZADO DE VÍNCULO
     private void salvarVinculoSeNaoExistir(Long fornecedorId, Produto produto, String codigoFornecedor) {
         Fornecedor fornecedor = fornecedorRepository.findById(fornecedorId).orElse(null);
         if (fornecedor != null) {
@@ -312,7 +340,6 @@ public class EstoqueService {
         }
     }
 
-    // 3. AUTO-CADASTRO
     private Produto criarProdutoAutomatico(EstoqueRequestDTO dados) {
         Produto novo = new Produto();
         novo.setCodigoBarras(dados.getCodigoBarras());
@@ -334,7 +361,6 @@ public class EstoqueService {
         return produtoRepository.save(novo);
     }
 
-    // 4. SIMILARIDADE (LEVENSHTEIN)
     private double calcularSimilaridade(String s1, String s2) {
         String n1 = normalizarTexto(s1);
         String n2 = normalizarTexto(s2);
@@ -405,7 +431,6 @@ public class EstoqueService {
         movimentoRepository.save(mov);
     }
 
-    // MÉTODOS DE AJUSTE MANUAL E SAÍDA (MANTIDOS)
     @Transactional
     public void registrarSaidaVenda(Produto produto, Integer quantidade) {
         if (produto.getEstoqueFiscal() >= quantidade) {

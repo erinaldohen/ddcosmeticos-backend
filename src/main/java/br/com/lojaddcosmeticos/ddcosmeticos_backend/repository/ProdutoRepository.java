@@ -71,4 +71,20 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);
+
+    // --- 5. INTELIGÊNCIA DE COMPRAS (BI) ---
+
+    /**
+     * Busca produtos que estão com estoque baixo E que já foram fornecidos
+     * pelo fornecedor especificado no histórico de movimentação.
+     */
+    @Query("""
+        SELECT DISTINCT p 
+        FROM Produto p 
+        JOIN MovimentoEstoque m ON m.produto = p 
+        WHERE m.fornecedor.id = :fornecedorId 
+        AND (p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0))
+        AND p.ativo = true
+    """)
+    List<Produto> findSugestaoCompraPorFornecedor(@Param("fornecedorId") Long fornecedorId);
 }

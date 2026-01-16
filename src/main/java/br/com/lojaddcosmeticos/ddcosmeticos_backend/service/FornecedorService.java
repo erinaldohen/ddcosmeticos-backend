@@ -2,11 +2,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto; // <--- Novo Import
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository; // <--- Novo Import
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List; // <--- Novo Import
 import java.util.Optional;
 
 @Service
@@ -14,6 +17,9 @@ public class FornecedorService {
 
     @Autowired
     private FornecedorRepository fornecedorRepository;
+
+    @Autowired
+    private ProdutoRepository produtoRepository; // <--- Injeção necessária para o BI
 
     /**
      * Método utilitário para buscar ou criar rápido (usado em entradas de estoque/xml)
@@ -50,5 +56,20 @@ public class FornecedorService {
         return fornecedorRepository.save(fornecedor);
     }
 
+    // --- MÉTODOS ADICIONADOS PARA A TELA DE ENTRADA E BI ---
 
+    /**
+     * Usado para preencher o Dropdown na tela de Entrada de Estoque
+     */
+    public List<Fornecedor> listarTodos() {
+        return fornecedorRepository.findAll();
+    }
+
+    /**
+     * Inteligência de Compras: Retorna produtos que este fornecedor vende e que estão com estoque baixo
+     */
+    public List<Produto> obterSugestaoDeCompra(Long fornecedorId) {
+        // Chama a query personalizada que criamos no ProdutoRepository
+        return produtoRepository.findSugestaoCompraPorFornecedor(fornecedorId);
+    }
 }

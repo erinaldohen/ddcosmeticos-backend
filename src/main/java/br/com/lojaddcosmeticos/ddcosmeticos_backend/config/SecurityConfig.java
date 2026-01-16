@@ -1,6 +1,5 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.handler.SecurityFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -25,7 +24,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity(securedEnabled = true, jsr250Enabled = true) // Ativa @PreAuthorize nos controllers
+@EnableMethodSecurity(securedEnabled = true, jsr250Enabled = true)
 public class SecurityConfig {
 
     @Autowired
@@ -38,46 +37,33 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // 1. ROTAS PÚBLICAS (Login, Swagger, Docs)
+                        // 1. ROTAS PÚBLICAS
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**", "/auth/**").permitAll()
                         .requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 
-                        // =====================================================================
-                        // 2. REGRAS DE LEITURA (GET) - TÊM QUE VIR PRIMEIRO!
-                        // =====================================================================
-                        // Libera listagem de produtos para PDV e Operadores
+                        // 2. LEITURA E OPERACIONAL (Liberado para qualquer utilizador logado)
+                        // --- AQUI ESTÁ A CORREÇÃO CRÍTICA: LIBERAR GET ANTES DE BLOQUEAR ADMIN ---
                         .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos").authenticated()
-
-                        // Libera status do caixa e consultas de venda
                         .requestMatchers(HttpMethod.GET, "/api/v1/caixa/status").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/auditoria/eventos").authenticated()
 
-                        // =====================================================================
-                        // 3. REGRAS OPERACIONAIS (POST/PUT que não são de Admin)
-                        // =====================================================================
+                        // Operações de Venda e Caixa
                         .requestMatchers(HttpMethod.POST, "/api/v1/vendas/**").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixa/abrir").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixa/fechar").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixa/movimentacao").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/caixa/**").authenticated()
 
-                        // =====================================================================
-                        // 4. REGRAS ADMINISTRATIVAS (Restringe todo o resto a ADMIN)
-                        // =====================================================================
-
-                        // Qualquer escrita em produtos (Criar, Editar, Deletar)
+                        // 3. RESTRITO A ADMIN (Escrita e Gestão)
                         .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/v1/produtos/**").hasRole("ADMIN")
 
-                        // Áreas exclusivas
+                        // Áreas Sensíveis
                         .requestMatchers("/api/v1/dashboard/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/fiscal/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/auditoria/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/usuarios/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/caixa/historico").hasRole("ADMIN")
 
-                        // 5. BLOQUEIO PADRÃO (O que não foi listado acima, exige login)
+                        // 4. RESTO (Bloqueio padrão)
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
@@ -99,6 +85,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
+        // Permite o frontend na porta 5173
         configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://127.0.0.1:5173"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept"));

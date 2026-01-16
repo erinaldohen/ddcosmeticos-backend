@@ -59,10 +59,12 @@ public class ImportacaoService {
             String linhaCabecalho = reader.readLine();
             if (linhaCabecalho == null) throw new RuntimeException("Arquivo vazio.");
 
+            // Remove BOM se existir
             if (linhaCabecalho.startsWith("\uFEFF")) linhaCabecalho = linhaCabecalho.substring(1);
 
+            // Detecta separador
             String separador = linhaCabecalho.contains(";") ? ";" : ",";
-            // Regex para ignorar ponto e virgula dentro de aspas
+            // Regex para ignorar separador dentro de aspas
             String regexSplit = separador + "(?=([^\"]*\"[^\"]*\")*[^\"]*$)";
 
             String[] headers = linhaCabecalho.split(regexSplit);
@@ -95,11 +97,13 @@ public class ImportacaoService {
                     String eanRaw = getValor(dados, mapa, "CODIGO DE BARRAS", "BARRAS", "EAN", "GTIN");
                     String ean = tratarEanCientifico(eanRaw);
 
+                    // Validação mínima de EAN
                     if (ean.length() < 7 || ean.equals("0")) {
                         pulados++;
                         continue; // Pula linha sem identificação válida
                     }
 
+                    // Busca ou Cria
                     Produto produto = produtoRepository.findByCodigoBarras(ean).orElse(new Produto());
                     if (produto.getId() == null) {
                         produto.setCodigoBarras(ean);
@@ -129,7 +133,7 @@ public class ImportacaoService {
                     if (prVenda != null) produto.setPrecoVenda(prVenda);
                     if (prCusto != null) produto.setPrecoCusto(prCusto);
 
-                    // Defaults para não quebrar banco
+                    // Defaults para não quebrar banco (Constraints Not Null)
                     if (produto.getPrecoVenda() == null) produto.setPrecoVenda(BigDecimal.ZERO);
                     if (produto.getPrecoCusto() == null) produto.setPrecoCusto(BigDecimal.ZERO);
 
@@ -137,7 +141,9 @@ public class ImportacaoService {
                     if (produto.getPrecoMedioPonderado() == null || produto.getPrecoMedioPonderado().compareTo(BigDecimal.ZERO) == 0) {
                         produto.setPrecoMedioPonderado(produto.getPrecoCusto());
                     }
-                    produto.setPrecoMedioPonderado(produto.getPrecoMedioPonderado().setScale(2, RoundingMode.HALF_UP));
+                    if (produto.getPrecoMedioPonderado() != null) {
+                        produto.setPrecoMedioPonderado(produto.getPrecoMedioPonderado().setScale(2, RoundingMode.HALF_UP));
+                    }
 
                     // --- 4. ESTOQUE ---
                     // Estoque Mínimo (Busca específica para não confundir com Quantidade)
@@ -181,16 +187,17 @@ public class ImportacaoService {
 
                     String cfop = getValor(dados, mapa, "CFOP").replaceAll("\\D", "");
 
-                    // Lógica CST
+                    // Lógica CST Simplificada
                     if (produto.getCst() == null) {
                         if (cfop.startsWith("5405")) produto.setCst("60");
                         else produto.setCst("00");
                     }
 
-                    // Calculadora Fiscal
+                    // Calculadora Fiscal (aplica regras de negócio)
                     if (calculadoraFiscalService != null) {
                         calculadoraFiscalService.aplicarRegrasFiscais(produto);
                     } else {
+                        // Fallback se o serviço não estiver disponível
                         if (produto.getClassificacaoReforma() == null) produto.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
                         produto.setImpostoSeletivo(false);
                         produto.setMonofasico(false);
@@ -201,6 +208,7 @@ public class ImportacaoService {
 
                 } catch (Exception e) {
                     pulados++;
+                    log.warn("Erro ao processar linha {}: {}", linhaNum, e.getMessage());
                 }
             }
             log.info("Importação Finalizada. Salvos: {}, Pulados: {}", salvos, pulados);
@@ -218,7 +226,8 @@ public class ImportacaoService {
             String key = limparString(chave);
             for (Map.Entry<String, Integer> entry : mapa.entrySet()) {
                 // Busca exata ou "contém" (ex: "QUANTIDADE EM ESTOQUE" contém "ESTOQUE")
-                if (entry.getKey().equals(key) || (key.length() > 4 && entry.getKey().contains(key))) {
+                // A verificação de length > 4 evita falsos positivos com palavras curtas como "UN" em "MUNICIPIO"
+                if (entry.getKey().equals(key) || (key.length() > 3 && entry.getKey().contains(key))) {
                     int index = entry.getValue();
                     if (index < dados.length) {
                         return dados[index].replace("\"", "").trim();
@@ -232,6 +241,7 @@ public class ImportacaoService {
     private String tratarEanCientifico(String raw) {
         if (raw == null || raw.isBlank()) return "";
         try {
+            // Se parecer notação científica (E+) ou decimal (123.0)
             if (raw.toUpperCase().contains("E+") || raw.contains(".")) {
                 BigDecimal bd = new BigDecimal(raw.replace(",", "."));
                 return bd.toPlainString().replaceAll("\\D", "");
@@ -243,11 +253,18 @@ public class ImportacaoService {
     private BigDecimal parseDinheiro(String valorRaw) {
         if (valorRaw == null || valorRaw.isBlank()) return null;
         try {
-            String limpo = valorRaw.replace("R$", "").trim();
-            if (limpo.contains(",")) {
-                limpo = limpo.replace(".", "");
-                limpo = limpo.replace(",", ".");
+            String limpo = valorRaw.replace("R$", "").replace(" ", "").trim();
+
+            // Lógica para detecção de formato Brasileiro (1.000,00) vs Americano (1,000.00)
+            // Se tiver vírgula no final (ex: ,00), é BR.
+            if (limpo.contains(",") && (!limpo.contains(".") || limpo.indexOf(",") > limpo.lastIndexOf("."))) {
+                limpo = limpo.replace(".", ""); // Remove milhar
+                limpo = limpo.replace(",", "."); // Transforma decimal
+            } else if (limpo.contains(",")) {
+                // Caso contrário (ex: 1,000.00), remove a virgula de milhar
+                limpo = limpo.replace(",", "");
             }
+
             BigDecimal val = new BigDecimal(limpo);
             return val.setScale(2, RoundingMode.HALF_UP); // Força 2 casas
         } catch (Exception e) {
@@ -259,6 +276,7 @@ public class ImportacaoService {
         if (s == null) return "";
         String nfd = Normalizer.normalize(s, Normalizer.Form.NFD);
         String semAcento = Pattern.compile("\\p{InCombiningDiacriticalMarks}+").matcher(nfd).replaceAll("");
-        return semAcento.toUpperCase().trim().replace("\"", "").replace(" ", "");
+        // Remove espaços, aspas e joga para uppercase para facilitar o 'match'
+        return semAcento.toUpperCase().trim().replace("\"", "").replace(" ", "").replace("_", "");
     }
 }

@@ -18,24 +18,22 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-// CORREÇÃO AQUI: Adicionado /api/v1 para casar com o Frontend
 @RequestMapping("/api/v1/auth")
 public class AuthenticationController {
 
     @Autowired private AuthenticationManager authenticationManager;
-    @Autowired private UsuarioRepository repository;
+    @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private TokenService tokenService;
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDTO> login(@RequestBody @Valid LoginRequestDTO data) {
-        // Autentica com EMAIL e SENHA
+        // O authenticationManager internamente chama o AuthorizationService
         var usernamePassword = new UsernamePasswordAuthenticationToken(data.email(), data.senha());
         var auth = authenticationManager.authenticate(usernamePassword);
 
         var usuario = (Usuario) auth.getPrincipal();
         var token = tokenService.generateToken(usuario);
 
-        // Retorna o DTO completo com 4 argumentos
         return ResponseEntity.ok(new LoginResponseDTO(
                 token,
                 usuario.getMatricula(),
@@ -46,7 +44,7 @@ public class AuthenticationController {
 
     @PostMapping("/register")
     public ResponseEntity<Void> register(@RequestBody @Valid RegisterDTO data) {
-        if (this.repository.findByEmail(data.getEmail()).isPresent()) {
+        if (this.usuarioRepository.findByEmail(data.getEmail()).isPresent()) {
             return ResponseEntity.badRequest().build();
         }
 
@@ -60,8 +58,10 @@ public class AuthenticationController {
                 data.getPerfil()
         );
 
-        this.repository.save(newUser);
+        this.usuarioRepository.save(newUser);
 
         return ResponseEntity.ok().build();
     }
+
+    // REMOVIDO: public UserDetails loadUserByUsername... (NÃO PERTENCE AQUI)
 }

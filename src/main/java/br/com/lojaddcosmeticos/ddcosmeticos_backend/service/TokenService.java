@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.service; // Ajuste o pacote se necessário
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import com.auth0.jwt.JWT;
@@ -18,38 +18,40 @@ public class TokenService {
     @Value("${api.security.token.secret}")
     private String secret;
 
-    // GERA O TOKEN
     public String generateToken(Usuario usuario) {
         try {
             Algorithm algorithm = Algorithm.HMAC256(secret);
+
+            // CORREÇÃO CRÍTICA: Forçamos o uso do EMAIL como identificador no token
+            String subject = usuario.getEmail();
+            if (subject == null || subject.isEmpty()) {
+                subject = usuario.getMatricula(); // Fallback se email estiver vazio
+            }
+
             return JWT.create()
-                    .withIssuer("auth-api")
-                    .withSubject(usuario.getMatricula()) // IDENTIFICADOR: MATRÍCULA
-                    .withClaim("role", usuario.getPerfilDoUsuario().name()) // Opcional: Ajuda no debug
+                    .withIssuer("ddcosmeticos-api")
+                    .withSubject(subject) // Isso garante que não vá vazio
                     .withExpiresAt(genExpirationDate())
                     .sign(algorithm);
         } catch (JWTCreationException exception) {
-            throw new RuntimeException("Erro ao gerar token JWT", exception);
+            throw new RuntimeException("Erro ao gerar token", exception);
         }
     }
 
-    // VALIDA O TOKEN E RETORNA A MATRÍCULA
     public String validateToken(String token) {
         try {
             Algorithm algorithm = Algorithm.HMAC256(secret);
             return JWT.require(algorithm)
-                    .withIssuer("auth-api")
+                    .withIssuer("ddcosmeticos-api")
                     .build()
-                    .verify(token) // Se expirou, lança exceção aqui
+                    .verify(token)
                     .getSubject();
         } catch (JWTVerificationException exception) {
-            // Retorna vazio para que o Filter bloqueie o acesso
             return "";
         }
     }
 
     private Instant genExpirationDate() {
-        // Expira em 2 horas (Brasília -03:00)
-        return LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"));
+        return LocalDateTime.now().plusHours(8).toInstant(ZoneOffset.of("-03:00"));
     }
 }

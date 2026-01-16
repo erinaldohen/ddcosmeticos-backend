@@ -300,7 +300,11 @@ public class VendaService {
     private Usuario capturarUsuarioLogado() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || auth.getName().equals("anonymousUser")) return null;
-        return usuarioRepository.findByMatricula(auth.getName()).orElse(null);
+
+        String login = auth.getName();
+
+        // CORREÇÃO: Usamos findByMatriculaOrEmail pois o login pode ser E-mail ou Matrícula
+        return usuarioRepository.findByMatriculaOrEmail(login, login).orElse(null);
     }
 
     private CaixaDiario validarCaixaAberto(Usuario usuario) {

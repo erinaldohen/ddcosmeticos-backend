@@ -35,9 +35,6 @@ public class CaixaController {
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private MovimentacaoCaixaRepository movimentacaoRepository;
 
-    // --- CORREÇÃO DO 403 AQUI ---
-    // isAuthenticated() permite qualquer usuário logado (Admin, Caixa, Gerente)
-    // Isso evita conflitos de nomes de Role (ex: ROLE_ADMIN vs ADMIN)
     @GetMapping("/status")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiarioDTO> verificarStatus() {
@@ -72,9 +69,12 @@ public class CaixaController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<MovimentacaoCaixa> realizarMovimentacao(@RequestBody MovimentacaoCaixa dto) {
         String login = SecurityContextHolder.getContext().getAuthentication().getName();
-        Usuario usuario = usuarioRepository.findByMatricula(login)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sessão inválida."));
 
+        // CORREÇÃO: Busca por Email ou Matrícula (pois o login mudou para Email)
+        Usuario usuario = usuarioRepository.findByMatriculaOrEmail(login, login)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sessão inválida. Usuário não encontrado."));
+
+        // Usa Enum completo para evitar erro de pacote
         CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(usuario, br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa.ABERTO)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Caixa fechado."));
 

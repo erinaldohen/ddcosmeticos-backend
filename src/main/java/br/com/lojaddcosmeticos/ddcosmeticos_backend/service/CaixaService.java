@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO; // IMPORT NOVO
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
@@ -33,21 +33,16 @@ public class CaixaService {
     @Autowired private VendaRepository vendaRepository;
     @Autowired private MovimentacaoCaixaRepository movimentacaoRepository;
 
-    // --- NOVO MÉTODO: BUSCAR STATUS PARA O DASHBOARD ---
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
 
-        // Busca se tem caixa aberto
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
 
         if (caixaOpt.isEmpty()) {
-            // Se não tiver caixa aberto, retorna null ou um DTO vazio indicando fechado
             return null;
         }
 
         CaixaDiario caixa = caixaOpt.get();
-
-        // CALCULA TOTAIS EM TEMPO REAL (Para o gráfico do Dashboard ficar atualizado)
         List<Venda> vendasHoje = vendaRepository.buscarVendasDoUsuarioNoPeriodo(
                 operador.getId(),
                 caixa.getDataAbertura(),
@@ -71,13 +66,7 @@ public class CaixaService {
 
     @Transactional
     public CaixaDiario abrirCaixa(BigDecimal fundoTroco) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não autenticado.");
-        }
-
-        Usuario operador = usuarioRepository.findByMatricula(auth.getName())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
+        Usuario operador = getUsuarioLogado();
 
         if (caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO).isPresent()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Você já possui um caixa aberto.");
@@ -139,9 +128,17 @@ public class CaixaService {
                 .map(Venda::getValorTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    // --- CORREÇÃO CRÍTICA AQUI ---
     private Usuario getUsuarioLogado() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return usuarioRepository.findByMatricula(auth.getName())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sessão inválida."));
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não autenticado.");
+        }
+
+        String login = auth.getName(); // Isso agora é o EMAIL ou MATRICULA
+
+        // Usa a busca flexível que criamos no Repository
+        return usuarioRepository.findByMatriculaOrEmail(login, login)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
     }
 }

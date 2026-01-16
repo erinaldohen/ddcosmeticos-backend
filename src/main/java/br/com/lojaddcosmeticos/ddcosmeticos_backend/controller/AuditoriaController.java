@@ -23,14 +23,14 @@ public class AuditoriaController {
 
     // --- LIBERADO PARA O DASHBOARD (Qualquer um logado) ---
     @GetMapping("/eventos")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()") // Libera para o Dashboard
     public ResponseEntity<List<AuditoriaRequestDTO>> listarUltimosEventos() {
-        return ResponseEntity.ok(auditoriaService.listarUltimasAlteracoes(10));
+        return ResponseEntity.ok(auditoriaService.listarUltimosEventos(10));
     }
 
-    // --- RESTRITO: HISTÓRICO DE PRODUTO (Apenas Admin) ---
+    // Mantenha os outros métodos restritos a ADMIN se desejar
     @GetMapping("/produto/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')") // Exemplo: Histórico completo só Admin vê
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistoricoProduto(@PathVariable Long id) {
         return ResponseEntity.ok(auditoriaService.buscarHistoricoDoProduto(id));
     }

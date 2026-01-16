@@ -76,7 +76,7 @@ public class DashboardService {
                 .produtosMargemCritica((long) precificacaoService.buscarProdutosComMargemCritica().size())
                 .produtosSemNcmOuCest(produtoRepository.contarProdutosSemFiscal())
                 // Aqui chamamos o método que corrigimos no AuditoriaService para retornar AuditoriaRequestDTO
-                .ultimasAlteracoes(auditoriaService.listarUltimasAlteracoes(5))
+                .ultimasAlteracoes(auditoriaService.listarUltimosEventos(5))
                 .build();
     }
 
@@ -91,7 +91,7 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public List<AuditoriaRequestDTO> buscarAlertasRecentes() {
         // Busca as 5 últimas atividades do sistema
-        return auditoriaService.listarUltimasAlteracoes(5);
+        return auditoriaService.listarUltimosEventos(5);
     }
 
     // =========================================================================

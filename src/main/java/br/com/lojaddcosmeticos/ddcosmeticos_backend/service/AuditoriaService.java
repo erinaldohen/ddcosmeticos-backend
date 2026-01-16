@@ -51,13 +51,11 @@ public class AuditoriaService {
     // 1. REGISTRO DE EVENTOS
     // =========================================================================
 
-    // Método Simples (Chamado pelo VendaService, etc.)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void registrar(String acao, String detalhes) {
         registrar(acao, detalhes, null, null);
     }
 
-    // Método Completo (Com entidade e ID)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void registrar(String acao, String detalhes, String entidade, Long idEntidade) {
         try {
@@ -80,12 +78,10 @@ public class AuditoriaService {
     // =========================================================================
 
     @Transactional(readOnly = true)
-    public List<AuditoriaRequestDTO> listarUltimasAlteracoes(int limite) {
-        // Cria a paginação
+    // CORREÇÃO: Renomeado de listarUltimasAlteracoes para listarUltimosEventos
+    public List<AuditoriaRequestDTO> listarUltimosEventos(int limite) {
         Pageable pageable = PageRequest.of(0, limite, Sort.by("dataHora").descending());
 
-        // O erro estava aqui: O Java estava confuso sobre qual DTO retornar.
-        // Forçamos o retorno correto do map().
         return auditoriaRepository.findAll(pageable).stream()
                 .map(auditoria -> new AuditoriaRequestDTO(
                         auditoria.getTipoEvento(),
@@ -94,16 +90,6 @@ public class AuditoriaService {
                         auditoria.getDataHora()
                 ))
                 .collect(Collectors.toList());
-    }
-
-    // Converte a Entidade Auditoria para o seu Record AuditoriaRequestDTO
-    private AuditoriaRequestDTO converterParaDTO(Auditoria auditoria) {
-        return new AuditoriaRequestDTO(
-                auditoria.getTipoEvento(),        // Mapeia para 'acao'
-                auditoria.getMensagem(),          // Mapeia para 'detalhes'
-                auditoria.getUsuarioResponsavel(),// Mapeia para 'usuario'
-                auditoria.getDataHora()           // Mapeia para 'dataHora'
-        );
     }
 
     // =========================================================================
@@ -149,7 +135,6 @@ public class AuditoriaService {
     public List<HistoricoProdutoDTO> buscarHistoricoDoProduto(Long idProduto) {
         AuditReader reader = AuditReaderFactory.get(entityManager);
 
-        // Busca revisões onde o ID do produto é igual ao solicitado
         List<Object[]> results = reader.createQuery()
                 .forRevisionsOfEntity(Produto.class, false, true)
                 .add(AuditEntity.id().eq(idProduto))
@@ -163,11 +148,10 @@ public class AuditoriaService {
             CustomRevisionEntity rev = (CustomRevisionEntity) row[1];
             RevisionType type = (RevisionType) row[2];
 
-            // Certifique-se que o HistoricoProdutoDTO tem este construtor
             historico.add(new HistoricoProdutoDTO(
                     rev.getId(),
                     new Date(rev.getTimestamp()),
-                    type.name(), // CRIADO, ALTERADO, DELETADO
+                    type.name(),
                     p.getDescricao(),
                     p.getPrecoVenda(),
                     p.getPrecoCusto(),
@@ -199,8 +183,8 @@ public class AuditoriaService {
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth != null && auth.isAuthenticated() && !auth.getPrincipal().equals("anonymousUser")) {
-                if (auth.getPrincipal() instanceof String) { // Token JWT geralmente retorna String (matricula/email)
-                    return usuarioRepository.findByMatricula((String) auth.getPrincipal())
+                if (auth.getPrincipal() instanceof String) {
+                    return usuarioRepository.findByMatriculaOrEmail((String) auth.getPrincipal(), (String) auth.getPrincipal())
                             .map(Usuario::getNome)
                             .orElse((String) auth.getPrincipal());
                 } else if (auth.getPrincipal() instanceof Usuario) {

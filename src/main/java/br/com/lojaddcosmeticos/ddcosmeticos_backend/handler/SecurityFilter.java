@@ -25,9 +25,9 @@ public class SecurityFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // Pula validação para rotas públicas (Login/Swagger) para não sujar o log
         String path = request.getRequestURI();
-        if (path.contains("/auth") || path.contains("/swagger") || path.contains("/api-docs")) {
+        // Ignora rotas públicas para limpar o log
+        if (path.contains("/auth") || path.contains("/swagger") || path.contains("/h2-console")) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -36,27 +36,30 @@ public class SecurityFilter extends OncePerRequestFilter {
 
         if (token != null) {
             try {
-                // 1. Valida o token e recupera o "subject" (pode ser matricula ou email)
                 var login = jwtService.validateToken(token);
 
+                // --- LOG DE DEBUG (Olhe no console do IntelliJ) ---
+                System.out.println("🔍 TENTATIVA DE ACESSO: " + path);
+                System.out.println("👤 Login extraído do Token: " + login);
+
                 if (login != null && !login.isEmpty()) {
-                    // 2. CORREÇÃO CRÍTICA: Busca por Matrícula OU E-mail
-                    // Isso garante que o usuário seja encontrado independente de como o token foi gerado
                     UserDetails user = usuarioRepository.findByMatriculaOrEmail(login, login).orElse(null);
 
                     if (user != null) {
-                        // 3. Sucesso: Autentica
+                        System.out.println("✅ Usuário encontrado no Banco: " + user.getUsername());
+                        System.out.println("🔐 Permissões (Roles): " + user.getAuthorities());
+
                         var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                         SecurityContextHolder.getContext().setAuthentication(authentication);
-                        // System.out.println("✅ Acesso liberado para: " + login);
                     } else {
-                        System.out.println("❌ Token válido, mas usuário não encontrado no banco (Busca por Matrícula/Email): " + login);
+                        System.out.println("❌ Usuário NÃO encontrado no banco para o login: " + login);
                     }
                 }
             } catch (Exception e) {
-                System.out.println("❌ Erro na validação do token: " + e.getMessage());
-                SecurityContextHolder.clearContext();
+                System.out.println("❌ Erro na validação do Token: " + e.getMessage());
             }
+        } else {
+            System.out.println("⚠️ Requisição sem Token: " + path);
         }
 
         filterChain.doFilter(request, response);
@@ -65,7 +68,6 @@ public class SecurityFilter extends OncePerRequestFilter {
     private String recoverToken(HttpServletRequest request) {
         var authHeader = request.getHeader("Authorization");
         if (authHeader == null) return null;
-        // Limpeza robusta do token
-        return authHeader.replace("Bearer ", "").replace("\"", "").replace("'", "").trim();
+        return authHeader.replace("Bearer ", "").trim();
     }
 }

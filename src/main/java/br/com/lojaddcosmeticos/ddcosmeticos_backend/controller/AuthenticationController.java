@@ -18,7 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/auth")
+// CORREÇÃO AQUI: Adicionado /api/v1 para casar com o Frontend
+@RequestMapping("/api/v1/auth")
 public class AuthenticationController {
 
     @Autowired private AuthenticationManager authenticationManager;
@@ -27,14 +28,14 @@ public class AuthenticationController {
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDTO> login(@RequestBody @Valid LoginRequestDTO data) {
-        // LoginRequestDTO é um RECORD, então .email() e .senha() funcionam
+        // Autentica com EMAIL e SENHA
         var usernamePassword = new UsernamePasswordAuthenticationToken(data.email(), data.senha());
         var auth = authenticationManager.authenticate(usernamePassword);
 
         var usuario = (Usuario) auth.getPrincipal();
         var token = tokenService.generateToken(usuario);
 
-        // CORREÇÃO LINHA 38: Adicionado usuario.getMatricula() para completar os 4 argumentos
+        // Retorna o DTO completo com 4 argumentos
         return ResponseEntity.ok(new LoginResponseDTO(
                 token,
                 usuario.getMatricula(),
@@ -45,14 +46,12 @@ public class AuthenticationController {
 
     @PostMapping("/register")
     public ResponseEntity<Void> register(@RequestBody @Valid RegisterDTO data) {
-        // CORREÇÃO LINHA 43: RegisterDTO é CLASSE (@Data), então usa getters
         if (this.repository.findByEmail(data.getEmail()).isPresent()) {
             return ResponseEntity.badRequest().build();
         }
 
         String encryptedPassword = new BCryptPasswordEncoder().encode(data.getSenha());
 
-        // CORREÇÃO LINHA 49: Usando getters corretos e ordem certa do construtor
         Usuario newUser = new Usuario(
                 data.getMatricula(),
                 data.getNome(),

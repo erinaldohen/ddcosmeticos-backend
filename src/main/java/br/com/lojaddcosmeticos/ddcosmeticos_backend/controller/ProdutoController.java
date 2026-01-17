@@ -4,6 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,8 @@ public class ProdutoController {
 
     @Autowired
     private ProdutoService produtoService;
+    @Autowired
+    private ProdutoRepository produtoRepository;
 
     // --- LEITURA ---
     @GetMapping
@@ -37,12 +40,17 @@ public class ProdutoController {
         return ResponseEntity.ok(produtoService.listarResumo(termo, pageable));
     }
 
+    @GetMapping("/lixeira")
+    public ResponseEntity<List<Produto>> listarLixeira() {
+        // Retorna direto do banco. O filtro de "ativo=false" é feito no SQL acima.
+        return ResponseEntity.ok(produtoRepository.findAllLixeira());
+    }
+
     @GetMapping("/resumo")
     public ResponseEntity<Page<ProdutoListagemDTO>> listarResumo(
             @RequestParam(required = false) String termo,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-        // Redireciona para o método principal para manter padrão
         return listar(termo, page, size);
     }
 
@@ -82,32 +90,41 @@ public class ProdutoController {
     }
 
     @DeleteMapping("/{ean}")
+    @Operation(summary = "Inativa um produto (move para lixeira)")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();
     }
 
-    @PatchMapping("/{ean}/reativar")
-    public ResponseEntity<Void> reativar(@PathVariable String ean) {
+    // Unificado: Mantemos apenas o PUT para reativar (compatível com o Service)
+    @PutMapping("/{ean}/reativar")
+    @Operation(summary = "Reativa um produto da lixeira")
+    public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
         produtoService.reativarPorEan(ean);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok().build();
     }
 
-    // --- FISCAL ---
+    // --- FISCAL & INTELIGÊNCIA ---
+
     @PostMapping("/saneamento-fiscal")
-    @Operation(summary = "Aplica regras fiscais (NCM, CST) automaticamente")
+    @Operation(summary = "Recalcula tributos e SALVA no banco (Reforma, CST, NCM)")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
-        return produtoService.realizarSaneamentoFiscal();
+        // CORREÇÃO CRÍTICA: Chama o método que realmente processa e salva
+        return ResponseEntity.ok(produtoService.saneamentoFiscal());
     }
 
-    // --- IMPORTAÇÃO E EXPORTAÇÃO (CORRIGIDO: Apenas 1 endpoint para importar) ---
+    @PostMapping("/corrigir-ncms-ia")
+    @Operation(summary = "Varre o banco e corrige NCMs errados usando Inteligência Histórica")
+    public ResponseEntity<Map<String, Object>> corrigirNcmsIA() {
+        return ResponseEntity.ok(produtoService.corrigirNcmsEmMassa());
+    }
+
+    // --- IMPORTAÇÃO E EXPORTAÇÃO ---
 
     @PostMapping("/importar")
     @Operation(summary = "Importa produtos via CSV ou Excel")
-    public ResponseEntity<String> importarArquivo(@RequestParam("arquivo") MultipartFile arquivo) {
-        // Chama o método roteador que criamos no Service
-        String resultado = produtoService.importarProdutos(arquivo);
-        return ResponseEntity.ok(resultado);
+    public ResponseEntity<Map<String, Object>> importarArquivo(@RequestParam("arquivo") MultipartFile arquivo) {
+        return ResponseEntity.ok(produtoService.importarProdutos(arquivo));
     }
 
     @GetMapping("/exportar/csv")

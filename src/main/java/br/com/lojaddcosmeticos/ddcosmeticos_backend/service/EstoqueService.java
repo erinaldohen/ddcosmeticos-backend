@@ -275,7 +275,7 @@ public class EstoqueService {
                 if (fornecedor.getNumero() == null) fornecedor.setNumero(getElementValue(ender, "nro"));
                 if (fornecedor.getBairro() == null) fornecedor.setBairro(getElementValue(ender, "xBairro"));
                 if (fornecedor.getCidade() == null) fornecedor.setCidade(getElementValue(ender, "xMun"));
-                if (fornecedor.getEstado() == null) fornecedor.setEstado(getElementValue(ender, "UF"));
+                if (fornecedor.getUf() == null) fornecedor.setUf(getElementValue(ender, "UF"));
             }
 
             fornecedorRepository.save(fornecedor);
@@ -294,7 +294,7 @@ public class EstoqueService {
         if (dados.getFornecedorId() != null) {
             fornecedor = fornecedorRepository.findById(dados.getFornecedorId()).orElse(null);
         } else if (dados.getFornecedorCnpj() != null) {
-            fornecedor = fornecedorRepository.findByCpfOuCnpj(dados.getFornecedorCnpj()).orElse(null);
+            fornecedor = fornecedorRepository.findByCnpj(dados.getFornecedorCnpj()).orElse(null);
         }
 
         int parcelas = dados.getQuantidadeParcelas() != null && dados.getQuantidadeParcelas() > 0 ? dados.getQuantidadeParcelas() : 1;

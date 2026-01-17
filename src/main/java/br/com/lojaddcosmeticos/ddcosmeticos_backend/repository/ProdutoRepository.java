@@ -25,23 +25,23 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     List<Produto> findAllByAtivoTrue();
 
-    // --- NOVO MÉTODO (Correção do Erro) ---
-    // Usado pelo EstoqueService para filtrar produtos pelo NCM antes da comparação de nomes
+    // Usado pelo EstoqueService para filtrar produtos pelo NCM
     List<Produto> findByNcm(String ncm);
-    // --------------------------------------
 
-    // Busca Paginada (Para o Grid)
-    Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras, Pageable pageable);
+    // Busca Paginada (Para o Grid) - Garante apenas ATIVOS
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND " +
+            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
+    Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(@Param("termo") String termo, Pageable pageable);
 
-    // Busca em Lista (Para Selects)
+    // Método legado (mantido para compatibilidade)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
     // --- 2. CATÁLOGO VISUAL ---
-    @Query("SELECT p FROM Produto p WHERE " +
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (" +
             "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
-            "(p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
+            "(p.codigoBarras LIKE CONCAT('%', :termo, '%')))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
@@ -62,27 +62,24 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
     long contarProdutosSemFiscal();
 
-    // --- 4. MANUTENÇÃO / LIXEIRA ---
+    // --- 4. MANUTENÇÃO / LIXEIRA (ATUALIZADO) ---
 
-    // Busca inclusive INATIVOS (Usado para validar duplicidade e reativar)
-    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean", nativeQuery = true)
+    // Busca inclusive INATIVOS (Validar duplicidade e reativar) - SQL Nativo para garantir acesso
+    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean LIMIT 1", nativeQuery = true)
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
-    // Lista da Lixeira (Usado pelo AuditoriaService)
-    @Query(value = "SELECT * FROM produto WHERE ativo = false", nativeQuery = true)
+    // LIXEIRA BLINDADA: Alterado para nativeQuery = true
+    // Isso ignora filtros do Hibernate e pega qualquer coisa que seja falso, zero ou nulo
+    @Query(value = "SELECT * FROM produto WHERE ativo <> 1 OR ativo IS NULL", nativeQuery = true)
     List<Produto> findAllLixeira();
 
-    // Reativar por ID (Usado pelo AuditoriaService)
+    // Reativar por ID
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);
 
     // --- 5. INTELIGÊNCIA DE COMPRAS (BI) ---
 
-    /**
-     * Busca produtos que estão com estoque baixo E que já foram fornecidos
-     * pelo fornecedor especificado no histórico de movimentação.
-     */
     @Query("""
         SELECT DISTINCT p 
         FROM Produto p 
@@ -92,4 +89,25 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
         AND p.ativo = true
     """)
     List<Produto> findSugestaoCompraPorFornecedor(@Param("fornecedorId") Long fornecedorId);
+
+    // --- 6. INTELIGÊNCIA FISCAL (NOVO) ---
+
+    // Método antigo
+    @Query(value = "SELECT p.ncm FROM Produto p WHERE p.descricao LIKE %:palavraChave% AND p.ncm <> '00000000' GROUP BY p.ncm ORDER BY COUNT(p.id) DESC LIMIT 1", nativeQuery = true)
+    String findNcmMaisUsadoPorPalavra(@Param("palavraChave") String palavraChave);
+
+    // Método Otimizado (Robô IA)
+    @Query(value = """
+        SELECT ncm 
+        FROM produto 
+        WHERE UPPER(descricao) LIKE UPPER(CONCAT('%', :palavra, '%')) 
+          AND ncm IS NOT NULL 
+          AND ncm != '' 
+          AND ncm != '00000000'
+        GROUP BY ncm 
+        ORDER BY COUNT(*) DESC 
+        LIMIT 1
+    """, nativeQuery = true)
+    String findNcmInteligente(@Param("palavra") String palavra);
+
 }

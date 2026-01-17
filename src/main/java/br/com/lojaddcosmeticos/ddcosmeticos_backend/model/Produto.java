@@ -29,7 +29,6 @@ import java.util.Objects;
         @Index(name = "idx_produto_ean", columnList = "codigo_barras"),
         @Index(name = "idx_produto_ativo", columnList = "ativo")
 })
-@SQLDelete(sql = "UPDATE produto SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true")
 public class Produto implements Serializable {
     private static final long serialVersionUID = 1L;

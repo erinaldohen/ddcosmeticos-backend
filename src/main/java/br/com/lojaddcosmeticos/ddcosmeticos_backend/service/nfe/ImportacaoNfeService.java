@@ -7,13 +7,13 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -26,7 +26,6 @@ import java.time.LocalDate;
 @Service
 public class ImportacaoNfeService {
 
-    @Autowired private ProdutoService produtoService;
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private EstoqueService estoqueService;
     @Autowired private FornecedorRepository fornecedorRepository;
@@ -39,7 +38,6 @@ public class ImportacaoNfeService {
         Document doc = builder.parse(new ByteArrayInputStream(xmlData));
 
         // 1. Dados da NFe
-        String chaveAcesso = getTagValue(doc.getDocumentElement(), "chNFe");
         String numeroNota = getTagValue(doc.getDocumentElement(), "nNF");
 
         // 2. Dados do Fornecedor
@@ -65,57 +63,50 @@ public class ImportacaoNfeService {
         String ean = getTagValue(prod, "cEAN");
         String nomeProd = getTagValue(prod, "xProd");
         String ncm = getTagValue(prod, "NCM");
-        String cest = getTagValue(prod, "CEST"); // Pode ser null
-        String cfop = getTagValue(prod, "CFOP");
-
-        // Extração de CST/CSOSN (Pode variar dependendo do regime do fornecedor)
+        String cest = getTagValue(prod, "CEST");
         String cst = extrairCstOuCsosn(imposto);
 
         // Valores
         BigDecimal quantidade = new BigDecimal(getTagValue(prod, "qCom"));
         BigDecimal valorUnitario = new BigDecimal(getTagValue(prod, "vUnCom"));
 
-        // Se não tiver EAN válido, tenta usar o código interno do fornecedor ou gera erro
         if (ean == null || ean.isEmpty() || ean.equals("SEM GTIN")) {
-            // Lógica opcional: Ignorar ou cadastrar com código interno prefixado
-            log.warn("Produto sem EAN ignorado: {}", nomeProd);
+            log.warn("Produto sem EAN ignorado (Importação XML): {}", nomeProd);
             return;
         }
 
-        // --- CORREÇÃO 1: Busca e Atualização com novos campos ---
+        // Busca ou Cria Produto
         Produto produto = produtoRepository.findByCodigoBarras(ean)
                 .orElse(new Produto());
 
         if (produto.getId() == null) {
-            // Produto Novo
             produto.setCodigoBarras(ean);
-            produto.setDescricao(nomeProd.toUpperCase()); // CORREÇÃO: setDescricao em vez de setNome
+            produto.setDescricao(nomeProd != null ? nomeProd.toUpperCase() : "PRODUTO SEM NOME");
             produto.setAtivo(true);
             produto.setUnidade(getTagValue(prod, "uCom"));
+            produto.setOrigem("0"); // Default Nacional
+            produto.setEstoqueFiscal(0);
+            produto.setEstoqueNaoFiscal(0);
+            produto.setQuantidadeEmEstoque(0);
         }
 
-        // Atualiza dados fiscais sempre (para garantir inteligência fiscal)
         if (ncm != null && !ncm.isEmpty()) produto.setNcm(ncm);
         if (cest != null && !cest.isEmpty()) produto.setCest(cest);
         if (cst != null && !cst.isEmpty()) produto.setCst(cst);
 
-        // Define Monofásico baseado no NCM (usando a lógica do Service se quiser, ou manual aqui)
-        // Como o produtoService já tem a lógica no 'salvar/atualizar', podemos deixar o repositório salvar direto
-        // mas é bom garantir o booleano monofásico se soubermos.
-        // Vou deixar o service recalcular se necessário numa futura atualização via tela.
-
         produtoRepository.save(produto);
 
-        // --- CORREÇÃO 2: Registro de Estoque ---
-        // Prepara DTO para o EstoqueService
+        // Registro de Estoque
         EstoqueRequestDTO entrada = new EstoqueRequestDTO();
         entrada.setCodigoBarras(ean);
         entrada.setQuantidade(quantidade);
         entrada.setPrecoCusto(valorUnitario);
         entrada.setNumeroNotaFiscal(numeroNota);
-        entrada.setFornecedorCnpj(fornecedor.getCpfOuCnpj());
 
-        // Define padrão para entrada automática via XML (pode ajustar conforme regra)
+        // CORREÇÃO: Usa getCnpj() conforme entidade Fornecedor
+        entrada.setFornecedorCnpj(fornecedor.getCnpj());
+
+        // Dados Financeiros Padrão para Entrada Automática
         entrada.setFormaPagamento(FormaDePagamento.BOLETO);
         entrada.setQuantidadeParcelas(1);
         entrada.setDataVencimentoBoleto(LocalDate.now().plusDays(28));
@@ -128,34 +119,46 @@ public class ImportacaoNfeService {
         String nome = getTagValue(emit, "xNome");
         String fantasia = getTagValue(emit, "xFant");
 
-        return fornecedorRepository.findByCpfOuCnpj(cnpj)
+        // Extrai endereço básico para evitar erro de cadastro incompleto
+        Element enderEmit = (Element) emit.getElementsByTagName("enderEmit").item(0);
+        String logradouro = getTagValue(enderEmit, "xLgr");
+        String numero = getTagValue(enderEmit, "nro");
+        String bairro = getTagValue(enderEmit, "xBairro");
+        String municipio = getTagValue(enderEmit, "xMun");
+        String uf = getTagValue(enderEmit, "UF");
+        String cep = getTagValue(enderEmit, "CEP");
+
+        return fornecedorRepository.findByCnpj(cnpj)
                 .orElseGet(() -> {
                     Fornecedor novo = new Fornecedor();
-                    novo.setCpfOuCnpj(cnpj);
-                    novo.setRazaoSocial(nome);
-                    novo.setNomeFantasia(fantasia != null ? fantasia : nome);
+                    novo.setCnpj(cnpj);
+                    novo.setRazaoSocial(nome != null ? nome.toUpperCase() : "FORNECEDOR XML");
+                    novo.setNomeFantasia(fantasia != null ? fantasia.toUpperCase() : novo.getRazaoSocial());
                     novo.setAtivo(true);
-                    novo.setTipoPessoa("JURIDICA");
+
+                    // Preenche endereço
+                    novo.setLogradouro(logradouro);
+                    novo.setNumero(numero);
+                    novo.setBairro(bairro);
+                    novo.setCidade(municipio);
+                    novo.setUf(uf);
+                    novo.setCep(cep);
+
                     return fornecedorRepository.save(novo);
                 });
     }
 
     private String extrairCstOuCsosn(Element imposto) {
         if (imposto == null) return null;
-
-        // Tenta encontrar ICMS
         NodeList icmsGroup = imposto.getElementsByTagName("ICMS");
         if (icmsGroup.getLength() > 0) {
-            Element icms = (Element) icmsGroup.item(0);
-            // Itera sobre os filhos (ICMS00, ICMS10, ICMSSN102, etc)
-            NodeList childs = icms.getChildNodes();
+            Node icmsNode = icmsGroup.item(0);
+            NodeList childs = icmsNode.getChildNodes();
             for(int i=0; i<childs.getLength(); i++) {
                 if (childs.item(i) instanceof Element) {
                     Element tipoIcms = (Element) childs.item(i);
-                    // Tenta CST
                     String cst = getTagValue(tipoIcms, "CST");
                     if (cst != null) return cst;
-                    // Tenta CSOSN
                     String csosn = getTagValue(tipoIcms, "CSOSN");
                     if (csosn != null) return csosn;
                 }

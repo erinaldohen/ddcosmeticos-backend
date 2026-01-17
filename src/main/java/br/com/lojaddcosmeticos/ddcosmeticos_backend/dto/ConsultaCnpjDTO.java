@@ -1,16 +1,21 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
-import lombok.Data;
 
-@Data
-public class ConsultaCnpjDTO {
-    private String cnpj;
-    private String razao_social;
-    private String nome_fantasia;
-    private String logradouro;
-    private String numero;
-    private String bairro;
-    private String municipio;
-    private String uf;
-    private String cep;
-    private String ddd_telefone_1;
-}
+import com.fasterxml.jackson.annotation.JsonAlias;
+
+public record ConsultaCnpjDTO(
+        @JsonAlias("cnpj") String cnpj,
+        @JsonAlias("razao_social") String razaoSocial,
+        @JsonAlias("nome_fantasia") String nomeFantasia,
+        @JsonAlias("descricao_situacao_cadastral") String situacao,
+        @JsonAlias("cnae_fiscal_descricao") String atividadePrincipal,
+
+        // Endereço mapeado da API
+        @JsonAlias("logradouro") String logradouro,
+        @JsonAlias("numero") String numero,
+        @JsonAlias("complemento") String complemento,
+        @JsonAlias("bairro") String bairro,
+        @JsonAlias("municipio") String cidade,
+        @JsonAlias("uf") String uf,
+        @JsonAlias("cep") String cep,
+        @JsonAlias("ddd_telefone_1") String telefone
+) {}

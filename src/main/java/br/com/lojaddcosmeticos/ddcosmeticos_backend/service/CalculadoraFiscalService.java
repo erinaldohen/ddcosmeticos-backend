@@ -65,13 +65,26 @@ public class CalculadoraFiscalService {
         ValidacaoFiscalDTO.Response dados = processarInteligencia(p.getDescricao(), p.getNcm());
         boolean alterou = false;
 
+        // Atualiza NCM se a IA achou algo melhor
         if (!Objects.equals(p.getNcm(), dados.ncm())) { p.setNcm(dados.ncm()); alterou = true; }
+        // Atualiza CEST
         if (!Objects.equals(p.getCest(), dados.cest())) { p.setCest(dados.cest()); alterou = true; }
-        if (!Objects.equals(p.getCst(), dados.cst())) { p.setCst(dados.cst()); alterou = true; }
+        // Atualiza CST (04 Monofásico / 00 Tributado)
+        if (!Objects.equals(p.getCst(), dados.cst())) { p.setCest(dados.cst()); alterou = true; }
+        // Atualiza flag Monofásico
         if (p.isMonofasico() != dados.monofasico()) { p.setMonofasico(dados.monofasico()); alterou = true; }
 
-        if (p.getClassificacaoReforma() == null) {
-            p.setClassificacaoReforma(TipoTributacaoReforma.PADRAO);
+        // --- CORREÇÃO IMPORTANTE: Atualiza a Reforma Tributária baseado no retorno da Regra ---
+        // Antes estava apenas setando PADRAO se fosse nulo. Agora recalcula sempre que mudar o NCM.
+        RegraFiscalResultado regrasCalculadas = calcularRegras(p.getNcm());
+
+        // LOG DE DEBUG
+        if (p.getNcm().startsWith("3401")) {
+            System.out.println("Produto: " + p.getDescricao() + " | NCM: " + p.getNcm() + " | Nova Classificação: " + regrasCalculadas.classificacaoReforma());
+        }
+
+        if (p.getClassificacaoReforma() != regrasCalculadas.classificacaoReforma()) {
+            p.setClassificacaoReforma(regrasCalculadas.classificacaoReforma());
             alterou = true;
         }
 
@@ -116,17 +129,43 @@ public class CalculadoraFiscalService {
     private record RegraFiscalResultado(boolean monofasico, String cst, TipoTributacaoReforma classificacaoReforma, boolean impostoSeletivo) {}
 
     private RegraFiscalResultado calcularRegras(String ncm) {
+        if (ncm == null) ncm = "";
         String ncmLimpo = ncm.replace(".", "").trim();
+
+        // 1. Lógica do Monofásico (PIS/COFINS Atual)
+        // Cosméticos (Cap 33), Sabões (3401)
         boolean isMonofasico = ncmLimpo.startsWith("3303") || ncmLimpo.startsWith("3304") ||
                 ncmLimpo.startsWith("3305") || ncmLimpo.startsWith("3307") ||
-                ncmLimpo.startsWith("3401");
-        String cst = isMonofasico ? "04" : "00";
+                ncmLimpo.startsWith("3401"); // Sabonetes
 
+        String cst = isMonofasico ? "04" : "00"; // 04 = Monofásico, 00 = Tributado
+
+        // 2. Lógica da Reforma Tributária (IBS/CBS - LC 214)
         TipoTributacaoReforma classificacao = TipoTributacaoReforma.PADRAO;
         boolean impostoSeletivo = false;
 
-        if (ncmLimpo.startsWith("3306") || ncmLimpo.startsWith("3401")) {
+        // --- LISTA DE ALÍQUOTA REDUZIDA (60%) ---
+        // Itens de Higiene Pessoal, Limpeza e Cuidados Básicos de Saúde
+        if (
+            // Cap 30: Medicamentos e Farmacêuticos
+                ncmLimpo.startsWith("3003") || ncmLimpo.startsWith("3004") ||
+                        // Cap 33: Óleos, Perfumaria e Cosméticos
+                        ncmLimpo.startsWith("3303") || // Perfumes
+                        ncmLimpo.startsWith("3304") || // Beleza/Maquiagem/Cremes
+                        ncmLimpo.startsWith("3305") || // Capilares (Shampoo/Condicionador)
+                        ncmLimpo.startsWith("3306") || // Bucal (Pasta/Fio)
+                        ncmLimpo.startsWith("3307") || // Barbear/Desodorantes
+                        // Cap 34: Sabonetes e Agentes Orgânicos
+                        ncmLimpo.startsWith("3401") || // Sabonetes (EM BARRA OU LIQUIDO)
+                        // Cap 96: Diversos
+                        ncmLimpo.startsWith("9603") || // Escovas de dentes
+                        ncmLimpo.startsWith("9619")    // Absorventes e Fraldas
+        ) {
             classificacao = TipoTributacaoReforma.REDUZIDA_60;
+        }
+        // Exceção: Cesta Básica Nacional (Se houver produtos alimentícios ou muito básicos)
+        else if (ncmLimpo.startsWith("0401") || ncmLimpo.startsWith("1006")) {
+            classificacao = TipoTributacaoReforma.CESTA_BASICA;
         }
 
         return new RegraFiscalResultado(isMonofasico, cst, classificacao, impostoSeletivo);
@@ -143,11 +182,14 @@ public class CalculadoraFiscalService {
             BigDecimal qtd = (item.getQuantidade() != null) ? new BigDecimal(item.getQuantidade().toString()) : BigDecimal.ZERO;
             BigDecimal subtotal = item.getPrecoUnitario().multiply(qtd);
 
-            BigDecimal aliqIbs = new BigDecimal("17.5");
-            BigDecimal aliqCbs = new BigDecimal("9.0");
+            // Alíquotas Padrão Estimadas (26.5% Total)
+            BigDecimal aliqIbs = new BigDecimal("17.5"); // Estado/Município
+            BigDecimal aliqCbs = new BigDecimal("9.0");  // União
             BigDecimal aliqIs = BigDecimal.ZERO;
 
+            // Aplica Redutor de 60% se for Higiene/Saúde
             if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
+                // Paga apenas 40% da alíquota cheia
                 aliqIbs = aliqIbs.multiply(new BigDecimal("0.4"));
                 aliqCbs = aliqCbs.multiply(new BigDecimal("0.4"));
             } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA) {
@@ -219,7 +261,7 @@ public class CalculadoraFiscalService {
     }
 
     // ==================================================================================
-    // MÓDULO 4: CÁLCULOS DE COMPRA (ICMS-ST / MVA) - O QUE ESTAVA FALTANDO!
+    // MÓDULO 4: CÁLCULOS DE COMPRA (ICMS-ST / MVA)
     // ==================================================================================
 
     private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // Média 20.5%

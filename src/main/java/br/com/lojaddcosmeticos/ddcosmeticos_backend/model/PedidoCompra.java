@@ -22,7 +22,13 @@ public class PedidoCompra implements Serializable {
 
     private LocalDateTime dataCriacao = LocalDateTime.now();
 
-    private String fornecedorNome;
+    // --- CORREÇÃO DE MAPEAMENTO (ESSENCIAL PARA O HIBERNATE INICIAR) ---
+    // Adicionado para satisfazer o 'mappedBy = "fornecedor"' na classe Fornecedor
+    @ManyToOne
+    @JoinColumn(name = "fornecedor_id")
+    private Fornecedor fornecedor;
+
+    private String fornecedorNome; // Mantido como histórico (snapshot)
 
     // Novidade: Seleção de Estados para cálculo automático
     @Column(length = 2)

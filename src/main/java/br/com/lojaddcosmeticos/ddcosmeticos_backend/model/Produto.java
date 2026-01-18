@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -115,6 +116,11 @@ public class Produto implements Serializable {
 
     @Column(name = "estoque_minimo")
     private Integer estoqueMinimo;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fornecedor_id")
+    @JsonIgnore // Evita loop infinito ao serializar Produto -> Fornecedor -> Produto
+    private Fornecedor fornecedor;
 
     // --- MÉTODOS DE NEGÓCIO ---
 

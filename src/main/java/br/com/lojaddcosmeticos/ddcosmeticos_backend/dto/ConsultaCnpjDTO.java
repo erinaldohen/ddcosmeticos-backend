@@ -1,21 +1,55 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-public record ConsultaCnpjDTO(
-        @JsonAlias("cnpj") String cnpj,
-        @JsonAlias("razao_social") String razaoSocial,
-        @JsonAlias("nome_fantasia") String nomeFantasia,
-        @JsonAlias("descricao_situacao_cadastral") String situacao,
-        @JsonAlias("cnae_fiscal_descricao") String atividadePrincipal,
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class ConsultaCnpjDTO {
 
-        // Endereço mapeado da API
-        @JsonAlias("logradouro") String logradouro,
-        @JsonAlias("numero") String numero,
-        @JsonAlias("complemento") String complemento,
-        @JsonAlias("bairro") String bairro,
-        @JsonAlias("municipio") String cidade,
-        @JsonAlias("uf") String uf,
-        @JsonAlias("cep") String cep,
-        @JsonAlias("ddd_telefone_1") String telefone
-) {}
+    @JsonAlias("cnpj")
+    private String cnpj;
+
+    @JsonAlias("razao_social")
+    private String razaoSocial;
+
+    @JsonAlias("nome_fantasia")
+    private String nomeFantasia;
+
+    @JsonAlias("descricao_situacao_cadastral")
+    private String situacao;
+
+    @JsonAlias("cnae_fiscal_descricao")
+    private String atividadePrincipal;
+
+    // Endereço mapeado da API
+    @JsonAlias("logradouro")
+    private String logradouro;
+
+    @JsonAlias("numero")
+    private String numero;
+
+    @JsonAlias("email")
+    private String email;
+
+    @JsonAlias("complemento")
+    private String complemento;
+
+    @JsonAlias("bairro")
+    private String bairro;
+
+    @JsonAlias("municipio")
+    private String municipio; // Alterado de 'cidade' para 'municipio' para bater com o Service
+
+    @JsonAlias("uf")
+    private String uf;
+
+    @JsonAlias("cep")
+    private String cep;
+
+    @JsonAlias("ddd_telefone_1")
+    private String telefone;
+}

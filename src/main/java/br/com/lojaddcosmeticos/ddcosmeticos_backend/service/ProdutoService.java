@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook; // Necessário para Excel
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
@@ -339,9 +342,6 @@ public class ProdutoService {
     @Transactional
     public void reativarPorEan(String ean) { produtoRepository.findByEanIrrestrito(ean).ifPresent(p -> { p.setAtivo(true); produtoRepository.save(p); }); }
 
-    public byte[] gerarRelatorioCsv() { return new byte[0]; }
-    public byte[] gerarRelatorioExcel() { return new byte[0]; }
-
     @Transactional
     public Map<String, Object> saneamentoFiscal() {
         List<Produto> todos = produtoRepository.findAll();
@@ -388,5 +388,104 @@ public class ProdutoService {
         resultado.put("sucesso", true);
         resultado.put("qtdCorrigidos", corrigidos);
         return resultado;
+    }
+
+    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO CSV ---
+    public byte[] gerarRelatorioCsv() {
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+        StringBuilder sb = new StringBuilder();
+
+        // Cabeçalho (Padrão Excel Brasil usa ponto e vírgula)
+        sb.append("ID;EAN;Descrição;Marca;Categoria;NCM;Preço Custo;Preço Venda;Estoque;Estoque Mínimo\n");
+
+        for (Produto p : produtos) {
+            sb.append(p.getId()).append(";")
+                    .append(tratarCampoCsv(p.getCodigoBarras())).append(";")
+                    .append(tratarCampoCsv(p.getDescricao())).append(";")
+                    .append(tratarCampoCsv(p.getMarca())).append(";")
+                    .append(tratarCampoCsv(p.getCategoria())).append(";")
+                    .append(tratarCampoCsv(p.getNcm())).append(";")
+                    .append(formatarMoedaCsv(p.getPrecoCusto())).append(";")
+                    .append(formatarMoedaCsv(p.getPrecoVenda())).append(";")
+                    .append(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0).append(";")
+                    .append(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0).append("\n");
+        }
+
+        // Retorna em ISO-8859-1 para garantir acentuação correta no Excel do Windows
+        return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
+    }
+
+    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO EXCEL (XLSX) ---
+    public byte[] gerarRelatorioExcel() {
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+            Sheet sheet = workbook.createSheet("Estoque");
+
+            // Estilo do Cabeçalho
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            // Criar Cabeçalho
+            Row headerRow = sheet.createRow(0);
+            String[] colunas = {"ID", "EAN", "Descrição", "Marca", "Categoria", "NCM", "Preço Custo", "Preço Venda", "Estoque", "Mínimo"};
+
+            for (int i = 0; i < colunas.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(colunas[i]);
+                cell.setCellStyle(headerStyle);
+            }
+
+            // Preencher Dados
+            int rowIdx = 1;
+            for (Produto p : produtos) {
+                Row row = sheet.createRow(rowIdx++);
+
+                row.createCell(0).setCellValue(p.getId());
+                row.createCell(1).setCellValue(p.getCodigoBarras() != null ? p.getCodigoBarras() : "");
+                row.createCell(2).setCellValue(p.getDescricao() != null ? p.getDescricao() : "");
+                row.createCell(3).setCellValue(p.getMarca() != null ? p.getMarca() : "");
+                row.createCell(4).setCellValue(p.getCategoria() != null ? p.getCategoria() : "");
+                row.createCell(5).setCellValue(p.getNcm() != null ? p.getNcm() : "");
+
+                // Valores Monetários (Double para o Excel entender como número)
+                row.createCell(6).setCellValue(p.getPrecoCusto() != null ? p.getPrecoCusto().doubleValue() : 0.0);
+                row.createCell(7).setCellValue(p.getPrecoVenda() != null ? p.getPrecoVenda().doubleValue() : 0.0);
+
+                row.createCell(8).setCellValue(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0);
+                row.createCell(9).setCellValue(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0);
+            }
+
+            // Ajustar largura das colunas (Auto-size)
+            for (int i = 0; i < colunas.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(out);
+            return out.toByteArray();
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Erro ao gerar arquivo Excel: " + e.getMessage());
+        }
+    }
+
+    // --- MÉTODOS AUXILIARES ---
+
+    private String tratarCampoCsv(String valor) {
+        if (valor == null) return "";
+        // Remove ponto e vírgula e quebras de linha para não quebrar o CSV
+        return valor.replace(";", ",").replace("\n", " ").trim();
+    }
+
+    private String formatarMoedaCsv(BigDecimal valor) {
+        if (valor == null) return "0,00";
+        return valor.toString().replace(".", ","); // Formato brasileiro 10,50
     }
 }

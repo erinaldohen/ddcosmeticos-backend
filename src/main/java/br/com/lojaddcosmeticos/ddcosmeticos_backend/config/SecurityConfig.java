@@ -61,6 +61,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/dashboard/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/fiscal/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/auditoria/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/fornecedores/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/usuarios/**").hasRole("ADMIN")
 
                         // 4. RESTO (Bloqueio padrão)

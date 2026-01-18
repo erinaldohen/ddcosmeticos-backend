@@ -16,27 +16,44 @@ import java.util.Optional;
 @Repository
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
-    // --- 1. MÉTODOS DE BUSCA BÁSICA ---
+    // --- MÉTODOS BÁSICOS ---
     boolean existsByCodigoBarras(String codigoBarras);
-
     Optional<Produto> findByCodigoBarras(String codigoBarras);
-
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
-
     List<Produto> findAllByAtivoTrue();
-
-    // Usado pelo EstoqueService para filtrar produtos pelo NCM
     List<Produto> findByNcm(String ncm);
 
-    // Busca Paginada (Para o Grid) - Garante apenas ATIVOS
-    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND " +
-            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
+    // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE) ---
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true " +
+            "AND (:termo IS NULL OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%')) " +
+            "AND (:marca IS NULL OR p.marca = :marca) " +
+            "AND (:categoria IS NULL OR p.categoria = :categoria) " +
+            "AND (:statusEstoque IS NULL " +
+            "     OR (:statusEstoque = 'baixo' AND p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 5)) " +
+            "     OR (:statusEstoque = 'ok' AND p.quantidadeEmEstoque > COALESCE(p.estoqueMinimo, 5))) " +
+            "AND (:semImagem = false OR (:semImagem = true AND (p.urlImagem IS NULL OR p.urlImagem = ''))) " +
+            "AND (:semNcm = false OR (:semNcm = true AND (p.ncm IS NULL OR p.ncm = '00000000' OR p.ncm = ''))) " +
+            "AND (:precoZero = false OR (:precoZero = true AND p.precoVenda = 0))")
+    Page<Produto> buscarComFiltros(
+            @Param("termo") String termo,
+            @Param("marca") String marca,
+            @Param("categoria") String categoria,
+            @Param("statusEstoque") String statusEstoque,
+            @Param("semImagem") Boolean semImagem,
+            @Param("semNcm") Boolean semNcm,
+            @Param("precoZero") Boolean precoZero,
+            Pageable pageable);
+
+    // --- MÉTODOS LEGADOS ---
+
+    // CORREÇÃO CRÍTICA: @Query explícita para evitar erro de criação de bean
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(@Param("termo") String termo, Pageable pageable);
 
-    // Método legado (mantido para compatibilidade)
+    // Sobrecarga (usada em testes ou métodos síncronos antigos)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
-    // --- 2. CATÁLOGO VISUAL ---
+    // --- OUTROS MÉTODOS DE NEGÓCIO ---
     @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (" +
             "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
             "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
@@ -47,7 +64,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
     List<Produto> findTop10ByOrderByPrecoVendaDesc();
 
-    // --- 3. DASHBOARD E RELATÓRIOS ---
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 0) AND p.ativo = true")
     Long contarProdutosAbaixoDoMinimo();
 
@@ -62,23 +78,16 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
     long contarProdutosSemFiscal();
 
-    // --- 4. MANUTENÇÃO / LIXEIRA (ATUALIZADO) ---
-
-    // Busca inclusive INATIVOS (Validar duplicidade e reativar) - SQL Nativo para garantir acesso
-    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean LIMIT 1", nativeQuery = true)
-    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
-
-    // LIXEIRA BLINDADA: Alterado para nativeQuery = true
-    // Isso ignora filtros do Hibernate e pega qualquer coisa que seja falso, zero ou nulo
+    // LIXEIRA
     @Query(value = "SELECT * FROM produto WHERE ativo <> 1 OR ativo IS NULL", nativeQuery = true)
     List<Produto> findAllLixeira();
 
-    // Reativar por ID
+    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean LIMIT 1", nativeQuery = true)
+    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
+
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);
-
-    // --- 5. INTELIGÊNCIA DE COMPRAS (BI) ---
 
     @Query("""
         SELECT DISTINCT p 
@@ -90,13 +99,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     """)
     List<Produto> findSugestaoCompraPorFornecedor(@Param("fornecedorId") Long fornecedorId);
 
-    // --- 6. INTELIGÊNCIA FISCAL (NOVO) ---
-
-    // Método antigo
     @Query(value = "SELECT p.ncm FROM Produto p WHERE p.descricao LIKE %:palavraChave% AND p.ncm <> '00000000' GROUP BY p.ncm ORDER BY COUNT(p.id) DESC LIMIT 1", nativeQuery = true)
     String findNcmMaisUsadoPorPalavra(@Param("palavraChave") String palavraChave);
 
-    // Método Otimizado (Robô IA)
     @Query(value = """
         SELECT ncm 
         FROM produto 
@@ -109,5 +114,4 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
         LIMIT 1
     """, nativeQuery = true)
     String findNcmInteligente(@Param("palavra") String palavra);
-
 }

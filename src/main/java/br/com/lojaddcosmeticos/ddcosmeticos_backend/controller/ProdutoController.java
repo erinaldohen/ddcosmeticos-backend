@@ -30,28 +30,42 @@ public class ProdutoController {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    // --- LEITURA ---
+    // --- LEITURA (MÉTODO UNIFICADO) ---
+
+    // Este método substitui o antigo 'listar' e o 'filtrar'.
+    // Ele atende tanto a busca simples quanto a busca avançada.
     @GetMapping
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
+            @RequestParam(required = false) String marca,
+            @RequestParam(required = false) String categoria,
+            @RequestParam(required = false) String statusEstoque,
+            @RequestParam(required = false) Boolean semImagem,
+            @RequestParam(required = false) Boolean semNcm,
+            @RequestParam(required = false) Boolean precoZero,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
+
         Pageable pageable = PageRequest.of(page, size, Sort.by("descricao"));
-        return ResponseEntity.ok(produtoService.listarResumo(termo, pageable));
+
+        return ResponseEntity.ok(produtoService.listarResumo(
+                termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, pageable
+        ));
     }
 
     @GetMapping("/lixeira")
     public ResponseEntity<List<Produto>> listarLixeira() {
-        // Retorna direto do banco. O filtro de "ativo=false" é feito no SQL acima.
-        return ResponseEntity.ok(produtoRepository.findAllLixeira());
+        return ResponseEntity.ok(produtoService.buscarLixeira());
     }
 
+    // Endpoint legado para manter compatibilidade com chamadas antigas que usam /resumo
     @GetMapping("/resumo")
     public ResponseEntity<Page<ProdutoListagemDTO>> listarResumo(
             @RequestParam(required = false) String termo,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-        return listar(termo, page, size);
+        // Redireciona para a lógica central passando nulos nos filtros novos
+        return listar(termo, null, null, null, false, false, false, page, size);
     }
 
     @GetMapping("/{id}")
@@ -70,6 +84,7 @@ public class ProdutoController {
     }
 
     // --- ESCRITA ---
+
     @PostMapping
     public ResponseEntity<ProdutoDTO> criar(@RequestBody ProdutoDTO dto) {
         return ResponseEntity.ok(produtoService.salvar(dto));
@@ -96,7 +111,6 @@ public class ProdutoController {
         return ResponseEntity.noContent().build();
     }
 
-    // Unificado: Mantemos apenas o PUT para reativar (compatível com o Service)
     @PutMapping("/{ean}/reativar")
     @Operation(summary = "Reativa um produto da lixeira")
     public ResponseEntity<Void> reativarProduto(@PathVariable String ean) {
@@ -109,7 +123,6 @@ public class ProdutoController {
     @PostMapping("/saneamento-fiscal")
     @Operation(summary = "Recalcula tributos e SALVA no banco (Reforma, CST, NCM)")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
-        // CORREÇÃO CRÍTICA: Chama o método que realmente processa e salva
         return ResponseEntity.ok(produtoService.saneamentoFiscal());
     }
 

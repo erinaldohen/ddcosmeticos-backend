@@ -1,8 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AjusteEstoqueDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EstoqueRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RetornoImportacaoXmlDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
@@ -107,7 +105,8 @@ public class EstoqueService {
                 "NF: " + (dados.getNumeroNotaFiscal() != null ? dados.getNumeroNotaFiscal() : "S/N"),
                 dados.getNumeroNotaFiscal(), null);
 
-        gerarFinanceiroEntrada(dados, custoUnitario, qtdEntrada.intValue());
+        // --- LINHA 108 ATUALIZADA ---
+        gerarFinanceiroBatch(dados, custoUnitario, qtdEntrada.intValue());
     }
 
     // --- LEITURA DE XML COM INTELIGÊNCIA ---
@@ -122,29 +121,41 @@ public class EstoqueService {
             Document doc = dBuilder.parse(is);
             doc.getDocumentElement().normalize();
 
-            // 1. FORNECEDOR
+            // 1. DADOS DA NOTA
+            String numeroNota = null;
+            NodeList nListIde = doc.getElementsByTagName("ide");
+            if (nListIde.getLength() > 0) {
+                numeroNota = getElementValue((Element) nListIde.item(0), "nNF");
+                retorno.setNumeroNota(numeroNota);
+            }
+
+            // 2. FORNECEDOR
             Fornecedor fornecedorDoXml = null;
             NodeList nListEmit = doc.getElementsByTagName("emit");
             if (nListEmit.getLength() > 0) {
                 Element emit = (Element) nListEmit.item(0);
-                String cnpj = getElementValue(emit, "CNPJ");
+                String cnpjRaw = getElementValue(emit, "CNPJ");
 
-                if (cnpj != null) {
-                    fornecedorDoXml = fornecedorService.buscarOuCriarRapido(cnpj);
+                if (cnpjRaw != null) {
+                    String cnpjLimpo = cnpjRaw.replaceAll("[^0-9]", "");
 
-                    // --- ATUALIZA DADOS COMPLETOS DO FORNECEDOR ---
+                    // Validação de Duplicidade
+                    Optional<Fornecedor> existente = fornecedorRepository.findByCnpj(cnpjLimpo);
+                    if (existente.isPresent() && numeroNota != null) {
+                        boolean duplicada = movimentoRepository.existsByDocumentoReferenciaAndFornecedorAndTipoMovimentoEstoque(
+                                numeroNota, existente.get(), TipoMovimentoEstoque.ENTRADA);
+
+                        if (duplicada) {
+                            throw new IllegalArgumentException("A Nota Fiscal " + numeroNota + " já foi importada anteriormente.");
+                        }
+                    }
+
+                    fornecedorDoXml = fornecedorService.buscarOuCriarRapido(cnpjLimpo);
                     atualizarDadosFornecedorPeloXml(emit, fornecedorDoXml);
-                    // ----------------------------------------------
-
                     retorno.setFornecedorId(fornecedorDoXml.getId());
                     retorno.setNomeFornecedor(fornecedorDoXml.getRazaoSocial());
+                    retorno.setRazaoSocialFornecedor(fornecedorDoXml.getRazaoSocial());
                 }
-            }
-
-            // 2. DADOS DA NOTA
-            NodeList nListIde = doc.getElementsByTagName("ide");
-            if (nListIde.getLength() > 0) {
-                retorno.setNumeroNota(getElementValue((Element) nListIde.item(0), "nNF"));
             }
 
             // 3. ITENS DA NOTA
@@ -169,52 +180,27 @@ public class EstoqueService {
                 item.setNcm(ncmXml);
                 item.setUnidade(getElementValue(prod, "uCom"));
 
-                // INTELIGÊNCIA DE MATCHING
+                // Lógica de Match
                 Produto produtoEncontrado = null;
                 StatusMatch status = StatusMatch.NOVO_PRODUTO;
                 String motivo = "Novo Produto";
 
-                // Camada 1: Vínculo
                 if (fornecedorDoXml != null) {
                     Optional<ProdutoFornecedor> vinculo = produtoFornecedorRepository
                             .findByFornecedorAndCodigoNoFornecedor(fornecedorDoXml, codXml);
                     if (vinculo.isPresent()) {
                         produtoEncontrado = vinculo.get().getProduto();
                         status = StatusMatch.MATCH_EXATO;
-                        motivo = "Vínculo Fornecedor Encontrado";
+                        motivo = "Vínculo Fornecedor";
                     }
                 }
 
-                // Camada 2: EAN
                 if (produtoEncontrado == null && isValidEAN(eanXml)) {
                     Optional<Produto> pEan = produtoRepository.findByCodigoBarras(eanXml);
                     if (pEan.isPresent()) {
                         produtoEncontrado = pEan.get();
                         status = StatusMatch.MATCH_EXATO;
-                        motivo = "Código de Barras (EAN)";
-                    }
-                }
-
-                // Camada 3: Similaridade
-                if (produtoEncontrado == null && ncmXml != null) {
-                    List<Produto> candidatos = produtoRepository.findByNcm(ncmXml);
-                    Produto melhorCandidato = null;
-                    double maiorScore = 0.0;
-
-                    for (Produto p : candidatos) {
-                        double score = calcularSimilaridade(descXml, p.getDescricao());
-                        if (score > 0.80 && score > maiorScore) {
-                            if (extrairNumeros(descXml).equals(extrairNumeros(p.getDescricao()))) {
-                                maiorScore = score;
-                                melhorCandidato = p;
-                            }
-                        }
-                    }
-
-                    if (melhorCandidato != null) {
-                        produtoEncontrado = melhorCandidato;
-                        status = StatusMatch.SUGESTAO_FORTE;
-                        motivo = "Nome Similar (" + Math.round(maiorScore * 100) + "%)";
+                        motivo = "EAN";
                     }
                 }
 
@@ -222,15 +208,6 @@ public class EstoqueService {
                     item.setIdProduto(produtoEncontrado.getId());
                     item.setNomeProdutoSugerido(produtoEncontrado.getDescricao());
                     item.setNovoProduto(false);
-
-                    BigDecimal precoAtual = produtoEncontrado.getPrecoCusto() != null ? produtoEncontrado.getPrecoCusto() : BigDecimal.ZERO;
-                    if (precoAtual.compareTo(BigDecimal.ZERO) > 0) {
-                        BigDecimal variacao = item.getPrecoCusto().subtract(precoAtual).abs().divide(precoAtual, 2, RoundingMode.HALF_UP);
-                        if (variacao.compareTo(new BigDecimal("0.50")) > 0) {
-                            item.setAlertaDivergencia(true);
-                            motivo += " (Alerta: Preço Varia > 50%)";
-                        }
-                    }
                 } else {
                     item.setNovoProduto(true);
                 }
@@ -239,97 +216,127 @@ public class EstoqueService {
                 item.setMotivoMatch(motivo);
                 retorno.getItensXml().add(item);
             }
+            return retorno;
 
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException("Erro ao ler XML: " + e.getMessage());
         }
-
-        return retorno;
     }
 
-    // --- MÉTODOS DE SUPORTE (INCLUINDO O QUE FALTAVA) ---
+    // --- ATUALIZAÇÃO PRINCIPAL (LOTE) ---
+    @Transactional
+    public void processarEntradaEmLote(EntradaEstoqueDTO dto) {
+        Fornecedor fornecedor = fornecedorRepository.findById(dto.getFornecedorId())
+                .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado"));
 
-    // MÉTODO NOVO: Atualiza dados do fornecedor baseado nas tags do XML
-    private void atualizarDadosFornecedorPeloXml(Element emit, Fornecedor fornecedor) {
-        try {
-            String xNome = getElementValue(emit, "xNome");
-            String xFant = getElementValue(emit, "xFant");
-            String ie = getElementValue(emit, "IE");
+        for (br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemEntradaDTO itemDto : dto.getItens()) {
+            Produto produto;
 
-            if (fornecedor.getRazaoSocial() == null || fornecedor.getRazaoSocial().contains("Fornecedor") || fornecedor.getRazaoSocial().isEmpty()) {
-                fornecedor.setRazaoSocial(xNome);
-            }
-            if (fornecedor.getNomeFantasia() == null || fornecedor.getNomeFantasia().isEmpty()) {
-                fornecedor.setNomeFantasia(xFant != null ? xFant : xNome);
-            }
-            if (fornecedor.getInscricaoEstadual() == null || fornecedor.getInscricaoEstadual().isEmpty()) {
-                fornecedor.setInscricaoEstadual(ie);
-            }
-
-            NodeList nListEnder = emit.getElementsByTagName("enderEmit");
-            if (nListEnder.getLength() > 0) {
-                Element ender = (Element) nListEnder.item(0);
-                if (fornecedor.getCep() == null) fornecedor.setCep(getElementValue(ender, "CEP"));
-                if (fornecedor.getLogradouro() == null) fornecedor.setLogradouro(getElementValue(ender, "xLgr"));
-                if (fornecedor.getNumero() == null) fornecedor.setNumero(getElementValue(ender, "nro"));
-                if (fornecedor.getBairro() == null) fornecedor.setBairro(getElementValue(ender, "xBairro"));
-                if (fornecedor.getCidade() == null) fornecedor.setCidade(getElementValue(ender, "xMun"));
-                if (fornecedor.getUf() == null) fornecedor.setUf(getElementValue(ender, "UF"));
-            }
-
-            fornecedorRepository.save(fornecedor);
-
-        } catch (Exception e) {
-            System.err.println("Erro ao atualizar dados do fornecedor pelo XML: " + e.getMessage());
-        }
-    }
-
-    private void gerarFinanceiroEntrada(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {
-        if (dados.getFormaPagamento() == null) return;
-
-        BigDecimal valorTotal = custoUnitario.multiply(new BigDecimal(qtd));
-
-        Fornecedor fornecedor = null;
-        if (dados.getFornecedorId() != null) {
-            fornecedor = fornecedorRepository.findById(dados.getFornecedorId()).orElse(null);
-        } else if (dados.getFornecedorCnpj() != null) {
-            fornecedor = fornecedorRepository.findByCnpj(dados.getFornecedorCnpj()).orElse(null);
-        }
-
-        int parcelas = dados.getQuantidadeParcelas() != null && dados.getQuantidadeParcelas() > 0 ? dados.getQuantidadeParcelas() : 1;
-        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
-
-        for (int i = 1; i <= parcelas; i++) {
-            ContaPagar conta = new ContaPagar();
-            conta.setFornecedor(fornecedor);
-            conta.setValorTotal(valorParcela);
-            conta.setCategoria("COMPRA MERCADORIA");
-            conta.setDescricao("Compra ref. " + (dados.getNumeroNotaFiscal() != null ? dados.getNumeroNotaFiscal() : "Estoque") + " - Parc " + i + "/" + parcelas);
-            conta.setDataEmissao(LocalDate.now());
-
-            if (dados.getFormaPagamento() == FormaDePagamento.DINHEIRO ||
-                    dados.getFormaPagamento() == FormaDePagamento.PIX ||
-                    dados.getFormaPagamento() == FormaDePagamento.DEBITO) {
-                conta.setDataVencimento(LocalDate.now());
-                conta.setDataPagamento(LocalDate.now());
-                conta.setStatus(StatusConta.PAGO);
+            if (itemDto.getProdutoId() != null) {
+                // Produto Existente
+                produto = produtoRepository.findById(itemDto.getProdutoId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Produto ID " + itemDto.getProdutoId() + " não encontrado."));
             } else {
-                LocalDate vencto = dados.getDataVencimentoBoleto() != null ?
-                        dados.getDataVencimentoBoleto() :
-                        LocalDate.now().plusDays(30L * i);
-                conta.setDataVencimento(vencto);
-                conta.setStatus(StatusConta.PENDENTE);
+                Optional<Produto> existente = produtoRepository.findByCodigoBarras(itemDto.getCodigoBarras());
+                if (existente.isPresent()) {
+                    produto = existente.get();
+                } else {
+                    // --- CRIAÇÃO DE PRODUTO COM CAMPOS DO FRONTEND ---
+                    produto = new Produto();
+                    produto.setDescricao(itemDto.getDescricao() != null ? itemDto.getDescricao().toUpperCase() : "PRODUTO NOVO");
+                    produto.setCodigoBarras(itemDto.getCodigoBarras());
+                    produto.setNcm(itemDto.getNcm());
+                    produto.setUnidade(itemDto.getUnidade());
+
+                    // Marca, Categoria e Subcategoria (vindos da edição no Grid)
+                    produto.setMarca(itemDto.getMarca() != null && !itemDto.getMarca().isBlank() ? itemDto.getMarca().toUpperCase() : "GENERICA");
+                    produto.setCategoria(itemDto.getCategoria() != null && !itemDto.getCategoria().isBlank() ? itemDto.getCategoria().toUpperCase() : "GERAL");
+                    produto.setSubcategoria(itemDto.getSubcategoria() != null && !itemDto.getSubcategoria().isBlank() ? itemDto.getSubcategoria().toUpperCase() : produto.getCategoria());
+
+                    // Origem: Permite seleção (0 ou 2) ou padroniza 0
+                    produto.setOrigem(itemDto.getOrigem() != null && !itemDto.getOrigem().isBlank() ? itemDto.getOrigem() : "0");
+
+                    // CST: Permite seleção (ex: 500 para ST) ou padroniza 102
+                    produto.setCst(itemDto.getCst() != null && !itemDto.getCst().isBlank() ? itemDto.getCst() : "102");
+
+                    // Preços
+                    produto.setPrecoCusto(itemDto.getValorUnitario());
+                    produto.setPrecoMedioPonderado(itemDto.getValorUnitario());
+                    produto.setPrecoVenda(itemDto.getValorUnitario().multiply(new BigDecimal("1.5"))); // Margem 50% inicial
+
+                    // Defaults
+                    produto.setAtivo(true);
+                    produto.setQuantidadeEmEstoque(0);
+                    produto.setEstoqueFiscal(0);
+                    produto.setEstoqueNaoFiscal(0);
+
+                    produto = produtoRepository.save(produto);
+                    salvarVinculoSeNaoExistir(fornecedor.getId(), produto, itemDto.getCodigoBarras());
+                }
             }
-            contaPagarRepository.save(conta);
+
+            // Atualização de Saldo
+            BigDecimal qtd = itemDto.getQuantidade();
+            BigDecimal custo = itemDto.getValorUnitario();
+            String doc = dto.getNumeroDocumento();
+
+            BigDecimal novoPreco = calcularNovoPrecoMedio(produto, qtd, custo);
+            produto.setPrecoCusto(novoPreco);
+            produto.setPrecoMedioPonderado(novoPreco);
+
+            if (doc != null && !doc.isBlank() && !doc.equals("S/N")) {
+                produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtd.intValue());
+            } else {
+                produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + qtd.intValue());
+            }
+
+            produto.atualizarSaldoTotal();
+            produtoRepository.save(produto);
+
+            registrarMovimentacao(produto, qtd, custo, TipoMovimentoEstoque.ENTRADA,
+                    MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL, "Entrada via Importação", doc, fornecedor);
+        }
+
+        if (dto.getFormaPagamento() != null) {
+            // CORRIGIDO: Removida a vírgula extra que havia aqui
+            gerarFinanceiroBatch(dto, fornecedor);
         }
     }
+
+    private Produto criarProdutoAutomatico(EstoqueRequestDTO dados) {
+        Produto novo = new Produto();
+        novo.setCodigoBarras(dados.getCodigoBarras());
+        novo.setDescricao(dados.getDescricao() != null ? dados.getDescricao().toUpperCase() : "PRODUTO NOVO");
+        novo.setNcm(dados.getNcm() != null ? dados.getNcm() : "00000000");
+        novo.setUnidade(dados.getUnidade() != null ? dados.getUnidade() : "UN");
+
+        // Dados Padrão para Entrada Unitária Manual
+        novo.setMarca("GENERICA");
+        novo.setCategoria("GERAL");
+        novo.setOrigem("0");
+        novo.setCst("102");
+
+        novo.setPrecoCusto(dados.getPrecoCusto());
+        novo.setPrecoMedioPonderado(dados.getPrecoCusto());
+        novo.setPrecoVenda(dados.getPrecoCusto().multiply(new BigDecimal("1.5")));
+        novo.setAtivo(true);
+        novo.setQuantidadeEmEstoque(0);
+        novo.setEstoqueFiscal(0);
+        novo.setEstoqueNaoFiscal(0);
+
+        return produtoRepository.save(novo);
+    }
+
+    // --- MÉTODOS AUXILIARES ---
 
     private void salvarVinculoSeNaoExistir(Long fornecedorId, Produto produto, String codigoFornecedor) {
+        if (fornecedorId == null) return;
         Fornecedor fornecedor = fornecedorRepository.findById(fornecedorId).orElse(null);
         if (fornecedor != null) {
-            boolean existe = produtoFornecedorRepository
-                    .existsByFornecedorAndCodigoNoFornecedor(fornecedor, codigoFornecedor);
+            boolean existe = produtoFornecedorRepository.existsByFornecedorAndCodigoNoFornecedor(fornecedor, codigoFornecedor);
             if (!existe) {
                 ProdutoFornecedor vinculo = new ProdutoFornecedor();
                 vinculo.setFornecedor(fornecedor);
@@ -338,73 +345,6 @@ public class EstoqueService {
                 produtoFornecedorRepository.save(vinculo);
             }
         }
-    }
-
-    private Produto criarProdutoAutomatico(EstoqueRequestDTO dados) {
-        Produto novo = new Produto();
-        novo.setCodigoBarras(dados.getCodigoBarras());
-        novo.setDescricao(dados.getDescricao() != null ? dados.getDescricao().toUpperCase() : "PRODUTO NOVO " + dados.getCodigoBarras());
-        novo.setNcm(dados.getNcm() != null ? dados.getNcm() : "00000000");
-        novo.setUnidade(dados.getUnidade() != null ? dados.getUnidade() : "UN");
-        novo.setOrigem("0");
-        novo.setCst("102");
-        novo.setPrecoCusto(dados.getPrecoCusto());
-        novo.setPrecoMedioPonderado(dados.getPrecoCusto());
-        novo.setPrecoVenda(dados.getPrecoCusto().multiply(new BigDecimal("1.5")));
-        novo.setAtivo(true);
-        novo.setMarca("GENERICA");
-        novo.setCategoria("GERAL");
-        novo.setEstoqueMinimo(5);
-        novo.setQuantidadeEmEstoque(0);
-        novo.setEstoqueFiscal(0);
-        novo.setEstoqueNaoFiscal(0);
-        return produtoRepository.save(novo);
-    }
-
-    private double calcularSimilaridade(String s1, String s2) {
-        String n1 = normalizarTexto(s1);
-        String n2 = normalizarTexto(s2);
-
-        String longer = n1, shorter = n2;
-        if (n1.length() < n2.length()) { longer = n2; shorter = n1; }
-        int longerLength = longer.length();
-        if (longerLength == 0) return 1.0;
-
-        int[] costs = new int[shorter.length() + 1];
-        for (int i = 0; i <= shorter.length(); i++) costs[i] = i;
-        for (int i = 1; i <= longer.length(); i++) {
-            costs[0] = i;
-            int nw = i - 1;
-            for (int j = 1; j <= shorter.length(); j++) {
-                int cj = Math.min(1 + Math.min(costs[j], costs[j - 1]),
-                        longer.charAt(i - 1) == shorter.charAt(j - 1) ? nw : nw + 1);
-                nw = costs[j];
-                costs[j] = cj;
-            }
-        }
-        return (longerLength - costs[shorter.length()]) / (double) longerLength;
-    }
-
-    private String normalizarTexto(String texto) {
-        if (texto == null) return "";
-        return texto.toUpperCase().replaceAll("[^A-Z0-9]", "");
-    }
-
-    private String extrairNumeros(String s) {
-        if (s == null) return "";
-        return s.replaceAll("[^0-9]", "");
-    }
-
-    private boolean isValidEAN(String ean) {
-        return ean != null && !ean.equals("SEM GTIN") && !ean.isEmpty() && ean.length() > 5;
-    }
-
-    private String getElementValue(Element parent, String tagName) {
-        NodeList list = parent.getElementsByTagName(tagName);
-        if (list != null && list.getLength() > 0) {
-            return list.item(0).getTextContent();
-        }
-        return null;
     }
 
     private BigDecimal calcularNovoPrecoMedio(Produto produto, BigDecimal qtdEntrada, BigDecimal custoNovo) {
@@ -431,29 +371,140 @@ public class EstoqueService {
         movimentoRepository.save(mov);
     }
 
+    private String getElementValue(Element parent, String tagName) {
+        NodeList list = parent.getElementsByTagName(tagName);
+        if (list != null && list.getLength() > 0) return list.item(0).getTextContent();
+        return null;
+    }
+
+    private void atualizarDadosFornecedorPeloXml(Element emit, Fornecedor fornecedor) {
+        try {
+            String xNome = getElementValue(emit, "xNome");
+            String xFant = getElementValue(emit, "xFant");
+            String ie = getElementValue(emit, "IE");
+
+            if (fornecedor.getRazaoSocial() == null || fornecedor.getRazaoSocial().isEmpty() || fornecedor.getRazaoSocial().matches(".*\\d{5,}.*")) {
+                if (xNome != null) fornecedor.setRazaoSocial(xNome.toUpperCase());
+            }
+            if (fornecedor.getNomeFantasia() == null || fornecedor.getNomeFantasia().isEmpty()) {
+                fornecedor.setNomeFantasia(xFant != null ? xFant.toUpperCase() : (xNome != null ? xNome.toUpperCase() : ""));
+            }
+            if (fornecedor.getInscricaoEstadual() == null || fornecedor.getInscricaoEstadual().isEmpty()) {
+                fornecedor.setInscricaoEstadual(ie);
+            }
+            fornecedorRepository.save(fornecedor);
+        } catch (Exception e) {
+            System.err.println("Erro ao atualizar dados fornecedor: " + e.getMessage());
+        }
+    }
+
+    private boolean isValidEAN(String ean) {
+        return ean != null && !ean.equals("SEM GTIN") && ean.length() > 5;
+    }
+
+    // --- MÉTODOS FINANCEIROS (COM SOBRECARGA PARA ATENDER OS DOIS CASOS) ---
+
+    // 1. Para LOTE (EntradaEstoqueDTO) - Usado em processarEntradaEmLote
+    private void gerarFinanceiroBatch(EntradaEstoqueDTO dto, Fornecedor fornecedor) {
+        BigDecimal valorTotalNota = dto.getItens().stream()
+                .map(item -> item.getValorUnitario().multiply(item.getQuantidade()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (valorTotalNota.compareTo(BigDecimal.ZERO) <= 0) return;
+
+        int parcelas = (dto.getQuantidadeParcelas() != null && dto.getQuantidadeParcelas() > 0) ? dto.getQuantidadeParcelas() : 1;
+        BigDecimal valorParcela = valorTotalNota.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
+        LocalDate dataBase = dto.getDataVencimento() != null ? dto.getDataVencimento() : LocalDate.now();
+
+        for (int i = 0; i < parcelas; i++) {
+            criarContaPagar(fornecedor, valorParcela, dto.getNumeroDocumento(), i + 1, parcelas, dataBase, dto.getFormaPagamento(), i);
+        }
+    }
+
+    // 2. Para UNITÁRIO (EstoqueRequestDTO) - Substitui o antigo gerarFinanceiroEntrada
+    private void gerarFinanceiroBatch(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {
+        if (dados.getFormaPagamento() == null) return;
+
+        BigDecimal valorTotal = custoUnitario.multiply(new BigDecimal(qtd));
+        Fornecedor fornecedor = null;
+
+        if (dados.getFornecedorId() != null) {
+            fornecedor = fornecedorRepository.findById(dados.getFornecedorId()).orElse(null);
+        } else if (dados.getFornecedorCnpj() != null) {
+            fornecedor = fornecedorRepository.findByCnpj(dados.getFornecedorCnpj()).orElse(null);
+        }
+
+        if (fornecedor == null) return;
+
+        int parcelas = (dados.getQuantidadeParcelas() != null && dados.getQuantidadeParcelas() > 0) ? dados.getQuantidadeParcelas() : 1;
+        BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
+
+        LocalDate dataBase = dados.getDataVencimentoBoleto() != null ? dados.getDataVencimentoBoleto() : LocalDate.now();
+
+        for (int i = 0; i < parcelas; i++) {
+            criarContaPagar(fornecedor, valorParcela, dados.getNumeroNotaFiscal(), i + 1, parcelas, dataBase, dados.getFormaPagamento(), i);
+        }
+    }
+
+    // Método auxiliar para evitar repetição na criação da conta
+    private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) {
+        ContaPagar conta = new ContaPagar();
+        conta.setFornecedor(fornecedor);
+        conta.setValorTotal(valor);
+        conta.setCategoria("COMPRA MERCADORIA");
+        conta.setDescricao("Compra NF: " + (doc != null ? doc : "S/N") + " - Parc " + parcelaNum + "/" + totalParcelas);
+        conta.setDataEmissao(LocalDate.now());
+
+        if (formaPagto == FormaDePagamento.DINHEIRO ||
+                formaPagto == FormaDePagamento.PIX ||
+                formaPagto == FormaDePagamento.DEBITO) {
+            conta.setDataVencimento(LocalDate.now());
+            conta.setDataPagamento(LocalDate.now());
+            conta.setStatus(StatusConta.PAGO);
+        } else {
+            conta.setDataVencimento(dataBase.plusMonths(incrementoMes));
+            conta.setStatus(StatusConta.PENDENTE);
+        }
+        contaPagarRepository.save(conta);
+    }
+    // --- SAÍDA DE VENDA (Chamado pelo VendaService) ---
     @Transactional
     public void registrarSaidaVenda(Produto produto, Integer quantidade) {
+        // Lógica: Tenta baixar do Estoque Fiscal primeiro (ou ajuste conforme sua preferência fiscal)
         if (produto.getEstoqueFiscal() >= quantidade) {
             produto.setEstoqueFiscal(produto.getEstoqueFiscal() - quantidade);
         } else {
+            // Se não tem fiscal suficiente, zera o fiscal e tira o resto do não fiscal
             int restante = quantidade - produto.getEstoqueFiscal();
             produto.setEstoqueFiscal(0);
             produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() - restante);
         }
+
         produto.atualizarSaldoTotal();
         produtoRepository.save(produto);
-        registrarMovimentacao(produto, new BigDecimal(quantidade), produto.getPrecoMedioPonderado(), TipoMovimentoEstoque.SAIDA, MotivoMovimentacaoDeEstoque.VENDA, null, null, null);
+
+        registrarMovimentacao(produto, new BigDecimal(quantidade),
+                produto.getPrecoMedioPonderado(),
+                TipoMovimentoEstoque.SAIDA,
+                MotivoMovimentacaoDeEstoque.VENDA,
+                "Venda PDV", null, null);
     }
 
+    // --- AJUSTE MANUAL (Chamado pelo Controller para Inventário) ---
     @Transactional
     public void realizarAjusteManual(AjusteEstoqueDTO dados) {
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
+
         int novaQuantidade = dados.getQuantidade().intValue();
         int diferenca = novaQuantidade - produto.getQuantidadeEmEstoque();
+
+        // Se a diferença for positiva, é entrada de ajuste. Se negativa, é saída.
         if (diferenca > 0) {
+            // Entrada por ajuste (Joga no Não Fiscal por padrão ou crie lógica)
             produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + diferenca);
         } else {
+            // Saída por ajuste
             int qtdBaixa = Math.abs(diferenca);
             if (produto.getEstoqueNaoFiscal() >= qtdBaixa) {
                 produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() - qtdBaixa);
@@ -463,9 +514,12 @@ public class EstoqueService {
                 produto.setEstoqueFiscal(produto.getEstoqueFiscal() - resta);
             }
         }
+
         produto.atualizarSaldoTotal();
         produtoRepository.save(produto);
-        registrarMovimentacao(produto, new BigDecimal(Math.abs(diferenca)), produto.getPrecoMedioPonderado(),
+
+        registrarMovimentacao(produto, new BigDecimal(Math.abs(diferenca)),
+                produto.getPrecoMedioPonderado(),
                 diferenca > 0 ? TipoMovimentoEstoque.ENTRADA : TipoMovimentoEstoque.SAIDA,
                 diferenca > 0 ? MotivoMovimentacaoDeEstoque.AJUSTE_INVENTARIO_ENTRADA : MotivoMovimentacaoDeEstoque.AJUSTE_INVENTARIO_SAIDA,
                 dados.getObservacao(), null, null);

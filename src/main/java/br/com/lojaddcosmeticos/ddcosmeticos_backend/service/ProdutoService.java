@@ -5,6 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -29,6 +30,7 @@ public class ProdutoService {
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired private AuditoriaService auditoriaService;
+    @Autowired private CosmosService cosmosService;
 
     // --- IMPORTAÇÃO CSV ---
     public Map<String, Object> importarProdutos(MultipartFile file) {
@@ -306,8 +308,14 @@ public class ProdutoService {
     @Transactional(readOnly = true)
     public List<HistoricoProdutoDTO> buscarHistorico(Long id) { return auditoriaService.buscarHistoricoDoProduto(id); }
 
+    // [CORREÇÃO] Implementando a conversão DTO -> Entity
     @Transactional
-    public ProdutoDTO salvar(ProdutoDTO dto) { return new ProdutoDTO(produtoRepository.save(new Produto())); }
+    public ProdutoDTO salvar(ProdutoDTO dto) {
+        Produto produto = new Produto();
+        atualizarDados(produto, dto); // Preenche os dados
+        Produto salvo = salvar(produto); // Salva com regras fiscais
+        return new ProdutoDTO(salvo);
+    }
 
     @Transactional
     public Produto salvar(Produto produto) {
@@ -315,8 +323,36 @@ public class ProdutoService {
         return produtoRepository.save(produto);
     }
 
+    // [CORREÇÃO] Corrigindo a atualização também
     @Transactional
-    public Produto atualizar(Long id, ProdutoDTO dto) { return produtoRepository.save(buscarPorId(id)); }
+    public Produto atualizar(Long id, ProdutoDTO dto) {
+        Produto produto = buscarPorId(id);
+        atualizarDados(produto, dto);
+        return salvar(produto);
+    }
+
+    // Método auxiliar para mapear DTO -> Produto (Manual para Record)
+    private void atualizarDados(Produto p, ProdutoDTO d) {
+        p.setDescricao(d.descricao());
+        p.setCodigoBarras(d.codigoBarras());
+        p.setMarca(d.marca());
+        p.setCategoria(d.categoria());
+        p.setSubcategoria(d.subcategoria());
+        p.setUnidade(d.unidade());
+        p.setNcm(d.ncm());
+        p.setCest(d.cest());
+        p.setCst(d.cst());
+        p.setOrigem(d.origem());
+        p.setMonofasico(d.monofasico() != null ? d.monofasico() : false);
+        p.setClassificacaoReforma(d.classificacaoReforma());
+        p.setImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
+        p.setPrecoVenda(d.precoVenda());
+        p.setPrecoCusto(d.precoCusto());
+        p.setEstoqueMinimo(d.estoqueMinimo());
+        p.setDiasParaReposicao(d.diasParaReposicao());
+        p.setUrlImagem(d.urlImagem());
+        p.setAtivo(d.ativo());
+    }
 
     @Transactional
     public void definirPrecoVenda(Long id, BigDecimal p) { Produto prod = buscarPorId(id); prod.setPrecoVenda(p); produtoRepository.save(prod); }
@@ -382,7 +418,7 @@ public class ProdutoService {
         return resultado;
     }
 
-    // --- EXPORTAÇÃO CSV ---
+    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO CSV ---
     public byte[] gerarRelatorioCsv() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         StringBuilder sb = new StringBuilder();
@@ -402,7 +438,7 @@ public class ProdutoService {
         return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
     }
 
-    // --- EXPORTAÇÃO EXCEL ---
+    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO EXCEL (XLSX) ---
     public byte[] gerarRelatorioExcel() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         try (Workbook workbook = new XSSFWorkbook();
@@ -446,28 +482,46 @@ public class ProdutoService {
     private String tratarCampoCsv(String valor) { return valor == null ? "" : valor.replace(";", ",").replace("\n", " ").trim(); }
     private String formatarMoedaCsv(BigDecimal valor) { return valor == null ? "0,00" : valor.toString().replace(".", ","); }
 
-    // --- CORREÇÃO DO MÉTODO QUE GERAVA ERRO 500 ---
-    // Agora retorna NULL em vez de lançar exceção quando não encontra.
     public ProdutoDTO buscarPorEanOuExterno(String ean) {
-        // 1. Busca Local
+        // 1. Tenta buscar no banco local
         Optional<Produto> produtoLocal = produtoRepository.findByCodigoBarras(ean);
         if (produtoLocal.isPresent()) {
             return new ProdutoDTO(produtoLocal.get());
         }
 
-        // 2. Busca Externa (Se implementada)
+        // 2. Se não achou local, TENTA API EXTERNA
         try {
-            // TODO: Aqui entraria sua chamada para BluesoftService
-            // Ex: var dados = bluesoftService.consultar(ean);
-            // if (dados != null) return convertToDto(dados);
+            Optional<ProdutoExternoDTO> dadosExternos = cosmosService.consultarEan(ean);
 
-            System.out.println("Buscando EAN externo: " + ean + " (API não ativa neste método)");
+            if (dadosExternos.isPresent()) {
+                ProdutoExternoDTO ext = dadosExternos.get();
+                return new ProdutoDTO(
+                        null,
+                        ext.getNome(),
+                        ext.getEan(),
+                        ext.getMarca(),
+                        ext.getCategoria(),
+                        null,
+                        "UN",
+                        ext.getNcm(),
+                        ext.getCest(),
+                        "102",
+                        "0",
+                        ext.getMonofasico(),
+                        TipoTributacaoReforma.PADRAO,
+                        false,
+                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0),
+                        BigDecimal.ZERO,
+                        5,
+                        0,
+                        ext.getUrlImagem(),
+                        true
+                );
+            }
         } catch (Exception e) {
-            System.out.println("Erro na consulta externa: " + e.getMessage());
+            log.error("Erro ao consultar API externa: {}", e.getMessage());
         }
 
-        // 3. Retorna NULL em vez de lançar erro 500
-        // O controller deve tratar esse null como 200 OK vazio ou 404 limpo.
         return null;
     }
 }

@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook; // Necessário para Excel
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -238,20 +238,13 @@ public class ProdutoService {
 
     private String getVal(String[] dados, Integer idx) { return (idx == null || idx < 0 || idx >= dados.length) ? "" : dados[idx].replace("\"", "").trim(); }
 
-    // --- CORREÇÃO DE ESCALA DECIMAL ---
     private BigDecimal lerDecimal(String val) {
         if (val == null || val.trim().isEmpty()) return BigDecimal.ZERO;
         try {
             val = val.replace("R$", "").trim();
-
-            // LÓGICA INTELIGENTE:
-            // Se tem vírgula, é formato PT-BR (1.000,00) -> Remove ponto de milhar, troca vírgula por ponto
             if (val.contains(",")) {
                 val = val.replace(".", "").replace(",", ".");
             }
-            // Se NÃO tem vírgula, mas tem ponto, assume que é decimal (1000.00) ou sem separador (1000)
-            // Nesse caso, NÃO removemos o ponto, pois ele é o separador decimal.
-
             return new BigDecimal(val);
         } catch (Exception e) {
             return BigDecimal.ZERO;
@@ -370,7 +363,6 @@ public class ProdutoService {
     @Transactional
     public Map<String, Object> corrigirNcmsEmMassa() {
         List<Produto> todos = produtoRepository.findAll();
-        List<String> logs = new ArrayList<>();
         int corrigidos = 0;
 
         for (Produto p : todos) {
@@ -390,14 +382,11 @@ public class ProdutoService {
         return resultado;
     }
 
-    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO CSV ---
+    // --- EXPORTAÇÃO CSV ---
     public byte[] gerarRelatorioCsv() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         StringBuilder sb = new StringBuilder();
-
-        // Cabeçalho (Padrão Excel Brasil usa ponto e vírgula)
         sb.append("ID;EAN;Descrição;Marca;Categoria;NCM;Preço Custo;Preço Venda;Estoque;Estoque Mínimo\n");
-
         for (Produto p : produtos) {
             sb.append(p.getId()).append(";")
                     .append(tratarCampoCsv(p.getCodigoBarras())).append(";")
@@ -410,21 +399,15 @@ public class ProdutoService {
                     .append(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0).append(";")
                     .append(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0).append("\n");
         }
-
-        // Retorna em ISO-8859-1 para garantir acentuação correta no Excel do Windows
         return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
     }
 
-    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO EXCEL (XLSX) ---
+    // --- EXPORTAÇÃO EXCEL ---
     public byte[] gerarRelatorioExcel() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
-
         try (Workbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
             Sheet sheet = workbook.createSheet("Estoque");
-
-            // Estilo do Cabeçalho
             CellStyle headerStyle = workbook.createCellStyle();
             Font headerFont = workbook.createFont();
             headerFont.setBold(true);
@@ -432,60 +415,59 @@ public class ProdutoService {
             headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
             headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
-            // Criar Cabeçalho
             Row headerRow = sheet.createRow(0);
             String[] colunas = {"ID", "EAN", "Descrição", "Marca", "Categoria", "NCM", "Preço Custo", "Preço Venda", "Estoque", "Mínimo"};
-
             for (int i = 0; i < colunas.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(colunas[i]);
                 cell.setCellStyle(headerStyle);
             }
 
-            // Preencher Dados
             int rowIdx = 1;
             for (Produto p : produtos) {
                 Row row = sheet.createRow(rowIdx++);
-
                 row.createCell(0).setCellValue(p.getId());
                 row.createCell(1).setCellValue(p.getCodigoBarras() != null ? p.getCodigoBarras() : "");
                 row.createCell(2).setCellValue(p.getDescricao() != null ? p.getDescricao() : "");
                 row.createCell(3).setCellValue(p.getMarca() != null ? p.getMarca() : "");
                 row.createCell(4).setCellValue(p.getCategoria() != null ? p.getCategoria() : "");
                 row.createCell(5).setCellValue(p.getNcm() != null ? p.getNcm() : "");
-
-                // Valores Monetários (Double para o Excel entender como número)
                 row.createCell(6).setCellValue(p.getPrecoCusto() != null ? p.getPrecoCusto().doubleValue() : 0.0);
                 row.createCell(7).setCellValue(p.getPrecoVenda() != null ? p.getPrecoVenda().doubleValue() : 0.0);
-
                 row.createCell(8).setCellValue(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0);
                 row.createCell(9).setCellValue(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0);
             }
-
-            // Ajustar largura das colunas (Auto-size)
-            for (int i = 0; i < colunas.length; i++) {
-                sheet.autoSizeColumn(i);
-            }
-
+            for (int i = 0; i < colunas.length; i++) { sheet.autoSizeColumn(i); }
             workbook.write(out);
             return out.toByteArray();
+        } catch (IOException e) { e.printStackTrace(); throw new RuntimeException("Erro ao gerar arquivo Excel: " + e.getMessage()); }
+    }
 
-        } catch (IOException e) {
-            e.printStackTrace();
-            throw new RuntimeException("Erro ao gerar arquivo Excel: " + e.getMessage());
+    private String tratarCampoCsv(String valor) { return valor == null ? "" : valor.replace(";", ",").replace("\n", " ").trim(); }
+    private String formatarMoedaCsv(BigDecimal valor) { return valor == null ? "0,00" : valor.toString().replace(".", ","); }
+
+    // --- CORREÇÃO DO MÉTODO QUE GERAVA ERRO 500 ---
+    // Agora retorna NULL em vez de lançar exceção quando não encontra.
+    public ProdutoDTO buscarPorEanOuExterno(String ean) {
+        // 1. Busca Local
+        Optional<Produto> produtoLocal = produtoRepository.findByCodigoBarras(ean);
+        if (produtoLocal.isPresent()) {
+            return new ProdutoDTO(produtoLocal.get());
         }
-    }
 
-    // --- MÉTODOS AUXILIARES ---
+        // 2. Busca Externa (Se implementada)
+        try {
+            // TODO: Aqui entraria sua chamada para BluesoftService
+            // Ex: var dados = bluesoftService.consultar(ean);
+            // if (dados != null) return convertToDto(dados);
 
-    private String tratarCampoCsv(String valor) {
-        if (valor == null) return "";
-        // Remove ponto e vírgula e quebras de linha para não quebrar o CSV
-        return valor.replace(";", ",").replace("\n", " ").trim();
-    }
+            System.out.println("Buscando EAN externo: " + ean + " (API não ativa neste método)");
+        } catch (Exception e) {
+            System.out.println("Erro na consulta externa: " + e.getMessage());
+        }
 
-    private String formatarMoedaCsv(BigDecimal valor) {
-        if (valor == null) return "0,00";
-        return valor.toString().replace(".", ","); // Formato brasileiro 10,50
+        // 3. Retorna NULL em vez de lançar erro 500
+        // O controller deve tratar esse null como 200 OK vazio ou 404 limpo.
+        return null;
     }
 }

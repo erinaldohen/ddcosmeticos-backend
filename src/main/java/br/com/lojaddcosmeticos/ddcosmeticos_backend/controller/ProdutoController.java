@@ -159,4 +159,11 @@ public class ProdutoController {
                 .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .body(dados);
     }
+
+    @GetMapping("/ean/{ean}")
+    public ResponseEntity<ProdutoDTO> buscarPorEan(@PathVariable String ean) {
+        // Chama um método específico no service que tenta DB -> Externo
+        ProdutoDTO produto = produtoService.buscarPorEanOuExterno(ean);
+        return ResponseEntity.ok(produto);
+    }
 }

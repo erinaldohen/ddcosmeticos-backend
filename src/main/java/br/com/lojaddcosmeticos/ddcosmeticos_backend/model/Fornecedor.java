@@ -9,7 +9,6 @@ import lombok.ToString;
 import org.hibernate.envers.Audited;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
 @Data
@@ -51,17 +50,15 @@ public class Fornecedor {
     @Column(updatable = false)
     private LocalDateTime dataCadastro = LocalDateTime.now();
 
-    // --- PROTEÇÃO CONTRA LOOP INFINITO (ERRO 500) ---
-
     @OneToMany(mappedBy = "fornecedor", fetch = FetchType.LAZY)
-    @JsonIgnore // Essencial: Ignora a lista de produtos ao buscar o fornecedor
-    @ToString.Exclude // Essencial: Evita loop no Lombok
-    @EqualsAndHashCode.Exclude
-    private List<Produto> produtos = new ArrayList<>();
-
-    @OneToMany(mappedBy = "fornecedor", fetch = FetchType.LAZY)
-    @JsonIgnore // Essencial: Ignora a lista de pedidos de compra
+    @JsonIgnore
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
-    private List<PedidoCompra> pedidosCompra = new ArrayList<>();
+    private List<Produto> produtos;
+
+    @OneToMany(mappedBy = "fornecedor", fetch = FetchType.LAZY)
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private List<PedidoCompra> pedidosCompra;
 }

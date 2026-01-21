@@ -18,7 +18,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     // --- MÉTODOS BÁSICOS ---
     boolean existsByCodigoBarras(String codigoBarras);
-    Optional<Produto> findByCodigoBarras(String codigoBarras);
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
     List<Produto> findAllByAtivoTrue();
     List<Produto> findByNcm(String ncm);
@@ -114,4 +113,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
         LIMIT 1
     """, nativeQuery = true)
     String findNcmInteligente(@Param("palavra") String palavra);
+
+    // [ADICIONE ESTE MÉTODO SE NÃO TIVER]
+    Page<Produto> findByFornecedorId(Long fornecedorId, Pageable pageable);
+
+    Optional<Produto> findByCodigoBarras(String codigoBarras);
 }

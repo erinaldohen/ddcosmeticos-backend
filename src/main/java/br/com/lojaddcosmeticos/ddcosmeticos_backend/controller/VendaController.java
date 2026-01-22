@@ -34,9 +34,9 @@ public class VendaController {
     // ==================================================================================
 
     @PostMapping
-    @Operation(summary = "Realizar Venda (PDV)")
+    @Operation(summary = "Realizar Venda (PDV)", description = "Recebe os itens e pagamentos, valida, dá baixa no estoque e retorna os dados para o cupom.")
     public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        // O serviço já retorna o DTO pronto com os cálculos fiscais.
+        // [CORREÇÃO] Mantido apenas este método. O endpoint '/venda' foi removido por redundância.
         VendaResponseDTO response = vendaService.realizarVenda(dto);
         return ResponseEntity.ok(response);
     }
@@ -95,7 +95,6 @@ public class VendaController {
     // ==================================================================================
 
     private VendaCompletaResponseDTO converterParaDTO(Venda venda) {
-        // CORREÇÃO LINHA 102: Conversão segura de Enum para String
         String status = (venda.getStatusNfce() != null) ? venda.getStatusNfce().name() : "N/A";
 
         return new VendaCompletaResponseDTO(

@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
@@ -8,6 +9,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioReposi
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.security.Principal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +37,7 @@ public class CaixaController {
     @Autowired private CaixaDiarioRepository caixaRepository;
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private MovimentacaoCaixaRepository movimentacaoRepository;
+    @Autowired private FinanceiroService financeiroService;
 
     @GetMapping("/status")
     @PreAuthorize("isAuthenticated()")
@@ -83,5 +87,17 @@ public class CaixaController {
         dto.setUsuarioResponsavel(usuario.getNome());
 
         return ResponseEntity.ok(movimentacaoRepository.save(dto));
+    }
+
+    @PostMapping("/movimentar")
+    @PreAuthorize("hasAnyRole('CAIXA', 'GERENTE')")
+    public ResponseEntity<MovimentacaoCaixa> realizarMovimentacao(
+            @RequestBody MovimentacaoDTO dto,
+            Principal principal) {
+
+        String usuario = (principal != null) ? principal.getName() : "SISTEMA_LOCAL";
+
+        // Agora o método 'registrarMovimentacaoManual' existe no service
+        return ResponseEntity.ok(financeiroService.registrarMovimentacaoManual(dto, usuario));
     }
 }

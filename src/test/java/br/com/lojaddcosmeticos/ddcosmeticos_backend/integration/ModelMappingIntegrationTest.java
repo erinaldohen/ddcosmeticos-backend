@@ -65,13 +65,13 @@ public class ModelMappingIntegrationTest {
     public void testeFornecedorCnpjUnico() {
         Fornecedor f1 = new Fornecedor();
         f1.setRazaoSocial("Empresa A");
-        f1.setCpfOuCnpj("58474246000100");
+        f1.setCnpj("58474246000100");
         fornecedorRepository.save(f1);
         entityManager.flush();
 
         Fornecedor f2 = new Fornecedor();
         f2.setRazaoSocial("Empresa B");
-        f2.setCpfOuCnpj("58474246000100");
+        f2.setCnpj("58474246000100");
 
         Assertions.assertThrows(DataIntegrityViolationException.class, () -> {
             fornecedorRepository.save(f2);

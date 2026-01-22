@@ -5,7 +5,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.LoginResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RegisterDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.TokenService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.security.JwtService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +23,7 @@ public class AuthenticationController {
 
     @Autowired private AuthenticationManager authenticationManager;
     @Autowired private UsuarioRepository usuarioRepository;
-    @Autowired private TokenService tokenService;
+    @Autowired private JwtService jwtService;
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDTO> login(@RequestBody @Valid LoginRequestDTO data) {
@@ -32,7 +32,7 @@ public class AuthenticationController {
         var auth = authenticationManager.authenticate(usernamePassword);
 
         var usuario = (Usuario) auth.getPrincipal();
-        var token = tokenService.generateToken(usuario);
+        var token = jwtService.generateToken(usuario);
 
         return ResponseEntity.ok(new LoginResponseDTO(
                 token,

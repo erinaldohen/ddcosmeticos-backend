@@ -88,8 +88,7 @@ public class PedidoCompraIntegrationTest {
         Fornecedor f = new Fornecedor();
         f.setRazaoSocial(nome);
         // CORREÇÃO: 14 dígitos exatos (000.000.000-001/02)
-        f.setCpfOuCnpj("0000000000000" + (uf.equals("SP") ? "1" : "2"));
-        f.setTipoPessoa("JURIDICA");
+        f.setCnpj("0000000000000" + (uf.equals("SP") ? "1" : "2"));
         f.setAtivo(true);
         fornecedorRepository.save(f);
     }

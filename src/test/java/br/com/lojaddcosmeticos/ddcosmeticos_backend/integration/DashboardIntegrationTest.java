@@ -119,18 +119,17 @@ public class DashboardIntegrationTest {
     private void criarVenda(LocalDateTime data, BigDecimal total, Usuario usuario) {
         Venda v = new Venda();
         v.setDataVenda(data);
-        v.setTotalVenda(total);
-        v.setFormaPagamento(FormaDePagamento.DINHEIRO);
+        v.setValorTotal(total);
+        v.setFormaDePagamento(FormaDePagamento.DINHEIRO);
         v.setUsuario(usuario);
-        v.setStatusFiscal(StatusFiscal.NAO_EMITIDA);
+        v.setStatusNfce(StatusFiscal.NAO_EMITIDA);
         vendaRepository.save(v);
     }
 
     private Fornecedor criarFornecedor() {
         Fornecedor f = new Fornecedor();
         f.setRazaoSocial("Fornecedor Teste");
-        f.setCpfOuCnpj("00000000000100");
-        f.setTipoPessoa("JURIDICA");
+        f.setCnpj("00000000000100");
         f.setAtivo(true);
         return fornecedorRepository.save(f);
     }

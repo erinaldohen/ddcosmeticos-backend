@@ -42,8 +42,7 @@ public class RecebimentoPedidoTest {
         // 1. Setup
         Fornecedor f = new Fornecedor();
         f.setRazaoSocial("Natura Distribuidora");
-        f.setCpfOuCnpj("12345678000100");
-        f.setTipoPessoa("JURIDICA");
+        f.setCnpj("12345678000100");
         f.setAtivo(true);
         fornecedorRepository.save(f);
 

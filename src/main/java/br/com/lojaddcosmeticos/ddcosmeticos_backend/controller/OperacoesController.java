@@ -33,13 +33,7 @@ public class OperacoesController {
     // SESSÃO 1: PDV (Ponto de Venda e Baixa de Estoque)
     // ==================================================================================
 
-    @PostMapping("/venda")
-    @Operation(summary = "Registrar Venda", description = "Recebe os itens e pagamentos, valida e dá baixa no estoque.")
-    public ResponseEntity<Void> registrarVenda(@RequestBody @Valid VendaRequestDTO dadosVenda) {
-        // A anotação @Valid garante que o DTO foi verificado antes de chegar aqui
-        vendaService.realizarVenda(dadosVenda);
-        return ResponseEntity.ok().build();
-    }
+
 
     // ==================================================================================
     // SESSÃO 2: RELATÓRIOS GERENCIAIS (PDF)

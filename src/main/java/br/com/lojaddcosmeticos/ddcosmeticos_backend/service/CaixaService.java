@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.LocalDate; // <--- IMPORTANTE: Importar LocalDate
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +33,19 @@ public class CaixaService {
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private VendaRepository vendaRepository;
     @Autowired private MovimentacaoCaixaRepository movimentacaoRepository;
+
+    // --- NOVO MÉTODO (CORREÇÃO DO ERRO) ---
+    public List<MovimentacaoCaixa> buscarHistorico(LocalDate inicio, LocalDate fim) {
+        // Converte LocalDate (apenas data) para LocalDateTime (data + hora)
+        // Ex: 2026-01-22 vira 2026-01-22T00:00:00
+        LocalDateTime dataInicio = inicio.atStartOfDay();
+
+        // Ex: 2026-01-22 vira 2026-01-22T23:59:59
+        LocalDateTime dataFim = fim.atTime(23, 59, 59);
+
+        return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
+    }
+    // ---------------------------------------
 
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
@@ -128,16 +142,14 @@ public class CaixaService {
                 .map(Venda::getValorTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    // --- CORREÇÃO CRÍTICA AQUI ---
     private Usuario getUsuarioLogado() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não autenticado.");
         }
 
-        String login = auth.getName(); // Isso agora é o EMAIL ou MATRICULA
+        String login = auth.getName();
 
-        // Usa a busca flexível que criamos no Repository
         return usuarioRepository.findByMatriculaOrEmail(login, login)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
     }

@@ -23,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.security.Principal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,28 @@ public class CaixaController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiarioDTO> verificarStatus() {
         return ResponseEntity.ok(caixaService.buscarStatusAtual());
+    }
+
+    @GetMapping("/diario")
+    public ResponseEntity<List<MovimentacaoCaixa>> getHistoricoDiario(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
+    ) {
+
+        // Se 'data' for passado, usa ele como inicio e fim
+        if (data != null) {
+            return ResponseEntity.ok(caixaService.buscarHistorico(data, data));
+        }
+
+        // Se 'inicio' for passado, usa ele
+        if (inicio != null) {
+            LocalDate dataFim = (fim != null) ? fim : inicio;
+            return ResponseEntity.ok(caixaService.buscarHistorico(inicio, dataFim));
+        }
+
+        // Se nada for passado, usa HOJE
+        return ResponseEntity.ok(caixaService.buscarHistorico(LocalDate.now(), LocalDate.now()));
     }
 
     @PostMapping("/abrir")

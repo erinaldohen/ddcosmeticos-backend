@@ -1,14 +1,15 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.EntradaEstoqueDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RetornoImportacaoXmlDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueIntelligenceService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -60,5 +61,17 @@ public class EstoqueController {
         // Chama o método novo que suporta criação automática e financeiro
         estoqueService.processarEntradaEmLote(dto);
         return ResponseEntity.ok().build();
+    }
+    @GetMapping("/historico-entradas")
+    public ResponseEntity<Page<HistoricoEntradaDTO>> listarHistoricoEntradas(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        return ResponseEntity.ok(estoqueService.listarHistoricoEntradas(pageable));
+    }
+
+    @GetMapping("/historico-entradas/{numeroNota}/itens")
+    public ResponseEntity<List<MovimentoEstoqueDTO>> detalharNota(@PathVariable String numeroNota) {
+        return ResponseEntity.ok(estoqueService.buscarDetalhesNota(numeroNota));
     }
 }

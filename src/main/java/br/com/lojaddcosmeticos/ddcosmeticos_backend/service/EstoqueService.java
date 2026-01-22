@@ -1,11 +1,13 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*; // Importa o novo MovimentoEstoqueDTO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -22,6 +24,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class EstoqueService {
@@ -33,9 +36,33 @@ public class EstoqueService {
     @Autowired private FornecedorService fornecedorService;
     @Autowired private ProdutoFornecedorRepository produtoFornecedorRepository;
 
+    // --- CONSULTAS E RELATÓRIOS ---
+
     @Transactional(readOnly = true)
     public List<Produto> gerarSugestaoCompras() {
         return produtoRepository.findProdutosComBaixoEstoque();
+    }
+
+    // [AUDITORIA] Histórico Agrupado por Nota Fiscal
+    @Transactional(readOnly = true)
+    public Page<HistoricoEntradaDTO> listarHistoricoEntradas(Pageable pageable) {
+        return movimentoRepository.buscarHistoricoEntradasAgrupado(pageable);
+    }
+
+    // [AUDITORIA] Detalhes da Nota - CORRIGIDO: Usa MovimentoEstoqueDTO
+    @Transactional(readOnly = true)
+    public List<MovimentoEstoqueDTO> buscarDetalhesNota(String numeroNota) {
+        return movimentoRepository.buscarItensDaNota(numeroNota).stream()
+                .map(m -> new MovimentoEstoqueDTO(
+                        m.getId(),
+                        m.getDataMovimento(),
+                        m.getTipoMovimentoEstoque(),
+                        m.getMotivoMovimentacaoDeEstoque(),
+                        m.getProduto().getDescricao() + " (EAN: " + m.getProduto().getCodigoBarras() + ")",
+                        m.getQuantidadeMovimentada(),
+                        m.getCustoMovimentado(),
+                        m.getDocumentoReferencia()
+                )).collect(Collectors.toList());
     }
 
     // --- ENTRADA VIA PEDIDO DE COMPRA ---
@@ -46,9 +73,12 @@ public class EstoqueService {
         BigDecimal novoPrecoMedio = calcularNovoPrecoMedio(produto, qtdEntrada, custoUnitarioNota);
 
         produto.setPrecoMedioPonderado(novoPrecoMedio);
-        produto.setPrecoCusto(novoPrecoMedio);
-        produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada.intValue());
-        produto.atualizarSaldoTotal();
+        produto.setPrecoCusto(custoUnitarioNota);
+
+        int qtdInt = qtdEntrada.intValue();
+        produto.setEstoqueFiscal((produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0) + qtdInt);
+        produto.setQuantidadeEmEstoque((produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0) + qtdInt);
+
         produtoRepository.save(produto);
 
         registrarMovimentacao(produto, qtdEntrada, custoUnitarioNota, TipoMovimentoEstoque.ENTRADA,
@@ -61,7 +91,6 @@ public class EstoqueService {
     public void registrarEntrada(EstoqueRequestDTO dados) {
         Produto produto;
 
-        // CENÁRIO 1: O Frontend mandou um ID de produto existente
         if (dados.getIdProduto() != null) {
             produto = produtoRepository.findById(dados.getIdProduto())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto informado não existe ID: " + dados.getIdProduto()));
@@ -69,12 +98,9 @@ public class EstoqueService {
             if (dados.getFornecedorId() != null && dados.getCodigoNoFornecedor() != null) {
                 salvarVinculoSeNaoExistir(dados.getFornecedorId(), produto, dados.getCodigoNoFornecedor());
             }
-        }
-        // CENÁRIO 2: Busca por EAN (Fallback)
-        else {
+        } else {
             produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                     .orElseGet(() -> {
-                        // CENÁRIO 3: Produto realmente novo
                         Produto novo = criarProdutoAutomatico(dados);
                         if (dados.getFornecedorId() != null && dados.getCodigoNoFornecedor() != null) {
                             salvarVinculoSeNaoExistir(dados.getFornecedorId(), novo, dados.getCodigoNoFornecedor());
@@ -88,28 +114,33 @@ public class EstoqueService {
 
         BigDecimal novoPrecoMedio = calcularNovoPrecoMedio(produto, qtdEntrada, custoUnitario);
         produto.setPrecoMedioPonderado(novoPrecoMedio);
-        produto.setPrecoCusto(novoPrecoMedio);
+        produto.setPrecoCusto(custoUnitario);
 
+        int qtdInt = qtdEntrada.intValue();
         if (dados.getNumeroNotaFiscal() != null && !dados.getNumeroNotaFiscal().isBlank()) {
-            produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtdEntrada.intValue());
+            produto.setEstoqueFiscal((produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0) + qtdInt);
         } else {
-            produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + qtdEntrada.intValue());
+            produto.setEstoqueNaoFiscal((produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0) + qtdInt);
         }
-        produto.atualizarSaldoTotal();
+        produto.setQuantidadeEmEstoque((produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0) + qtdInt);
+
         produtoRepository.save(produto);
 
         MotivoMovimentacaoDeEstoque motivo = dados.getNumeroNotaFiscal() != null ?
                 MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL : MotivoMovimentacaoDeEstoque.COMPRA_SEM_NOTA_FISCAL;
 
+        Fornecedor fornecedor = null;
+        if(dados.getFornecedorId() != null) fornecedor = fornecedorRepository.findById(dados.getFornecedorId()).orElse(null);
+        else if(dados.getFornecedorCnpj() != null) fornecedor = fornecedorRepository.findByCnpj(dados.getFornecedorCnpj()).orElse(null);
+
         registrarMovimentacao(produto, qtdEntrada, custoUnitario, TipoMovimentoEstoque.ENTRADA, motivo,
                 "NF: " + (dados.getNumeroNotaFiscal() != null ? dados.getNumeroNotaFiscal() : "S/N"),
-                dados.getNumeroNotaFiscal(), null);
+                dados.getNumeroNotaFiscal(), fornecedor);
 
-        // --- LINHA 108 ATUALIZADA ---
         gerarFinanceiroBatch(dados, custoUnitario, qtdEntrada.intValue());
     }
 
-    // --- LEITURA DE XML COM INTELIGÊNCIA ---
+    // --- LEITURA DE XML ---
     public RetornoImportacaoXmlDTO processarXmlNotaFiscal(MultipartFile arquivo) {
         RetornoImportacaoXmlDTO retorno = new RetornoImportacaoXmlDTO();
 
@@ -121,7 +152,6 @@ public class EstoqueService {
             Document doc = dBuilder.parse(is);
             doc.getDocumentElement().normalize();
 
-            // 1. DADOS DA NOTA
             String numeroNota = null;
             NodeList nListIde = doc.getElementsByTagName("ide");
             if (nListIde.getLength() > 0) {
@@ -129,7 +159,6 @@ public class EstoqueService {
                 retorno.setNumeroNota(numeroNota);
             }
 
-            // 2. FORNECEDOR
             Fornecedor fornecedorDoXml = null;
             NodeList nListEmit = doc.getElementsByTagName("emit");
             if (nListEmit.getLength() > 0) {
@@ -139,7 +168,6 @@ public class EstoqueService {
                 if (cnpjRaw != null) {
                     String cnpjLimpo = cnpjRaw.replaceAll("[^0-9]", "");
 
-                    // Validação de Duplicidade
                     Optional<Fornecedor> existente = fornecedorRepository.findByCnpj(cnpjLimpo);
                     if (existente.isPresent() && numeroNota != null) {
                         boolean duplicada = movimentoRepository.existsByDocumentoReferenciaAndFornecedorAndTipoMovimentoEstoque(
@@ -152,13 +180,13 @@ public class EstoqueService {
 
                     fornecedorDoXml = fornecedorService.buscarOuCriarRapido(cnpjLimpo);
                     atualizarDadosFornecedorPeloXml(emit, fornecedorDoXml);
+
                     retorno.setFornecedorId(fornecedorDoXml.getId());
                     retorno.setNomeFornecedor(fornecedorDoXml.getRazaoSocial());
                     retorno.setRazaoSocialFornecedor(fornecedorDoXml.getRazaoSocial());
                 }
             }
 
-            // 3. ITENS DA NOTA
             NodeList nListDet = doc.getElementsByTagName("det");
             for (int i = 0; i < nListDet.getLength(); i++) {
                 Element det = (Element) nListDet.item(i);
@@ -180,7 +208,6 @@ public class EstoqueService {
                 item.setNcm(ncmXml);
                 item.setUnidade(getElementValue(prod, "uCom"));
 
-                // Lógica de Match
                 Produto produtoEncontrado = null;
                 StatusMatch status = StatusMatch.NOVO_PRODUTO;
                 String motivo = "Novo Produto";
@@ -226,7 +253,7 @@ public class EstoqueService {
         }
     }
 
-    // --- ATUALIZAÇÃO PRINCIPAL (LOTE) ---
+    // --- PROCESSAMENTO EM LOTE ---
     @Transactional
     public void processarEntradaEmLote(EntradaEstoqueDTO dto) {
         Fornecedor fornecedor = fornecedorRepository.findById(dto.getFornecedorId())
@@ -236,7 +263,6 @@ public class EstoqueService {
             Produto produto;
 
             if (itemDto.getProdutoId() != null) {
-                // Produto Existente
                 produto = produtoRepository.findById(itemDto.getProdutoId())
                         .orElseThrow(() -> new ResourceNotFoundException("Produto ID " + itemDto.getProdutoId() + " não encontrado."));
             } else {
@@ -244,30 +270,20 @@ public class EstoqueService {
                 if (existente.isPresent()) {
                     produto = existente.get();
                 } else {
-                    // --- CRIAÇÃO DE PRODUTO COM CAMPOS DO FRONTEND ---
                     produto = new Produto();
                     produto.setDescricao(itemDto.getDescricao() != null ? itemDto.getDescricao().toUpperCase() : "PRODUTO NOVO");
                     produto.setCodigoBarras(itemDto.getCodigoBarras());
                     produto.setNcm(itemDto.getNcm());
                     produto.setUnidade(itemDto.getUnidade());
+                    produto.setMarca(itemDto.getMarca() != null ? itemDto.getMarca().toUpperCase() : "GENERICA");
+                    produto.setCategoria(itemDto.getCategoria() != null ? itemDto.getCategoria().toUpperCase() : "GERAL");
+                    produto.setSubcategoria(itemDto.getSubcategoria() != null ? itemDto.getSubcategoria().toUpperCase() : produto.getCategoria());
+                    produto.setOrigem(itemDto.getOrigem() != null ? itemDto.getOrigem() : "0");
+                    produto.setCst(itemDto.getCst() != null ? itemDto.getCst() : "102");
 
-                    // Marca, Categoria e Subcategoria (vindos da edição no Grid)
-                    produto.setMarca(itemDto.getMarca() != null && !itemDto.getMarca().isBlank() ? itemDto.getMarca().toUpperCase() : "GENERICA");
-                    produto.setCategoria(itemDto.getCategoria() != null && !itemDto.getCategoria().isBlank() ? itemDto.getCategoria().toUpperCase() : "GERAL");
-                    produto.setSubcategoria(itemDto.getSubcategoria() != null && !itemDto.getSubcategoria().isBlank() ? itemDto.getSubcategoria().toUpperCase() : produto.getCategoria());
-
-                    // Origem: Permite seleção (0 ou 2) ou padroniza 0
-                    produto.setOrigem(itemDto.getOrigem() != null && !itemDto.getOrigem().isBlank() ? itemDto.getOrigem() : "0");
-
-                    // CST: Permite seleção (ex: 500 para ST) ou padroniza 102
-                    produto.setCst(itemDto.getCst() != null && !itemDto.getCst().isBlank() ? itemDto.getCst() : "102");
-
-                    // Preços
                     produto.setPrecoCusto(itemDto.getValorUnitario());
                     produto.setPrecoMedioPonderado(itemDto.getValorUnitario());
-                    produto.setPrecoVenda(itemDto.getValorUnitario().multiply(new BigDecimal("1.5"))); // Margem 50% inicial
-
-                    // Defaults
+                    produto.setPrecoVenda(itemDto.getValorUnitario().multiply(new BigDecimal("1.5")));
                     produto.setAtivo(true);
                     produto.setQuantidadeEmEstoque(0);
                     produto.setEstoqueFiscal(0);
@@ -278,22 +294,22 @@ public class EstoqueService {
                 }
             }
 
-            // Atualização de Saldo
             BigDecimal qtd = itemDto.getQuantidade();
             BigDecimal custo = itemDto.getValorUnitario();
             String doc = dto.getNumeroDocumento();
 
             BigDecimal novoPreco = calcularNovoPrecoMedio(produto, qtd, custo);
-            produto.setPrecoCusto(novoPreco);
+            produto.setPrecoCusto(custo);
             produto.setPrecoMedioPonderado(novoPreco);
 
+            int qtdInt = qtd.intValue();
             if (doc != null && !doc.isBlank() && !doc.equals("S/N")) {
-                produto.setEstoqueFiscal(produto.getEstoqueFiscal() + qtd.intValue());
+                produto.setEstoqueFiscal((produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0) + qtdInt);
             } else {
-                produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + qtd.intValue());
+                produto.setEstoqueNaoFiscal((produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0) + qtdInt);
             }
+            produto.setQuantidadeEmEstoque((produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0) + qtdInt);
 
-            produto.atualizarSaldoTotal();
             produtoRepository.save(produto);
 
             registrarMovimentacao(produto, qtd, custo, TipoMovimentoEstoque.ENTRADA,
@@ -301,7 +317,6 @@ public class EstoqueService {
         }
 
         if (dto.getFormaPagamento() != null) {
-            // CORRIGIDO: Removida a vírgula extra que havia aqui
             gerarFinanceiroBatch(dto, fornecedor);
         }
     }
@@ -312,13 +327,10 @@ public class EstoqueService {
         novo.setDescricao(dados.getDescricao() != null ? dados.getDescricao().toUpperCase() : "PRODUTO NOVO");
         novo.setNcm(dados.getNcm() != null ? dados.getNcm() : "00000000");
         novo.setUnidade(dados.getUnidade() != null ? dados.getUnidade() : "UN");
-
-        // Dados Padrão para Entrada Unitária Manual
         novo.setMarca("GENERICA");
         novo.setCategoria("GERAL");
         novo.setOrigem("0");
         novo.setCst("102");
-
         novo.setPrecoCusto(dados.getPrecoCusto());
         novo.setPrecoMedioPonderado(dados.getPrecoCusto());
         novo.setPrecoVenda(dados.getPrecoCusto().multiply(new BigDecimal("1.5")));
@@ -326,7 +338,6 @@ public class EstoqueService {
         novo.setQuantidadeEmEstoque(0);
         novo.setEstoqueFiscal(0);
         novo.setEstoqueNaoFiscal(0);
-
         return produtoRepository.save(novo);
     }
 
@@ -348,11 +359,14 @@ public class EstoqueService {
     }
 
     private BigDecimal calcularNovoPrecoMedio(Produto produto, BigDecimal qtdEntrada, BigDecimal custoNovo) {
-        BigDecimal estoqueAtual = new BigDecimal(produto.getQuantidadeEmEstoque());
+        BigDecimal estoqueAtual = new BigDecimal(produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0);
         BigDecimal custoMedioAtual = produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO;
-        if (produto.getQuantidadeEmEstoque() <= 0) return custoNovo;
+
+        if (estoqueAtual.compareTo(BigDecimal.ZERO) <= 0) return custoNovo;
+
         BigDecimal valorTotal = estoqueAtual.multiply(custoMedioAtual).add(qtdEntrada.multiply(custoNovo));
         BigDecimal novoEstoque = estoqueAtual.add(qtdEntrada);
+
         return novoEstoque.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ZERO : valorTotal.divide(novoEstoque, 4, RoundingMode.HALF_UP);
     }
 
@@ -379,22 +393,15 @@ public class EstoqueService {
 
     private void atualizarDadosFornecedorPeloXml(Element emit, Fornecedor fornecedor) {
         try {
-            String xNome = getElementValue(emit, "xNome");
-            String xFant = getElementValue(emit, "xFant");
             String ie = getElementValue(emit, "IE");
-
-            if (fornecedor.getRazaoSocial() == null || fornecedor.getRazaoSocial().isEmpty() || fornecedor.getRazaoSocial().matches(".*\\d{5,}.*")) {
-                if (xNome != null) fornecedor.setRazaoSocial(xNome.toUpperCase());
-            }
-            if (fornecedor.getNomeFantasia() == null || fornecedor.getNomeFantasia().isEmpty()) {
-                fornecedor.setNomeFantasia(xFant != null ? xFant.toUpperCase() : (xNome != null ? xNome.toUpperCase() : ""));
-            }
             if (fornecedor.getInscricaoEstadual() == null || fornecedor.getInscricaoEstadual().isEmpty()) {
-                fornecedor.setInscricaoEstadual(ie);
+                if (ie != null && !ie.isEmpty()) {
+                    fornecedor.setInscricaoEstadual(ie);
+                    fornecedorRepository.save(fornecedor);
+                }
             }
-            fornecedorRepository.save(fornecedor);
         } catch (Exception e) {
-            System.err.println("Erro ao atualizar dados fornecedor: " + e.getMessage());
+            System.err.println("Erro ao atualizar IE do fornecedor: " + e.getMessage());
         }
     }
 
@@ -402,9 +409,8 @@ public class EstoqueService {
         return ean != null && !ean.equals("SEM GTIN") && ean.length() > 5;
     }
 
-    // --- MÉTODOS FINANCEIROS (COM SOBRECARGA PARA ATENDER OS DOIS CASOS) ---
+    // --- FINANCEIRO ---
 
-    // 1. Para LOTE (EntradaEstoqueDTO) - Usado em processarEntradaEmLote
     private void gerarFinanceiroBatch(EntradaEstoqueDTO dto, Fornecedor fornecedor) {
         BigDecimal valorTotalNota = dto.getItens().stream()
                 .map(item -> item.getValorUnitario().multiply(item.getQuantidade()))
@@ -421,7 +427,6 @@ public class EstoqueService {
         }
     }
 
-    // 2. Para UNITÁRIO (EstoqueRequestDTO) - Substitui o antigo gerarFinanceiroEntrada
     private void gerarFinanceiroBatch(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {
         if (dados.getFormaPagamento() == null) return;
 
@@ -438,7 +443,6 @@ public class EstoqueService {
 
         int parcelas = (dados.getQuantidadeParcelas() != null && dados.getQuantidadeParcelas() > 0) ? dados.getQuantidadeParcelas() : 1;
         BigDecimal valorParcela = valorTotal.divide(new BigDecimal(parcelas), 2, RoundingMode.HALF_UP);
-
         LocalDate dataBase = dados.getDataVencimentoBoleto() != null ? dados.getDataVencimentoBoleto() : LocalDate.now();
 
         for (int i = 0; i < parcelas; i++) {
@@ -446,7 +450,6 @@ public class EstoqueService {
         }
     }
 
-    // Método auxiliar para evitar repetição na criação da conta
     private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) {
         ContaPagar conta = new ContaPagar();
         conta.setFornecedor(fornecedor);
@@ -467,20 +470,24 @@ public class EstoqueService {
         }
         contaPagarRepository.save(conta);
     }
-    // --- SAÍDA DE VENDA (Chamado pelo VendaService) ---
+
+    // --- SAÍDA DE VENDA ---
     @Transactional
     public void registrarSaidaVenda(Produto produto, Integer quantidade) {
-        // Lógica: Tenta baixar do Estoque Fiscal primeiro (ou ajuste conforme sua preferência fiscal)
-        if (produto.getEstoqueFiscal() >= quantidade) {
-            produto.setEstoqueFiscal(produto.getEstoqueFiscal() - quantidade);
+        int atual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0;
+        int fiscal = produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0;
+        int naoFiscal = produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0;
+
+        if (fiscal >= quantidade) {
+            produto.setEstoqueFiscal(fiscal - quantidade);
         } else {
-            // Se não tem fiscal suficiente, zera o fiscal e tira o resto do não fiscal
-            int restante = quantidade - produto.getEstoqueFiscal();
+            int restante = quantidade - fiscal;
             produto.setEstoqueFiscal(0);
-            produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() - restante);
+            produto.setEstoqueNaoFiscal(Math.max(0, naoFiscal - restante));
         }
 
-        produto.atualizarSaldoTotal();
+        produto.setQuantidadeEmEstoque(atual - quantidade);
+
         produtoRepository.save(produto);
 
         registrarMovimentacao(produto, new BigDecimal(quantidade),
@@ -490,32 +497,34 @@ public class EstoqueService {
                 "Venda PDV", null, null);
     }
 
-    // --- AJUSTE MANUAL (Chamado pelo Controller para Inventário) ---
+    // --- AJUSTE MANUAL ---
     @Transactional
     public void realizarAjusteManual(AjusteEstoqueDTO dados) {
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
                 .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado"));
 
         int novaQuantidade = dados.getQuantidade().intValue();
-        int diferenca = novaQuantidade - produto.getQuantidadeEmEstoque();
+        int atual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0;
+        int diferenca = novaQuantidade - atual;
 
-        // Se a diferença for positiva, é entrada de ajuste. Se negativa, é saída.
         if (diferenca > 0) {
-            // Entrada por ajuste (Joga no Não Fiscal por padrão ou crie lógica)
-            produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() + diferenca);
+            produto.setEstoqueNaoFiscal((produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0) + diferenca);
         } else {
-            // Saída por ajuste
             int qtdBaixa = Math.abs(diferenca);
-            if (produto.getEstoqueNaoFiscal() >= qtdBaixa) {
-                produto.setEstoqueNaoFiscal(produto.getEstoqueNaoFiscal() - qtdBaixa);
+            int naoFiscal = produto.getEstoqueNaoFiscal() != null ? produto.getEstoqueNaoFiscal() : 0;
+            int fiscal = produto.getEstoqueFiscal() != null ? produto.getEstoqueFiscal() : 0;
+
+            if (naoFiscal >= qtdBaixa) {
+                produto.setEstoqueNaoFiscal(naoFiscal - qtdBaixa);
             } else {
-                int resta = qtdBaixa - produto.getEstoqueNaoFiscal();
+                int resta = qtdBaixa - naoFiscal;
                 produto.setEstoqueNaoFiscal(0);
-                produto.setEstoqueFiscal(produto.getEstoqueFiscal() - resta);
+                produto.setEstoqueFiscal(Math.max(0, fiscal - resta));
             }
         }
 
-        produto.atualizarSaldoTotal();
+        produto.setQuantidadeEmEstoque(novaQuantidade);
+
         produtoRepository.save(produto);
 
         registrarMovimentacao(produto, new BigDecimal(Math.abs(diferenca)),

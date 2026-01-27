@@ -72,7 +72,7 @@ public class CalculadoraFiscalService {
         // Atualiza CST (04 Monofásico / 00 Tributado)
         if (!Objects.equals(p.getCst(), dados.cst())) { p.setCest(dados.cst()); alterou = true; }
         // Atualiza flag Monofásico
-        if (p.isMonofasico() != dados.monofasico()) { p.setMonofasico(dados.monofasico()); alterou = true; }
+        if (p.isMonofasico() != dados.monofasico()) { p.setIsMonofasico(dados.monofasico()); alterou = true; }
 
         // --- CORREÇÃO IMPORTANTE: Atualiza a Reforma Tributária baseado no retorno da Regra ---
         // Antes estava apenas setando PADRAO se fosse nulo. Agora recalcula sempre que mudar o NCM.

@@ -343,9 +343,9 @@ public class ProdutoService {
         p.setCest(d.cest());
         p.setCst(d.cst());
         p.setOrigem(d.origem());
-        p.setMonofasico(d.monofasico() != null ? d.monofasico() : false);
+        p.setIsMonofasico(d.monofasico() != null ? d.monofasico() : false);
         p.setClassificacaoReforma(d.classificacaoReforma());
-        p.setImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
+        p.setIsImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
         p.setPrecoVenda(d.precoVenda());
         p.setPrecoCusto(d.precoCusto());
         p.setEstoqueMinimo(d.estoqueMinimo());

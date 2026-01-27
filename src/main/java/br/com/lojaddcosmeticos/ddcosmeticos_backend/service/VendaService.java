@@ -33,7 +33,10 @@ public class VendaService {
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private ClienteRepository clienteRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ConfiguracaoLojaRepository configuracaoLojaRepository;
+
+    // ATUALIZADO: Usamos o Service para buscar a configuração completa com objetos aninhados
+    @Autowired private ConfiguracaoLojaService configuracaoLojaService;
+
     @Autowired private RegraTributariaRepository regraTributariaRepository;
     @Autowired private CaixaDiarioRepository caixaRepository;
     @Autowired private EstoqueService estoqueService;
@@ -90,7 +93,7 @@ public class VendaService {
         venda.setItens(itens);
         venda.setValorTotal(calcularTotalVenda(itens, venda.getDescontoTotal()));
 
-        // Validação de limite de desconto com base no valor calculado pelo servidor
+        // Validação de limite de desconto
         validarLimitesDeDesconto(usuarioLogado, venda.getValorTotal(), venda.getDescontoTotal());
 
         aplicarDadosFiscais(venda, itens);
@@ -140,7 +143,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 2. GESTÃO DE ESTADOS (SUSPENSER / CANCELAR)
+    // 2. GESTÃO DE ESTADOS
     // =========================================================================
 
     @Transactional
@@ -205,7 +208,6 @@ public class VendaService {
         caixaRepository.save(caixa);
     }
 
-    // CORREÇÃO LINHA 260: Sincronizado com os 13 campos do record VendaResponseDTO
     private VendaResponseDTO converterParaDTO(Venda venda) {
         List<ItemVendaResponseDTO> itensDto = venda.getItens().stream()
                 .map(ItemVendaResponseDTO::new).collect(Collectors.toList());
@@ -233,15 +235,25 @@ public class VendaService {
 
     private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
         if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
-        ConfiguracaoLoja config = configuracaoLojaRepository.findById(1L).orElse(new ConfiguracaoLoja());
 
-        // Percentual calculado sobre o valor total (Bruto)
+        // CORREÇÃO: Busca a configuração via Service (garante não nulo)
+        ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
+
         BigDecimal bruto = totalVenda.add(descontoAplicado);
         BigDecimal percentual = descontoAplicado.divide(bruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
 
-        BigDecimal limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN)
-                ? config.getPercentualMaximoDescontoGerente()
-                : config.getPercentualMaximoDescontoCaixa();
+        // CORREÇÃO: Acessa o objeto Financeiro aninhado
+        // Se por algum motivo financeiro for null (banco legado), usa fallback
+        BigDecimal limite;
+        if (config.getFinanceiro() != null) {
+            limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN)
+                    ? config.getFinanceiro().getDescGerente()
+                    : config.getFinanceiro().getDescCaixa();
+        } else {
+            limite = new BigDecimal("5.00"); // Fallback seguro
+        }
+
+        if (limite == null) limite = new BigDecimal("5.00"); // Double check
 
         if (percentual.compareTo(limite) > 0) {
             throw new ValidationException("Desconto de " + percentual.setScale(2, RoundingMode.HALF_UP) + "% excede o limite permitido de " + limite + "%");
@@ -250,9 +262,6 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public List<VendaResponseDTO> listarVendasSuspensas() {
-        // Busca todas as vendas com status EM_ESPERA (Fila) ou ORCAMENTO
-        // Se quiser trazer os dois tipos, teria que usar findByStatusNfceIn(List<StatusFiscal>...)
-        // Aqui assumimos que "Suspensa" = EM_ESPERA
         return vendaRepository.findByStatusNfce(StatusFiscal.EM_ESPERA).stream()
                 .map(this::converterParaDTO)
                 .collect(Collectors.toList());
@@ -302,8 +311,6 @@ public class VendaService {
         if (auth == null || !auth.isAuthenticated() || auth.getName().equals("anonymousUser")) return null;
 
         String login = auth.getName();
-
-        // CORREÇÃO: Usamos findByMatriculaOrEmail pois o login pode ser E-mail ou Matrícula
         return usuarioRepository.findByMatriculaOrEmail(login, login).orElse(null);
     }
 

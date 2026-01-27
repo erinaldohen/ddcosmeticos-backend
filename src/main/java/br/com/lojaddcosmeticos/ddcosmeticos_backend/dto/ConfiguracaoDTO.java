@@ -1,51 +1,38 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
+import java.util.Map;
 
+/**
+ * DTO responsável por trafegar as configurações entre o Frontend (React) e o Backend (Spring).
+ * Estrutura espelhada no objeto 'form' do Configuracoes.jsx.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Entity
-@Table(name = "tb_configuracao")
-public class ConfiguracaoLoja {
+public class ConfiguracaoDTO {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Embedded
-    private DadosLoja loja;
+    // Seções principais (Abas do Frontend)
+    private DadosLojaDTO loja;
+    private EnderecoDTO endereco;
+    private DadosFiscalDTO fiscal;
+    private DadosFinanceiroDTO financeiro;
+    private DadosVendasDTO vendas;
+    private DadosSistemaDTO sistema;
 
-    @Embedded
-    private EnderecoLoja endereco;
+    // --- CLASSES INTERNAS (Nested DTOs) ---
 
-    @Embedded
-    private DadosFiscal fiscal;
-
-    @Embedded
-    private DadosFinanceiro financeiro;
-
-    @Embedded
-    private DadosVendas vendas;
-
-    @Embedded
-    private DadosSistema sistema;
-
-    // ==================================================================================
-    // CLASSES INTERNAS (EMBEDDABLES)
-    // ==================================================================================
-
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DadosLoja {
+    public static class DadosLojaDTO {
         private String razaoSocial;
         private String nomeFantasia;
         private String cnpj;
@@ -58,27 +45,27 @@ public class ConfiguracaoLoja {
         private String site;
         private String instagram;
         private String slogan;
-        private String corDestaque;
+
+        private String corDestaque; // Ex: #ec4899
         private Boolean isMatriz;
 
-        @Column(columnDefinition = "TIME")
+        // Horários operacionais
         private LocalTime horarioAbre;
-
-        @Column(columnDefinition = "TIME")
         private LocalTime horarioFecha;
-
         private Integer toleranciaMinutos;
         private Boolean bloqueioForaHorario;
+
+        private String logoUrl; // URL para visualização (Upload é via endpoint separado)
+
+        // Logística / Delivery
         private BigDecimal taxaEntregaPadrao;
         private Integer tempoEntregaMin;
-        private String logoUrl;
     }
 
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class EnderecoLoja {
+    public static class EnderecoDTO {
         private String cep;
         private String logradouro;
         private String numero;
@@ -88,116 +75,109 @@ public class ConfiguracaoLoja {
         private String uf;
     }
 
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DadosFiscal {
+    public static class DadosFiscalDTO {
         private String ambiente; // "HOMOLOGACAO" ou "PRODUCAO"
-        private String regime;
+        private String regime;   // "1", "2", "3"...
 
-        // CSC e Tokens
-        private String tokenHomologacao;
-        private String cscIdHomologacao;
-        private String tokenProducao;
-        private String cscIdProducao;
+        // Objetos aninhados para separar credenciais
+        private AmbienteFiscalDTO homologacao;
+        private AmbienteFiscalDTO producao;
 
-        // Controle NFe
-        private Integer serieHomologacao;
-        private Integer nfeHomologacao;
-        private Integer serieProducao;
-        private Integer nfeProducao;
-
-        // Certificado
+        // Certificado (Status ou Caminho)
         private String caminhoCertificado;
         private String senhaCert;
 
-        // Compliance
+        // Compliance e Identificação
         private String csrtId;
         private String csrtHash;
         private String ibptToken;
-        private String naturezaPadrao;
+        private String naturezaPadrao; // Ex: "5.102"
         private String emailContabil;
         private Boolean enviarXmlAutomatico;
         private BigDecimal aliquotaInterna;
         private Boolean modoContingencia;
         private Boolean priorizarMonofasico;
-
-        @Column(length = 500)
-        private String obsPadraoCupom;
+        private String obsPadraoCupom; // Texto legal para o rodapé da nota
     }
 
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DadosFinanceiro {
+    public static class AmbienteFiscalDTO {
+        private String token;
+        private String cscId;
+        private Integer serie;
+        private Integer nfe;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DadosFinanceiroDTO {
+        // Comissões e Metas
         private BigDecimal comissaoProdutos;
         private BigDecimal comissaoServicos;
         private BigDecimal alertaSangria;
         private BigDecimal fundoTrocoPadrao;
         private BigDecimal metaDiaria;
 
-        // Taxas
+        // Taxas Administrativas (Maquininha)
         private BigDecimal taxaDebito;
         private BigDecimal taxaCredito;
 
-        // Descontos
+        // Regras de Desconto e Segurança
         private BigDecimal descCaixa;
         private BigDecimal descGerente;
         private Boolean descExtraPix;
         private Boolean bloquearAbaixoCusto;
+        private Boolean fechamentoCego;
 
         // Pix
         private String pixTipo;
         private String pixChave;
 
-        // Booleans de pagamento
-        private Boolean aceitaDinheiro;
-        private Boolean aceitaPix;
-        private Boolean aceitaCredito;
-        private Boolean aceitaDebito;
+        // Mapeamento de quais pagamentos estão ativos
+        // Ex: { "dinheiro": true, "pix": true, "crediario": false }
+        private Map<String, Boolean> pagamentos;
 
-        // Crediário
-        private Boolean aceitaCrediario;
+        // Regras do Crediário (Fiado)
         private BigDecimal jurosMensal;
         private BigDecimal multaAtraso;
         private Integer diasCarencia;
-
-        private Boolean fechamentoCego;
     }
 
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DadosVendas {
-        private String comportamentoCpf;
+    public static class DadosVendasDTO {
+        private String comportamentoCpf; // "PERGUNTAR", "SEMPRE", "NUNCA"
         private Boolean bloquearEstoque;
-        private String layoutCupom;
+        private String layoutCupom;      // "DETALHADO", "RESUMIDO"
         private Boolean imprimirVendedor;
         private Boolean imprimirTicketTroca;
         private Boolean autoEnterScanner;
+        private Boolean agruparItens;
+
+        // Fidelidade e Hardware
         private Boolean fidelidadeAtiva;
         private BigDecimal pontosPorReal;
         private Boolean usarBalanca;
-        private Boolean agruparItens;
     }
 
-    @Embeddable
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DadosSistema {
+    public static class DadosSistemaDTO {
         private Boolean impressaoAuto;
-        private String larguraPapel;
+        private String larguraPapel; // "80mm"
         private Boolean backupAuto;
-
-        @Column(columnDefinition = "TIME")
         private LocalTime backupHora;
-
         private String rodape;
-        private String tema;
+
+        private String tema; // "light" ou "dark"
         private Boolean backupNuvem;
         private Boolean senhaGerenteCancelamento;
         private String nomeTerminal;

@@ -1,6 +1,5 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.AmbienteFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.swconsultoria.certificado.Certificado;
@@ -36,29 +35,31 @@ public class NfeConfig {
     @Bean
     public ConfiguracoesNfe iniciarConfiguracoesNfe() {
         try {
-            // 1. TENTA BUSCAR NO BANCO (Sem dar erro se estiver vazio)
+            // 1. TENTA BUSCAR NO BANCO
             Optional<ConfiguracaoLoja> configLojaOpt = configuracaoLojaRepository.findFirstByOrderByIdAsc();
 
             if (configLojaOpt.isEmpty()) {
                 System.out.println("--- AVISO: Nenhuma configuração de loja encontrada. Módulo NFe iniciará DESATIVADO. ---");
-                return null; // Retorna nulo para não quebrar o start do Spring
+                return null;
             }
 
             ConfiguracaoLoja configLoja = configLojaOpt.get();
 
-            // 2. DEFINIR O AMBIENTE
+            // 2. DEFINIR O AMBIENTE (CORRIGIDO)
             AmbienteEnum ambiente = AmbienteEnum.HOMOLOGACAO;
-            if (configLoja.getAmbienteFiscal() != null && configLoja.getAmbienteFiscal() == AmbienteFiscal.PRODUCAO) {
+            // Verifica se o objeto fiscal existe e acessa o ambiente (agora String)
+            if (configLoja.getFiscal() != null && "PRODUCAO".equalsIgnoreCase(configLoja.getFiscal().getAmbiente())) {
                 ambiente = AmbienteEnum.PRODUCAO;
             }
 
-            // 3. DEFINIR O ESTADO
-            EstadosEnum estado = EstadosEnum.PE;
-            if (configLoja.getUf() != null) {
+            // 3. DEFINIR O ESTADO (CORRIGIDO)
+            EstadosEnum estado = EstadosEnum.PE; // Default
+            // Verifica se o objeto endereco existe e acessa a UF
+            if (configLoja.getEndereco() != null && configLoja.getEndereco().getUf() != null) {
                 try {
-                    estado = EstadosEnum.valueOf(configLoja.getUf().toUpperCase());
+                    estado = EstadosEnum.valueOf(configLoja.getEndereco().getUf().toUpperCase());
                 } catch (IllegalArgumentException e) {
-                    System.err.println("UF inválida: " + configLoja.getUf() + ". Usando PE.");
+                    System.err.println("UF inválida: " + configLoja.getEndereco().getUf() + ". Usando PE.");
                 }
             }
 
@@ -86,7 +87,7 @@ public class NfeConfig {
 
         } catch (Exception e) {
             System.err.println("ERRO NÃO FATAL AO INICIAR NFE: " + e.getMessage());
-            return null; // Garante que o sistema sobe mesmo com erro na NFe
+            return null;
         }
     }
 }

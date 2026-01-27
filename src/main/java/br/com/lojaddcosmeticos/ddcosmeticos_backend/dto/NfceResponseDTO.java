@@ -5,18 +5,16 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class NfceResponseDTO {
-    private String chaveAcesso;
-    private String numeroNota;
-    private String serie;
+    private Long idVenda;
     private String status;
-    private String motivo;
+    private String mensagem;
+    private String chaveAcesso;
+    private String protocolo;
     private String xml;
-    private LocalDateTime dataEmissao;
+    private String urlPdf;
 }

@@ -3,101 +3,116 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.AmbienteFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
-import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe; // Import correto do objeto de configuração
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.UUID;
 
+@Slf4j
 @Service
 public class NfceService {
 
     @Autowired
-    private VendaRepository vendaRepository;
+    private ConfiguracaoLojaService configuracaoLojaService;
 
     @Autowired
-    private ConfiguracaoLojaRepository configuracaoLojaRepository;
+    private VendaRepository vendaRepository;
 
-    // Injeta o bean de configuração da lib (pode ser nulo se banco vazio)
-    @Autowired(required = false)
-    private ConfiguracoesNfe configuracoesNfe;
+    /**
+     * Método responsável por orquestrar a emissão da NFC-e.
+     * Este é um stub (esqueleto) atualizado para a nova estrutura de configuração.
+     * Você deve integrar aqui sua biblioteca de NFe (ex: Samuel Olivera, Java NFe).
+     */
+    public NfceResponseDTO emitirNfce(Venda venda, boolean reenvio) {
+        log.info("Iniciando emissão de NFC-e para Venda ID: {}", venda.getIdVenda());
 
-    // --- SOBRECARGA PARA COMPATIBILIDADE ---
-    public NfceResponseDTO emitirNfce(Venda venda) {
-        return emitirNfce(venda, false);
-    }
+        // 1. Busca Configurações Atualizadas
+        ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
 
-    @Transactional
-    public NfceResponseDTO emitirNfce(Venda venda, boolean apenasFiscal) {
-        // Tenta recuperar dados reais do banco
-        String cscToken = "TIMED-CSC-TOKEN"; // Valor default de fallback
-        String cscId = "1";
+        // CORREÇÃO 1: Acesso seguro aos dados fiscais embutidos
+        if (config.getFiscal() == null) {
+            throw new ValidationException("Configuração Fiscal não encontrada. Configure a loja primeiro.");
+        }
+        ConfiguracaoLoja.DadosFiscal dadosFiscal = config.getFiscal();
 
-        Optional<ConfiguracaoLoja> configOpt = configuracaoLojaRepository.findFirstByOrderByIdAsc();
-        if (configOpt.isPresent()) {
-            ConfiguracaoLoja config = configOpt.get();
-            boolean isProducao = config.getAmbienteFiscal() == AmbienteFiscal.PRODUCAO;
+        // 2. Determina Ambiente e Credenciais (CSC/Token)
+        String ambienteStr = dadosFiscal.getAmbiente(); // Agora é String: "HOMOLOGACAO" ou "PRODUCAO"
+        boolean isProducao = "PRODUCAO".equalsIgnoreCase(ambienteStr);
 
-            if (isProducao) {
-                cscToken = config.getProducaoToken() != null ? config.getProducaoToken() : cscToken;
-                cscId = config.getProducaoCscId() != null ? config.getProducaoCscId() : cscId;
-            } else {
-                cscToken = config.getHomologacaoToken() != null ? config.getHomologacaoToken() : cscToken;
-                cscId = config.getHomologacaoCscId() != null ? config.getHomologacaoCscId() : cscId;
-            }
+        String cscId;
+        String cscToken;
+
+        if (isProducao) {
+            cscId = dadosFiscal.getCscIdProducao();
+            cscToken = dadosFiscal.getTokenProducao();
+        } else {
+            cscId = dadosFiscal.getCscIdHomologacao();
+            cscToken = dadosFiscal.getTokenHomologacao();
         }
 
-        // 1. Gerar Sequencial
-        Long proximoNumero = gerarProximoNumeroNfce();
-
-        // 2. Simular XML (Atualizado para refletir dados do banco na simulação)
-        String chaveAcesso = gerarChaveAcesso(proximoNumero);
-
-        // Simulação básica de XML para persistência
-        String xmlAssinado = String.format(
-                "<nfeProc versao=\"4.00\" xmlns=\"http://www.portalfiscal.inf.br/nfe\"><NFe><infNFe Id=\"%s\"><ide><nNF>%d</nNF><tpAmb>%s</tpAmb></ide></infNFe></NFe><protNFe><infProt><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e (Simulacao)</xMotivo></infProt></protNFe></nfeProc>",
-                "NFe" + chaveAcesso,
-                proximoNumero,
-                configOpt.map(c -> c.getAmbienteFiscal().toString()).orElse("HOMOLOGACAO")
-        );
-
-        // 3. Atualizar Venda
-        venda.setStatusNfce(StatusFiscal.APROVADA);
-        venda.setChaveAcessoNfce(xmlAssinado); // Mantendo comportamento original de salvar XML no campo de chave (embora o ideal fosse ter campo separado)
-
-        // Persistir a venda atualizada
-        vendaRepository.save(venda);
-
-        return new NfceResponseDTO(
-                chaveAcesso,
-                proximoNumero.toString(),
-                "1",
-                "100",
-                "Autorizado o uso da NF-e (Simulação)",
-                xmlAssinado,
-                LocalDateTime.now()
-        );
-    }
-
-    private Long gerarProximoNumeroNfce() {
-        Long ultimoNumeroBanco = 0L;
-        long ultimaEmitidaLegado = 5713L; // Regra de Negócio
-
-        if (ultimoNumeroBanco <= ultimaEmitidaLegado) {
-            return ultimaEmitidaLegado + 1; // 5714
+        if (cscId == null || cscToken == null) {
+            throw new ValidationException("CSC ou Token não configurados para o ambiente: " + ambienteStr);
         }
-        return ultimoNumeroBanco + 1;
+
+        try {
+            // =================================================================================
+            // AQUI ENTRARIA A CHAMADA REAL PARA A BIBLIOTECA DE NFE
+            // Exemplo fictício de lógica:
+            //
+            // ConfiguracoesNfe configNfe = ConfigFactory.cria(
+            //      isProducao ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO,
+            //      dadosFiscal.getCaminhoCertificado(),
+            //      dadosFiscal.getSenhaCert()
+            // );
+            // TRetNFe retorno = Nfe.enviar(venda, configNfe);
+            // =================================================================================
+
+            // SIMULAÇÃO DE SUCESSO PARA O FLUXO DO SISTEMA
+            String chaveAcessoSimulada = gerarChaveAcessoSimulada(venda, isProducao);
+            String protocoloSimulado = String.valueOf(System.currentTimeMillis());
+
+            // 3. Atualiza Venda com dados da Nota
+            venda.setChaveAcessoNfce(chaveAcessoSimulada);
+            venda.setProtocoloAutorizacao(protocoloSimulado);
+            venda.setStatusNfce(StatusFiscal.AUTORIZADA);
+            venda.setDataAutorizacao(LocalDateTime.now());
+            venda.setXmlNota("<?xml version=\"1.0\" encoding=\"UTF-8\"?><nfe>Simulacao...</nfe>"); // Em produção, salvar o XML real
+
+            vendaRepository.save(venda);
+
+            return new NfceResponseDTO(
+                    venda.getIdVenda(),
+                    venda.getStatusNfce().name(),
+                    "Autorizado o uso da NF-e",
+                    chaveAcessoSimulada,
+                    protocoloSimulado,
+                    venda.getXmlNota(),
+                    null // PDF URL (se houver)
+            );
+
+        } catch (Exception e) {
+            log.error("Erro ao emitir NFC-e: ", e);
+
+            // Tratamento de erro
+            venda.setStatusNfce(StatusFiscal.ERRO_EMISSAO);
+            venda.setMensagemRejeicao(e.getMessage());
+            vendaRepository.save(venda);
+
+            throw new ValidationException("Erro na emissão fiscal: " + e.getMessage());
+        }
     }
 
-    private String gerarChaveAcesso(Long numeroNota) {
-        // Ajustado Modelo para 65 (NFC-e) e UF padrão 26 (PE) caso necessário, ou mantendo 43 se for legado rigoroso
-        // Usando formato padrão de chave de acesso
-        return "26" + LocalDateTime.now().getYear() + "00000000000000" + "65" + "001" + String.format("%09d", numeroNota) + "1" + "00000000";
+    private String gerarChaveAcessoSimulada(Venda venda, boolean isProducao) {
+        // Formato simplificado de chave de acesso (44 dígitos)
+        // UF + AAMM + CNPJ + Mod + Serie + Num + FormaEmissao + CodNum + DV
+        String prefix = isProducao ? "26" : "26"; // PE
+        String cnpj = "00000000000000"; // Deveria vir de config.getLoja().getCnpj()
+        return prefix + "2401" + cnpj + "65" + "001" + String.format("%09d", venda.getIdVenda()) + "1" + "12345678" + "0";
     }
 }

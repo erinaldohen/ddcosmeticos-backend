@@ -2,21 +2,19 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.hibernate.envers.Audited; // <--- IMPORTANTE
+import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
-@Entity
-@Table(name = "vendas")
 @Data
-@NoArgsConstructor
-@Audited // <--- ADICIONADO: Corrige o erro do EnversMappingException
+@Entity
+@Audited
+@Table(name = "tb_vendas")
 public class Venda {
 
     @Id
@@ -24,57 +22,44 @@ public class Venda {
     private Long idVenda;
 
     private LocalDateTime dataVenda;
-
-    @Column(name = "valor_total", precision = 10, scale = 2)
     private BigDecimal valorTotal;
-
-    @Column(name = "desconto_total", precision = 10, scale = 2)
     private BigDecimal descontoTotal;
+
+    // Totais Fiscais (Transparência + Reforma)
+    private BigDecimal valorLiquido; // Total - Desconto
+    private BigDecimal valorIbs;
+    private BigDecimal valorCbs;
+    private BigDecimal valorIs;
+
+    private String clienteNome;
+    private String clienteDocumento;
 
     @Enumerated(EnumType.STRING)
     private FormaDePagamento formaDePagamento;
 
-    @Column(name = "quantidade_parcelas")
-    private Integer quantidadeParcelas = 1;
-
-    private String clienteNome;
-    private String clienteDocumento;
+    private Integer quantidadeParcelas;
 
     @ManyToOne
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
-    // mappedBy indica que quem manda na relação é o ItemVenda
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<ItemVenda> itens = new ArrayList<>();
+    @JsonManagedReference
+    private List<ItemVenda> itens;
 
-    // --- INTELIGÊNCIA FISCAL ---
-    @Column(name = "valor_ibs", precision = 10, scale = 2)
-    private BigDecimal valorIbs;
-
-    @Column(name = "valor_cbs", precision = 10, scale = 2)
-    private BigDecimal valorCbs;
-
-    @Column(name = "valor_is", precision = 10, scale = 2)
-    private BigDecimal valorIs;
-
-    @Column(name = "valor_liquido", precision = 10, scale = 2)
-    private BigDecimal valorLiquido;
-
-    // --- CONTROLE FISCAL ---
-    private String chaveAcessoNfce;
-
+    // === CONTROLE FISCAL (NFC-e) ===
     @Enumerated(EnumType.STRING)
-    private StatusFiscal statusNfce;
+    private StatusFiscal statusNfce; // PENDENTE, AUTORIZADA, REJEITADA...
 
-    private Integer numeroNfce;
-    private Integer serieNfce;
+    private String chaveAcessoNfce;
+    private String protocoloAutorizacao;
+    private LocalDateTime dataAutorizacao;
 
-    @Column(length = 500)
-    private String motivoDoCancelamento;
+    @Column(columnDefinition = "TEXT")
+    private String xmlNota;
 
-    public void adicionarItem(ItemVenda item) {
-        itens.add(item);
-        item.setVenda(this);
-    }
+    @Column(columnDefinition = "TEXT")
+    private String mensagemRejeicao; // Caso a SEFAZ rejeite
+
+    private String motivoDoCancelamento; // Caso cancele no sistema
 }

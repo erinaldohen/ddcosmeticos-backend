@@ -4,12 +4,12 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ConfiguracaoLojaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile; // IMPORTANTE: Faltava isso
 
 @RestController
-@RequestMapping("/api/configuracoes")
-@CrossOrigin("*") // Permite acesso do React
+@RequestMapping("/api/v1/configuracoes")
 public class ConfiguracaoLojaController {
 
     @Autowired
@@ -19,12 +19,6 @@ public class ConfiguracaoLojaController {
     @GetMapping
     public ResponseEntity<ConfiguracaoLoja> get() {
         return ResponseEntity.ok(service.buscarConfiguracao());
-    }
-
-    @PutMapping
-    public ResponseEntity<ConfiguracaoLoja> update(@RequestBody ConfiguracaoLoja config) {
-        // O Spring fará o bind automático do JSON aninhado para as classes @Embeddable
-        return ResponseEntity.ok(service.salvarConfiguracao(config));
     }
 
     // 2. Upload do Certificado
@@ -52,5 +46,13 @@ public class ConfiguracaoLojaController {
         String url = service.salvarLogo(file);
         // Retorna a URL em formato simples ou JSON string
         return ResponseEntity.ok("{\"url\": \"" + url + "\"}");
+    }
+
+    @PutMapping
+    @Transactional // Adicione isso para garantir a transação
+    public ResponseEntity<ConfiguracaoLoja> update(@RequestBody ConfiguracaoLoja config) {
+        // Log para ver o que está chegando
+        System.out.println("Recebendo config: " + config);
+        return ResponseEntity.ok(service.salvarConfiguracao(config));
     }
 }

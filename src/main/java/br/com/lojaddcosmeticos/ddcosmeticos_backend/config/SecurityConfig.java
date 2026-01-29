@@ -39,10 +39,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 1. ROTAS PÚBLICAS
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/**", "/auth/**").permitAll()
-                        .requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        .requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**", "/uploads/**").permitAll() // Adicionado uploads
 
                         // 2. LEITURA E OPERACIONAL (Liberado para qualquer utilizador logado)
-                        // --- AQUI ESTÁ A CORREÇÃO CRÍTICA: LIBERAR GET ANTES DE BLOQUEAR ADMIN ---
                         .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/caixa/status").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/auditoria/eventos").authenticated()
@@ -52,6 +51,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/caixa/**").authenticated()
 
                         // 3. RESTRITO A ADMIN (Escrita e Gestão)
+                        // Configurações da Loja (Importante para o seu caso agora)
+                        .requestMatchers("/api/v1/configuracoes/**").hasRole("ADMIN")
+
+                        // Produtos
                         .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasRole("ADMIN")
@@ -86,11 +89,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
-        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://127.0.0.1:5173"));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept"));
+
+        // --- CORREÇÃO DO ERRO DE CORS ---
+        // Usamos APENAS setAllowedOriginPatterns("*") quando Credentials é true.
+        // Removemos setAllowedOrigins para evitar conflito.
+        configuration.setAllowedOriginPatterns(List.of("*"));
+
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"));
+        configuration.setExposedHeaders(List.of("Authorization")); // Permite o front ler headers de resposta
         configuration.setAllowCredentials(true);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

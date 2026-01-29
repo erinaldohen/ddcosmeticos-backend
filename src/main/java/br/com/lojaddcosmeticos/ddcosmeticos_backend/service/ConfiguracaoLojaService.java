@@ -23,7 +23,7 @@ public class ConfiguracaoLojaService {
     private final Path fileStorageLocation;
 
     public ConfiguracaoLojaService() {
-        // Define onde salvar as imagens/certificados (pasta 'uploads' na raiz do projeto)
+        // Cria a pasta "uploads" na raiz do projeto se não existir
         this.fileStorageLocation = Paths.get("uploads").toAbsolutePath().normalize();
         try {
             Files.createDirectories(this.fileStorageLocation);
@@ -32,6 +32,7 @@ public class ConfiguracaoLojaService {
         }
     }
 
+    @Transactional(readOnly = true)
     public ConfiguracaoLoja buscarConfiguracao() {
         return repository.findFirstByOrderByIdAsc()
                 .orElseGet(this::criarConfiguracaoPadrao);
@@ -39,30 +40,46 @@ public class ConfiguracaoLojaService {
 
     @Transactional
     public ConfiguracaoLoja salvarConfiguracao(ConfiguracaoLoja novaConfig) {
+        // Busca a existente ou cria uma padrão com toda a estrutura inicializada
         ConfiguracaoLoja configExistente = repository.findFirstByOrderByIdAsc()
-                .orElse(new ConfiguracaoLoja());
+                .orElseGet(this::criarConfiguracaoPadrao);
 
-        // Mantém a logo antiga se não vier uma nova (lógica de segurança)
-        if (configExistente.getLoja() != null &&
-                (novaConfig.getLoja() != null && (novaConfig.getLoja().getLogoUrl() == null || novaConfig.getLoja().getLogoUrl().isEmpty()))) {
-            novaConfig.getLoja().setLogoUrl(configExistente.getLoja().getLogoUrl());
+        // 1. Atualização dos Dados da Loja (Com preservação de Logo)
+        if (novaConfig.getLoja() != null) {
+            // Se a nova config não trouxe URL de logo, mas a antiga tinha, mantém a antiga
+            if ((novaConfig.getLoja().getLogoUrl() == null || novaConfig.getLoja().getLogoUrl().isEmpty())
+                    && configExistente.getLoja() != null
+                    && configExistente.getLoja().getLogoUrl() != null) {
+
+                novaConfig.getLoja().setLogoUrl(configExistente.getLoja().getLogoUrl());
+            }
+            configExistente.setLoja(novaConfig.getLoja());
         }
 
-        // Atualiza os objetos embutidos
-        configExistente.setLoja(novaConfig.getLoja());
-        configExistente.setEndereco(novaConfig.getEndereco());
-        configExistente.setFiscal(novaConfig.getFiscal());
-        configExistente.setFinanceiro(novaConfig.getFinanceiro());
-        configExistente.setVendas(novaConfig.getVendas());
-        configExistente.setSistema(novaConfig.getSistema());
+        // 2. Atualização Segura dos outros módulos (Evita NullPointerException se o front mandar parcial)
+        if (novaConfig.getEndereco() != null) configExistente.setEndereco(novaConfig.getEndereco());
+
+        if (novaConfig.getFiscal() != null) {
+            // Preserva caminho do certificado se não vier no update
+            if (novaConfig.getFiscal().getCaminhoCertificado() == null && configExistente.getFiscal() != null) {
+                novaConfig.getFiscal().setCaminhoCertificado(configExistente.getFiscal().getCaminhoCertificado());
+                novaConfig.getFiscal().setSenhaCert(configExistente.getFiscal().getSenhaCert());
+            }
+            configExistente.setFiscal(novaConfig.getFiscal());
+        }
+
+        if (novaConfig.getFinanceiro() != null) configExistente.setFinanceiro(novaConfig.getFinanceiro());
+        if (novaConfig.getVendas() != null) configExistente.setVendas(novaConfig.getVendas());
+        if (novaConfig.getSistema() != null) configExistente.setSistema(novaConfig.getSistema());
 
         return repository.save(configExistente);
     }
 
+    @Transactional
     public void salvarCertificado(MultipartFile file, String senha) {
         ConfiguracaoLoja config = buscarConfiguracao();
 
-        // CORREÇÃO AQUI: Usando ConfiguracaoLoja.DadosFiscal
+        // Garante a existência do objeto antes de setar
         if (config.getFiscal() == null) config.setFiscal(new ConfiguracaoLoja.DadosFiscal());
 
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
@@ -74,10 +91,11 @@ public class ConfiguracaoLojaService {
         repository.save(config);
     }
 
+    @Transactional
     public String salvarLogo(MultipartFile file) {
         ConfiguracaoLoja config = buscarConfiguracao();
 
-        // CORREÇÃO AQUI: Usando ConfiguracaoLoja.DadosLoja
+        // Garante a existência do objeto antes de setar
         if (config.getLoja() == null) config.setLoja(new ConfiguracaoLoja.DadosLoja());
 
         String extension = getFileExtension(file.getOriginalFilename());
@@ -106,10 +124,10 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
+    // Método CRÍTICO: Garante que nunca existam nulos no banco
     private ConfiguracaoLoja criarConfiguracaoPadrao() {
         ConfiguracaoLoja config = new ConfiguracaoLoja();
 
-        // CORREÇÃO AQUI: Instanciando as classes internas corretamente
         config.setLoja(new ConfiguracaoLoja.DadosLoja());
         config.setEndereco(new ConfiguracaoLoja.EnderecoLoja());
         config.setFiscal(new ConfiguracaoLoja.DadosFiscal());
@@ -117,12 +135,9 @@ public class ConfiguracaoLojaService {
         config.setVendas(new ConfiguracaoLoja.DadosVendas());
         config.setSistema(new ConfiguracaoLoja.DadosSistema());
 
-        // Define padrões
-        config.getSistema().setImpressaoAuto(true);
-        config.getSistema().setLarguraPapel("80mm");
+        // Defaults
         config.getSistema().setTema("light");
-
-        // Padrões Fiscais básicos para evitar NullPointer
+        config.getSistema().setImpressaoAuto(true);
         config.getFiscal().setAmbiente("HOMOLOGACAO");
 
         return repository.save(config);

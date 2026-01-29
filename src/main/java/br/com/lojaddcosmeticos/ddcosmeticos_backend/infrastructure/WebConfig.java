@@ -1,4 +1,4 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;

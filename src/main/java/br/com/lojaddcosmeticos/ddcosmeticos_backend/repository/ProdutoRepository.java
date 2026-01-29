@@ -81,9 +81,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query(value = "SELECT * FROM produto WHERE ativo <> 1 OR ativo IS NULL", nativeQuery = true)
     List<Produto> findAllLixeira();
 
-    @Query(value = "SELECT * FROM produto WHERE codigo_barras = :ean LIMIT 1", nativeQuery = true)
-    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
-
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(@Param("id") Long id);
@@ -118,4 +115,8 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     Page<Produto> findByFornecedorId(Long fornecedorId, Pageable pageable);
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
+
+    // Em vez de SQL Nativo, use JPQL (que usa o nome da Classe, não da Tabela)
+    @Query("SELECT p FROM Produto p WHERE p.codigoBarras = :ean")
+    Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 }

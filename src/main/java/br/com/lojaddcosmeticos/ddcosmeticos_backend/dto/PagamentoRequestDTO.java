@@ -4,7 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import java.math.BigDecimal;
 
 public record PagamentoRequestDTO(
+        FormaDePagamento formaPagamento,
         BigDecimal valor,
-        FormaDePagamento formaPagamento, // Deve ser o Enum, não String
-        String codigoVale // Opcional, para trocas
+        Integer parcelas
 ) {}

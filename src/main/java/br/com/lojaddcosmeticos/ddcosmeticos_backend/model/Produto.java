@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 @Data
 @Entity
 @Audited
-@Table(name = "tb_produtos")
+@Table(name = "produto")
 public class Produto {
 
     @Id
@@ -21,6 +21,7 @@ public class Produto {
 
     // --- DADOS BÁSICOS ---
     private String descricao;
+    @Column(name = "codigo_barras", unique = true)
     private String codigoBarras;
 
     private String marca;

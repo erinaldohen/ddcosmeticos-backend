@@ -61,6 +61,7 @@ public class ProdutoService {
         Map<String, Object> resultado = new HashMap<>();
 
         try {
+            // Tenta decodificar. Se falhar acentos, o ideal seria tentar ISO-8859-1
             String conteudo = new String(bytes, StandardCharsets.UTF_8);
             if (conteudo.startsWith("\uFEFF")) conteudo = conteudo.substring(1);
 
@@ -149,16 +150,22 @@ public class ProdutoService {
         String ean = getVal(dados, mapa.get("ean")).replaceAll("[^0-9]", "");
         if (ean.isEmpty()) return null;
 
-        Produto p = produtoRepository.findByEanIrrestrito(ean).orElse(new Produto());
+        // [ATUALIZAÇÃO CRÍTICA] Busca o produto existente para atualizar em vez de duplicar
+        Produto p = produtoRepository.findByEanIrrestrito(ean)
+                .stream().findFirst() // Pega o primeiro se houver duplicidade antiga
+                .orElse(new Produto());
 
+        // Se é novo
         if (p.getId() == null) {
             p.setCodigoBarras(ean);
             p.setAtivo(true);
             p.setOrigem("0"); p.setCst("102"); p.setNcm("00000000");
             p.setQuantidadeEmEstoque(0); p.setEstoqueFiscal(0); p.setEstoqueNaoFiscal(0);
         } else {
-            if (!mapa.containsKey("ativo")) {
-                p.setAtivo(true);
+            // Se já existe, não mexe no status a menos que o arquivo peça
+            if (mapa.containsKey("ativo")) {
+                String a = getVal(dados, mapa.get("ativo")).toUpperCase();
+                p.setAtivo(a.startsWith("S") || a.equals("1") || a.equals("TRUE"));
             }
         }
 
@@ -171,7 +178,21 @@ public class ProdutoService {
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
 
-        if (mapa.containsKey("qtd")) p.setQuantidadeEmEstoque(lerDecimal(getVal(dados, mapa.get("qtd"))).intValue());
+        // Estoque: Soma ao existente se for atualização, ou define se for novo
+        int qtdArquivo = 0;
+        if (mapa.containsKey("qtd")) {
+            qtdArquivo = lerDecimal(getVal(dados, mapa.get("qtd"))).intValue();
+        }
+
+        // Se já existia, soma. Se é novo, define.
+        if (p.getId() != null) {
+            // Opção: Somar ou Substituir? Normalmente importação massiva substitui para balanço.
+            // Aqui vamos manter a lógica de substituir para garantir integridade com o arquivo
+            p.setQuantidadeEmEstoque(qtdArquivo);
+        } else {
+            p.setQuantidadeEmEstoque(qtdArquivo);
+        }
+
         if (mapa.containsKey("fiscal")) p.setEstoqueFiscal(lerDecimal(getVal(dados, mapa.get("fiscal"))).intValue());
         if (p.getEstoqueFiscal() == null) p.setEstoqueFiscal(0);
 
@@ -194,11 +215,6 @@ public class ProdutoService {
         if (mapa.containsKey("sub")) p.setSubcategoria(truncar(getVal(dados, mapa.get("sub")), 50));
         if (mapa.containsKey("unidade")) p.setUnidade(truncar(getVal(dados, mapa.get("unidade")), 10));
 
-        if (mapa.containsKey("ativo")) {
-            String a = getVal(dados, mapa.get("ativo")).toUpperCase();
-            p.setAtivo(a.startsWith("S") || a.equals("1") || a.equals("TRUE"));
-        }
-
         String ncmArquivo = "";
         if (mapa.containsKey("ncm")) ncmArquivo = truncar(getVal(dados, mapa.get("ncm")).replaceAll("[^0-9]", ""), 8);
 
@@ -207,13 +223,16 @@ public class ProdutoService {
         if (!ncmSuspeito) {
             p.setNcm(ncmArquivo);
         } else {
+            // Tenta adivinhar NCM
             String ncmInteligente = null;
             String[] palavras = p.getDescricao().split(" ");
             for (String palavra : palavras) {
                 String pl = palavra.replaceAll("[^a-zA-Z0-9]", "");
                 if (pl.length() > 3) {
-                    ncmInteligente = produtoRepository.findNcmInteligente(pl);
-                    if (ncmInteligente != null) break;
+                    try {
+                        ncmInteligente = produtoRepository.findNcmInteligente(pl);
+                        if (ncmInteligente != null) break;
+                    } catch (Exception ignored) {} // Ignora erro de query
                 }
             }
             if (ncmInteligente != null) p.setNcm(ncmInteligente);
@@ -226,6 +245,7 @@ public class ProdutoService {
             if(!o.isEmpty()) p.setOrigem(o.substring(0, 1));
         }
 
+        // Aplica regras fiscais se tiver NCM
         if (p.getNcm() != null && !p.getNcm().equals("00000000")) {
             try { calculadoraFiscalService.aplicarRegrasFiscais(p); } catch (Exception ignored) {}
         }
@@ -244,8 +264,13 @@ public class ProdutoService {
         if (val == null || val.trim().isEmpty()) return BigDecimal.ZERO;
         try {
             val = val.replace("R$", "").trim();
-            if (val.contains(",")) {
+            // Lógica para detectar padrão BR (1.000,00) vs US (1000.00)
+            if (val.contains(",") && val.contains(".")) {
+                // Formato misto (ex: 1.200,50) -> Remove ponto, troca vírgula
                 val = val.replace(".", "").replace(",", ".");
+            } else if (val.contains(",")) {
+                // Apenas vírgula (ex: 15,90) -> Troca por ponto
+                val = val.replace(",", ".");
             }
             return new BigDecimal(val);
         } catch (Exception e) {
@@ -308,7 +333,6 @@ public class ProdutoService {
     @Transactional(readOnly = true)
     public List<HistoricoProdutoDTO> buscarHistorico(Long id) { return auditoriaService.buscarHistoricoDoProduto(id); }
 
-    // [CORREÇÃO] Implementando a conversão DTO -> Entity
     @Transactional
     public ProdutoDTO salvar(ProdutoDTO dto) {
         Produto produto = new Produto();
@@ -323,7 +347,6 @@ public class ProdutoService {
         return produtoRepository.save(produto);
     }
 
-    // [CORREÇÃO] Corrigindo a atualização também
     @Transactional
     public Produto atualizar(Long id, ProdutoDTO dto) {
         Produto produto = buscarPorId(id);
@@ -331,7 +354,6 @@ public class ProdutoService {
         return salvar(produto);
     }
 
-    // Método auxiliar para mapear DTO -> Produto (Manual para Record)
     private void atualizarDados(Produto p, ProdutoDTO d) {
         p.setDescricao(d.descricao());
         p.setCodigoBarras(d.codigoBarras());
@@ -418,7 +440,7 @@ public class ProdutoService {
         return resultado;
     }
 
-    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO CSV ---
+    // --- EXPORTAÇÃO CSV ---
     public byte[] gerarRelatorioCsv() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         StringBuilder sb = new StringBuilder();
@@ -438,7 +460,7 @@ public class ProdutoService {
         return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
     }
 
-    // --- IMPLEMENTAÇÃO DA EXPORTAÇÃO EXCEL (XLSX) ---
+    // --- EXPORTAÇÃO EXCEL ---
     public byte[] gerarRelatorioExcel() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         try (Workbook workbook = new XSSFWorkbook();

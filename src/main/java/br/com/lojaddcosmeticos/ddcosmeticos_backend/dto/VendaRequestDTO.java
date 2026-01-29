@@ -8,17 +8,17 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public record VendaRequestDTO(
-        String clienteDocumento, // Pode ser null
+        String clienteDocumento,
         String clienteNome,
 
-        @NotNull(message = "A forma de pagamento é obrigatória")
-        FormaDePagamento formaDePagamento, // Certifique-se que o Enum no Java tem os valores: PIX, DINHEIRO, CREDITO, DEBITO, CREDIARIO
-
-        // O front manda 'pagamentosDetalhados', mas se não usarmos no backend agora,
-        // não precisa declarar aqui (o Jackson ignora) ou pode declarar uma List genérica se quiser receber.
+        // Mantido para compatibilidade, mas o foco agora é a lista abaixo
+        FormaDePagamento formaDePagamento,
 
         @NotEmpty(message = "A venda deve ter pelo menos um item")
         List<ItemVendaDTO> itens,
+
+        // NOVO CAMPO: Lista de pagamentos do PDV
+        List<PagamentoRequestDTO> pagamentos,
 
         BigDecimal descontoTotal,
         Boolean ehOrcamento,

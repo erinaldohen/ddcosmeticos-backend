@@ -53,25 +53,34 @@ public class VendaService {
     @CacheEvict(value = "dashboard", allEntries = true)
     public VendaResponseDTO realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
-        if (usuarioLogado == null) throw new ValidationException("Sessão inválida. Faça login novamente.");
+        if (usuarioLogado == null) throw new ValidationException("Sessão inválida.");
 
         CaixaDiario caixa = validarCaixaAberto(usuarioLogado);
 
         Venda venda = new Venda();
         venda.setUsuario(usuarioLogado);
         venda.setDataVenda(LocalDateTime.now());
-        venda.setClienteNome(dto.clienteNome());
+        venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Consumidor Final");
         venda.setClienteDocumento(dto.clienteDocumento());
-        venda.setFormaDePagamento(dto.formaDePagamento());
+
+        // Se vier lista de pagamentos, pega o primeiro como principal ou define MIX
+        if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
+            venda.setFormaDePagamento(dto.pagamentos().get(0).formaPagamento());
+        } else {
+            venda.setFormaDePagamento(dto.formaDePagamento() != null ? dto.formaDePagamento() : FormaDePagamento.DINHEIRO);
+        }
+
         venda.setQuantidadeParcelas(dto.quantidadeParcelas() != null ? dto.quantidadeParcelas() : 1);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
 
         RegraTributaria regra = buscarRegraVigente();
 
+        // Processamento dos Itens
         List<ItemVenda> itens = dto.itens().stream().map(itemDto -> {
             Produto produto = produtoRepository.findById(itemDto.produtoId())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.produtoId()));
 
+            // Baixa estoque
             processarSaidaEstoqueComAuditoria(produto, itemDto.quantidade().intValue());
 
             ItemVenda item = new ItemVenda();
@@ -80,27 +89,32 @@ public class VendaService {
             item.setPrecoUnitario(itemDto.precoUnitario());
             item.setVenda(venda);
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
+
+            // Dados fiscais
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
             item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
 
-            if (produto.isImpostoSeletivo()) {
-                BigDecimal valorItem = item.getPrecoUnitario().multiply(item.getQuantidade());
-                item.setValorImpostoSeletivo(valorItem.multiply(new BigDecimal("0.15")).setScale(2, RoundingMode.HALF_UP));
-            }
             return item;
         }).collect(Collectors.toList());
 
         venda.setItens(itens);
         venda.setValorTotal(calcularTotalVenda(itens, venda.getDescontoTotal()));
-
-        // Validação de limite de desconto
-        validarLimitesDeDesconto(usuarioLogado, venda.getValorTotal(), venda.getDescontoTotal());
-
-        aplicarDadosFiscais(venda, itens);
-        venda.setStatusNfce(StatusFiscal.PENDENTE);
+        venda.setStatusNfce(StatusFiscal.PENDENTE); // Começa pendente
 
         vendaRepository.save(venda);
         atualizarSaldoCaixa(caixa, venda);
+
+        // --- TENTATIVA DE EMISSÃO AUTOMÁTICA NFC-e ---
+        // Só tenta emitir se NÃO for orçamento
+        if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
+            try {
+                log.info("📡 Tentando emitir NFC-e para Venda #{}", venda.getIdVenda());
+                nfceService.emitirNfce(venda, false);
+            } catch (Exception e) {
+                log.error("⚠️ Venda salva, mas falha na emissão automática: {}", e.getMessage());
+                // Não lançamos erro para não travar o PDV. O usuário verá status "Erro" ou "Pendente".
+            }
+        }
 
         return converterParaDTO(venda);
     }

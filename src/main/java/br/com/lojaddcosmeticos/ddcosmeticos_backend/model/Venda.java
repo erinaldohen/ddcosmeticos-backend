@@ -2,64 +2,77 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
-import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.ToString; // <--- Importante
 import org.hibernate.envers.Audited;
+import org.hibernate.envers.NotAudited;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Data
 @Entity
 @Audited
-@Table(name = "tb_vendas")
+@Table(name = "tb_venda")
 public class Venda {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long idVenda;
 
-    private LocalDateTime dataVenda;
-    private BigDecimal valorTotal;
-    private BigDecimal descontoTotal;
-
-    // Totais Fiscais (Transparência + Reforma)
-    private BigDecimal valorLiquido; // Total - Desconto
-    private BigDecimal valorIbs;
-    private BigDecimal valorCbs;
-    private BigDecimal valorIs;
-
-    private String clienteNome;
-    private String clienteDocumento;
-
-    @Enumerated(EnumType.STRING)
-    private FormaDePagamento formaDePagamento;
-
-    private Integer quantidadeParcelas;
-
     @ManyToOne
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
-    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonManagedReference
+    private LocalDateTime dataVenda;
+    private BigDecimal valorTotal;
+    private BigDecimal descontoTotal;
+
+    @Column(length = 100)
+    private String clienteNome;
+
+    @Column(length = 20)
+    private String clienteDocumento;
+
+    @Enumerated(EnumType.STRING)
+    private FormaDePagamento formaDePagamento; // Principal (Legado)
+
+    private Integer quantidadeParcelas;
+
+    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    @ToString.Exclude // <--- EVITA O LOOP INFINITO NO LOG
     private List<ItemVenda> itens;
 
-    // === CONTROLE FISCAL (NFC-e) ===
+    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @ToString.Exclude
+    private List<PagamentoVenda> pagamentos = new ArrayList<>();
+
+    // Campos Fiscais
+    private BigDecimal valorIbs;
+    private BigDecimal valorCbs;
+    private BigDecimal valorIs;
+    private BigDecimal valorLiquido;
+
     @Enumerated(EnumType.STRING)
-    private StatusFiscal statusNfce; // PENDENTE, AUTORIZADA, REJEITADA...
+    private StatusFiscal statusNfce;
 
+    @Column(length = 50)
     private String chaveAcessoNfce;
-    private String protocoloAutorizacao;
-    private LocalDateTime dataAutorizacao;
 
+    @Column(length = 20)
+    private String protocoloAutorizacao;
+
+    @Lob
     @Column(columnDefinition = "TEXT")
     private String xmlNota;
 
     @Column(columnDefinition = "TEXT")
-    private String mensagemRejeicao; // Caso a SEFAZ rejeite
+    private String mensagemRejeicao;
 
-    private String motivoDoCancelamento; // Caso cancele no sistema
+    private LocalDateTime dataAutorizacao;
+    private String motivoDoCancelamento;
+    private String observacao;
 }

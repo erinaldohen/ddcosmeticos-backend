@@ -12,29 +12,37 @@ public record ItemVendaResponseDTO(
         BigDecimal descontoItem,
         BigDecimal valorTotalItem,
 
-        // CAMPOS PARA CMV
+        // CAMPOS PARA CMV (Custo da Mercadoria Vendida)
         BigDecimal custoUnitario,
         BigDecimal custoTotal
 ) implements Serializable {
 
     /**
      * Construtor auxiliar para facilitar a conversão a partir da Entidade.
-     * Mantém a lógica de assumir desconto ZERO e usar métodos da entidade.
+     * CORREÇÃO: Realizamos o cálculo matemático aqui (Preço x Qtd) em vez de chamar método inexistente.
      */
     public ItemVendaResponseDTO(ItemVenda item) {
         this(
                 item.getProduto().getCodigoBarras(),
-                // Verifica se é getDescricao() ou getNome() na sua entidade Produto
                 item.getProduto().getDescricao(),
                 item.getQuantidade(),
                 item.getPrecoUnitario(),
-                // Campo desconto não existe na entidade ItemVenda atual, assumindo ZERO
+
+                // Desconto (assumindo zero por enquanto)
                 BigDecimal.ZERO,
-                // Usa o método calculado da entidade
-                item.getTotalItem(),
-                // Campos de custo histórico
-                item.getCustoUnitarioHistorico(),
-                item.getCustoTotal()
+
+                // [CORREÇÃO LINHA 34] Calcula Total: Preço Unitário * Quantidade
+                (item.getPrecoUnitario() != null && item.getQuantidade() != null)
+                        ? item.getPrecoUnitario().multiply(item.getQuantidade())
+                        : BigDecimal.ZERO,
+
+                // Custo Unitário
+                item.getCustoUnitarioHistorico() != null ? item.getCustoUnitarioHistorico() : BigDecimal.ZERO,
+
+                // [CORREÇÃO LINHA 37] Calcula Custo Total: Custo Unitário * Quantidade
+                (item.getCustoUnitarioHistorico() != null && item.getQuantidade() != null)
+                        ? item.getCustoUnitarioHistorico().multiply(item.getQuantidade())
+                        : BigDecimal.ZERO
         );
     }
 }

@@ -33,10 +33,7 @@ public class VendaService {
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private ClienteRepository clienteRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
-
-    // ATUALIZADO: Usamos o Service para buscar a configuração completa com objetos aninhados
     @Autowired private ConfiguracaoLojaService configuracaoLojaService;
-
     @Autowired private RegraTributariaRepository regraTributariaRepository;
     @Autowired private CaixaDiarioRepository caixaRepository;
     @Autowired private EstoqueService estoqueService;
@@ -46,7 +43,7 @@ public class VendaService {
     @Autowired private AuditoriaService auditoriaService;
 
     // =========================================================================
-    // 1. PROCESSAMENTO DE VENDAS
+    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO)
     // =========================================================================
 
     @Transactional
@@ -63,7 +60,7 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Consumidor Final");
         venda.setClienteDocumento(dto.clienteDocumento());
 
-        // Se vier lista de pagamentos, pega o primeiro como principal ou define MIX
+        // Define forma principal
         if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
             venda.setFormaDePagamento(dto.pagamentos().get(0).formaPagamento());
         } else {
@@ -80,7 +77,6 @@ public class VendaService {
             Produto produto = produtoRepository.findById(itemDto.produtoId())
                     .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.produtoId()));
 
-            // Baixa estoque
             processarSaidaEstoqueComAuditoria(produto, itemDto.quantidade().intValue());
 
             ItemVenda item = new ItemVenda();
@@ -89,8 +85,6 @@ public class VendaService {
             item.setPrecoUnitario(itemDto.precoUnitario());
             item.setVenda(venda);
             item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
-
-            // Dados fiscais
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
             item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
 
@@ -99,25 +93,32 @@ public class VendaService {
 
         venda.setItens(itens);
         venda.setValorTotal(calcularTotalVenda(itens, venda.getDescontoTotal()));
-        venda.setStatusNfce(StatusFiscal.PENDENTE); // Começa pendente
+        venda.setStatusNfce(StatusFiscal.PENDENTE);
+
+        validarLimitesDeDesconto(usuarioLogado, venda.getValorTotal(), venda.getDescontoTotal());
+        aplicarDadosFiscais(venda, itens);
 
         vendaRepository.save(venda);
-        atualizarSaldoCaixa(caixa, venda);
 
-        // --- TENTATIVA DE EMISSÃO AUTOMÁTICA NFC-e ---
-        // Só tenta emitir se NÃO for orçamento
+        // Atualiza caixa
+        atualizarFinanceiro(caixa, venda, dto.pagamentos());
+
+        // Emissão NFC-e
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
             try {
                 log.info("📡 Tentando emitir NFC-e para Venda #{}", venda.getIdVenda());
                 nfceService.emitirNfce(venda, false);
             } catch (Exception e) {
                 log.error("⚠️ Venda salva, mas falha na emissão automática: {}", e.getMessage());
-                // Não lançamos erro para não travar o PDV. O usuário verá status "Erro" ou "Pendente".
             }
         }
 
         return converterParaDTO(venda);
     }
+
+    // =========================================================================
+    // 2. GESTÃO DE ESTADOS (SUSPENDER, EFETIVAR, CANCELAR)
+    // =========================================================================
 
     @Transactional
     public Venda efetivarVenda(Long idVendaPrevia) {
@@ -146,7 +147,8 @@ public class VendaService {
                 buscarIdClientePorDocumento(venda.getClienteDocumento())
         );
 
-        atualizarSaldoCaixa(caixa, venda);
+        atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
+        caixaRepository.save(caixa);
 
         try {
             nfceService.emitirNfce(venda, false);
@@ -156,10 +158,6 @@ public class VendaService {
         return vendaRepository.save(venda);
     }
 
-    // =========================================================================
-    // 2. GESTÃO DE ESTADOS
-    // =========================================================================
-
     @Transactional
     public Venda suspenderVenda(VendaRequestDTO dto) {
         Venda venda = new Venda();
@@ -167,7 +165,12 @@ public class VendaService {
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa " + LocalTime.now().toString().substring(0,5));
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusNfce(StatusFiscal.EM_ESPERA);
-        venda.setFormaDePagamento(dto.formaDePagamento());
+
+        if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
+            venda.setFormaDePagamento(dto.pagamentos().get(0).formaPagamento());
+        } else {
+            venda.setFormaDePagamento(dto.formaDePagamento() != null ? dto.formaDePagamento() : FormaDePagamento.DINHEIRO);
+        }
 
         BigDecimal totalItens = processarItensParaOrcamento(venda, dto.itens());
         venda.setValorTotal(totalItens);
@@ -198,81 +201,8 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 3. AUXILIARES E CONVERSORES
+    // 3. CONSULTAS (LISTAGEM) - Onde estava o erro
     // =========================================================================
-
-    private void processarSaidaEstoqueComAuditoria(Produto produto, int qtdVenda) {
-        if (produto.getQuantidadeEmEstoque() < qtdVenda) {
-            String msg = String.format("Venda sem estoque: %s. Qtd: %d, Anterior: %d",
-                    produto.getDescricao(), qtdVenda, produto.getQuantidadeEmEstoque());
-            auditoriaService.registrar("ESTOQUE_NEGATIVO", msg);
-        }
-        estoqueService.registrarSaidaVenda(produto, qtdVenda);
-    }
-
-    private void atualizarSaldoCaixa(CaixaDiario caixa, Venda venda) {
-        BigDecimal total = venda.getValorTotal();
-        if (venda.getFormaDePagamento() == FormaDePagamento.DINHEIRO) {
-            caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(total));
-        } else if (venda.getFormaDePagamento() == FormaDePagamento.PIX) {
-            caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(total));
-        } else if (venda.getFormaDePagamento() == FormaDePagamento.CREDITO || venda.getFormaDePagamento() == FormaDePagamento.DEBITO) {
-            caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(total));
-        }
-        caixaRepository.save(caixa);
-    }
-
-    private VendaResponseDTO converterParaDTO(Venda venda) {
-        List<ItemVendaResponseDTO> itensDto = venda.getItens().stream()
-                .map(ItemVendaResponseDTO::new).collect(Collectors.toList());
-
-        return new VendaResponseDTO(
-                venda.getIdVenda(),
-                venda.getDataVenda(),
-                venda.getValorTotal(),
-                venda.getDescontoTotal(),
-                venda.getClienteNome(),
-                venda.getFormaDePagamento(),
-                itensDto,
-                venda.getValorIbs(),
-                venda.getValorCbs(),
-                venda.getValorIs(),
-                venda.getValorLiquido(),
-                venda.getStatusNfce(),
-                venda.getChaveAcessoNfce()
-        );
-    }
-
-    // =========================================================================
-    // 4. MÉTODOS DE APOIO
-    // =========================================================================
-
-    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
-        if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
-
-        // CORREÇÃO: Busca a configuração via Service (garante não nulo)
-        ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
-
-        BigDecimal bruto = totalVenda.add(descontoAplicado);
-        BigDecimal percentual = descontoAplicado.divide(bruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
-
-        // CORREÇÃO: Acessa o objeto Financeiro aninhado
-        // Se por algum motivo financeiro for null (banco legado), usa fallback
-        BigDecimal limite;
-        if (config.getFinanceiro() != null) {
-            limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN)
-                    ? config.getFinanceiro().getDescGerente()
-                    : config.getFinanceiro().getDescCaixa();
-        } else {
-            limite = new BigDecimal("5.00"); // Fallback seguro
-        }
-
-        if (limite == null) limite = new BigDecimal("5.00"); // Double check
-
-        if (percentual.compareTo(limite) > 0) {
-            throw new ValidationException("Desconto de " + percentual.setScale(2, RoundingMode.HALF_UP) + "% excede o limite permitido de " + limite + "%");
-        }
-    }
 
     @Transactional(readOnly = true)
     public List<VendaResponseDTO> listarVendasSuspensas() {
@@ -286,6 +216,112 @@ public class VendaService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
         return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable).map(this::converterParaDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public Venda buscarVendaComItens(Long id) {
+        return vendaRepository.findByIdComItens(id).orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+    }
+
+    // =========================================================================
+    // 4. ATUALIZAÇÃO FINANCEIRA
+    // =========================================================================
+
+    private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoRequestDTO> pagamentos) {
+        if (pagamentos == null || pagamentos.isEmpty()) {
+            atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
+            return;
+        }
+
+        for (PagamentoRequestDTO pag : pagamentos) {
+            atualizarSaldoCaixaUnico(caixa, pag.valor(), pag.formaPagamento());
+        }
+        caixaRepository.save(caixa);
+    }
+
+    private void atualizarSaldoCaixaUnico(CaixaDiario caixa, BigDecimal valor, FormaDePagamento forma) {
+        if (forma == FormaDePagamento.DINHEIRO) {
+            caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(valor));
+        } else if (forma == FormaDePagamento.PIX) {
+            caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(valor));
+        } else if (forma == FormaDePagamento.CREDITO || forma == FormaDePagamento.DEBITO) {
+            caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor));
+        }
+    }
+
+    // =========================================================================
+    // 5. AUXILIARES E CONVERSORES
+    // =========================================================================
+
+    private void processarSaidaEstoqueComAuditoria(Produto produto, int qtdVenda) {
+        if (produto.getQuantidadeEmEstoque() < qtdVenda) {
+            String msg = String.format("Venda sem estoque: %s. Qtd: %d, Anterior: %d",
+                    produto.getDescricao(), qtdVenda, produto.getQuantidadeEmEstoque());
+            auditoriaService.registrar("ESTOQUE_NEGATIVO", msg);
+        }
+        estoqueService.registrarSaidaVenda(produto, qtdVenda);
+    }
+
+    private VendaResponseDTO converterParaDTO(Venda venda) {
+        // 1. Converte Itens
+        List<ItemVendaResponseDTO> itensDto = venda.getItens() != null
+                ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
+                : new ArrayList<>();
+
+        // 2. Converte Pagamentos (CORREÇÃO DO ERRO 500)
+        List<PagamentoResponseDTO> pagamentosDto = new ArrayList<>();
+        if (venda.getPagamentos() != null) {
+            pagamentosDto = venda.getPagamentos().stream()
+                    .map(p -> new PagamentoResponseDTO(
+                            p.getFormaPagamento(),
+                            p.getValor(),
+                            p.getParcelas()
+                    ))
+                    .collect(Collectors.toList());
+        }
+
+        return new VendaResponseDTO(
+                venda.getIdVenda(),
+                venda.getDataVenda(),
+                venda.getValorTotal(),
+                venda.getDescontoTotal(),
+                venda.getClienteNome(),
+                venda.getFormaDePagamento(),
+                itensDto,
+                pagamentosDto, // <--- Passando a lista segura
+                venda.getValorIbs(),
+                venda.getValorCbs(),
+                venda.getValorIs(),
+                venda.getValorLiquido(),
+                venda.getStatusNfce(),
+                venda.getChaveAcessoNfce()
+        );
+    }
+
+    private void validarLimitesDeDesconto(Usuario usuario, BigDecimal totalVenda, BigDecimal descontoAplicado) {
+        if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
+
+        ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
+        ConfiguracaoLoja.DadosFinanceiro dadosFin = config.getFinanceiro();
+        if (dadosFin == null) {
+            dadosFin = new ConfiguracaoLoja.DadosFinanceiro();
+            dadosFin.setDescCaixa(new BigDecimal("5.00"));
+            dadosFin.setDescGerente(new BigDecimal("20.00"));
+        }
+
+        BigDecimal bruto = totalVenda.add(descontoAplicado);
+        if (bruto.compareTo(BigDecimal.ZERO) == 0) return;
+
+        BigDecimal percentual = descontoAplicado.divide(bruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+
+        BigDecimal limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN)
+                ? nvl(dadosFin.getDescGerente(), new BigDecimal("100.00"))
+                : nvl(dadosFin.getDescCaixa(), new BigDecimal("5.00"));
+
+        if (percentual.compareTo(limite) > 0) {
+            throw new ValidationException("Desconto de " + percentual.setScale(2, RoundingMode.HALF_UP) +
+                    "% excede o limite permitido de " + limite + "%");
+        }
     }
 
     private BigDecimal processarItensParaOrcamento(Venda venda, List<ItemVendaDTO> dtos) {
@@ -313,17 +349,22 @@ public class VendaService {
     }
 
     private void aplicarDadosFiscais(Venda venda, List<ItemVenda> itens) {
-        ResumoFiscalCarrinhoDTO fiscal = calculadoraFiscalService.calcularTotaisCarrinho(itens);
-        venda.setValorIbs(fiscal.totalIbs());
-        venda.setValorCbs(fiscal.totalCbs());
-        venda.setValorIs(fiscal.totalIs());
-        venda.setValorLiquido(fiscal.totalLiquido().subtract(nvl(venda.getDescontoTotal())));
+        try {
+            ResumoFiscalCarrinhoDTO fiscal = calculadoraFiscalService.calcularTotaisCarrinho(itens);
+            venda.setValorIbs(fiscal.totalIbs());
+            venda.setValorCbs(fiscal.totalCbs());
+            venda.setValorIs(fiscal.totalIs());
+            venda.setValorLiquido(fiscal.totalLiquido().subtract(nvl(venda.getDescontoTotal())));
+        } catch (Exception e) {
+            log.warn("Erro ao calcular impostos: {}", e.getMessage());
+            venda.setValorIbs(BigDecimal.ZERO);
+            venda.setValorCbs(BigDecimal.ZERO);
+        }
     }
 
     private Usuario capturarUsuarioLogado() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || auth.getName().equals("anonymousUser")) return null;
-
         String login = auth.getName();
         return usuarioRepository.findByMatriculaOrEmail(login, login).orElse(null);
     }
@@ -347,9 +388,5 @@ public class VendaService {
     }
 
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
-
-    @Transactional(readOnly = true)
-    public Venda buscarVendaComItens(Long id) {
-        return vendaRepository.findByIdComItens(id).orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
-    }
+    private BigDecimal nvl(BigDecimal val, BigDecimal padrao) { return val == null ? padrao : val; }
 }

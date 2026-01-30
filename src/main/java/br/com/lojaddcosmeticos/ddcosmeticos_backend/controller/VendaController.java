@@ -1,12 +1,9 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaCompletaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.VendaService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -14,100 +11,70 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/vendas")
-@Tag(name = "Vendas", description = "Gestão de Vendas, Orçamentos e Fila de Espera")
 public class VendaController {
 
     @Autowired
     private VendaService vendaService;
 
-    // ==================================================================================
-    // SESSÃO 1: OPERAÇÕES PRINCIPAIS
-    // ==================================================================================
-
+    // 1. Realizar Venda (Finalizar)
     @PostMapping
-    @Operation(summary = "Realizar Venda (PDV)", description = "Recebe os itens e pagamentos, valida, dá baixa no estoque e retorna os dados para o cupom.")
     public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        // [CORREÇÃO] Mantido apenas este método. O endpoint '/venda' foi removido por redundância.
-        VendaResponseDTO response = vendaService.realizarVenda(dto);
-        return ResponseEntity.ok(response);
+        VendaResponseDTO vendaRealizada = vendaService.realizarVenda(dto);
+        return ResponseEntity.ok(vendaRealizada);
     }
 
+    // 2. Suspender Venda (Pausar)
     @PostMapping("/suspender")
-    @Operation(summary = "Suspender Venda (Fila de Espera)")
-    public ResponseEntity<VendaCompletaResponseDTO> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        Venda venda = vendaService.suspenderVenda(dto);
-        return ResponseEntity.ok(converterParaDTO(venda));
+    public ResponseEntity<Long> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
+        // O serviço retorna a Entidade Venda, pegamos o ID para devolver ao front
+        Venda vendaSuspensa = vendaService.suspenderVenda(dto);
+        return ResponseEntity.ok(vendaSuspensa.getIdVenda());
     }
 
-    @PostMapping("/{id}/efetivar")
-    @Operation(summary = "Efetivar Venda Suspensa/Orçamento")
-    public ResponseEntity<VendaCompletaResponseDTO> efetivarVenda(@PathVariable Long id) {
-        Venda venda = vendaService.efetivarVenda(id);
-        return ResponseEntity.ok(converterParaDTO(venda));
-    }
-
-    // ==================================================================================
-    // SESSÃO 2: CONSULTAS
-    // ==================================================================================
-
+    // 3. Listar Vendas Suspensas (Retomar)
     @GetMapping("/suspensas")
-    @Operation(summary = "Listar Vendas Suspensas")
-    public ResponseEntity<List<VendaResponseDTO>> listarSuspensas() {
+    public ResponseEntity<List<VendaResponseDTO>> listarVendasSuspensas() {
+        // O serviço retorna List<VendaResponseDTO>
         return ResponseEntity.ok(vendaService.listarVendasSuspensas());
     }
 
+    // 4. Efetivar Venda Suspensa (Concluir o que estava pausado)
+    @PostMapping("/{id}/efetivar")
+    public ResponseEntity<Venda> efetivarVenda(@PathVariable Long id) {
+        Venda venda = vendaService.efetivarVenda(id);
+        return ResponseEntity.ok(venda);
+    }
+
+    // 5. Histórico de Vendas (Filtros)
     @GetMapping
-    public ResponseEntity<Page<VendaResponseDTO>> listar(
+    public ResponseEntity<Page<VendaResponseDTO>> listarVendas(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim,
             @PageableDefault(size = 20, sort = "dataVenda") Pageable pageable) {
+
+        // O serviço retorna Page<VendaResponseDTO>
         return ResponseEntity.ok(vendaService.listarVendas(inicio, fim, pageable));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<VendaCompletaResponseDTO> buscarPorId(@PathVariable Long id) {
-        Venda venda = vendaService.buscarVendaComItens(id);
-        return ResponseEntity.ok(converterParaDTO(venda));
-    }
-
-    // ==================================================================================
-    // SESSÃO 3: CANCELAMENTO
-    // ==================================================================================
-
-    @PutMapping("/{id}/cancelar")
-    @PreAuthorize("hasAnyRole('GERENTE', 'ADMIN')")
-    public ResponseEntity<Void> cancelarVenda(@PathVariable Long id, @RequestBody String motivo) {
+    // 6. Cancelar Venda
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> cancelarVenda(@PathVariable Long id, @RequestBody Map<String, String> payload) {
+        String motivo = payload.get("motivo");
         vendaService.cancelarVenda(id, motivo);
         return ResponseEntity.noContent().build();
     }
 
-    // ==================================================================================
-    // SESSÃO 4: AUXILIARES
-    // ==================================================================================
-
-    private VendaCompletaResponseDTO converterParaDTO(Venda venda) {
-        String status = (venda.getStatusNfce() != null) ? venda.getStatusNfce().name() : "N/A";
-
-        return new VendaCompletaResponseDTO(
-                venda.getIdVenda(),
-                venda.getDataVenda(),
-                venda.getClienteNome(),
-                venda.getClienteDocumento(),
-                venda.getValorTotal(),
-                venda.getDescontoTotal(),
-                status,
-                venda.getItens().stream()
-                        .map(i -> i.getProduto().getDescricao())
-                        .collect(Collectors.toList())
-        );
+    // 7. Buscar Venda por ID (Detalhes)
+    @GetMapping("/{id}")
+    public ResponseEntity<Venda> buscarPorId(@PathVariable Long id) {
+        return ResponseEntity.ok(vendaService.buscarVendaComItens(id));
     }
 }

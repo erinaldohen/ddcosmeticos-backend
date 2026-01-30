@@ -166,4 +166,12 @@ public class ProdutoController {
         ProdutoDTO produto = produtoService.buscarPorEanOuExterno(ean);
         return ResponseEntity.ok(produto);
     }
+
+    @GetMapping("/pdv")
+    public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
+            @RequestParam(required = false) String termo,
+            Pageable pageable) {
+        // Reutiliza a busca existente que já filtra por EAN ou Nome
+        return ResponseEntity.ok(produtoService.listarResumo(termo, pageable));
+    }
 }

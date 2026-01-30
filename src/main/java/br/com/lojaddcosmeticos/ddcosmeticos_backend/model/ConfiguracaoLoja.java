@@ -37,6 +37,18 @@ public class ConfiguracaoLoja {
     @Embedded
     private DadosSistema sistema;
 
+    // Inicializa objetos para evitar NullPointerException
+    @PrePersist
+    @PreUpdate
+    public void preencherNulos() {
+        if (loja == null) loja = new DadosLoja();
+        if (endereco == null) endereco = new EnderecoLoja();
+        if (fiscal == null) fiscal = new DadosFiscal();
+        if (financeiro == null) financeiro = new DadosFinanceiro();
+        if (vendas == null) vendas = new DadosVendas();
+        if (sistema == null) sistema = new DadosSistema();
+    }
+
     // ==================================================================================
     // CLASSES INTERNAS (EMBEDDABLES)
     // ==================================================================================
@@ -94,25 +106,25 @@ public class ConfiguracaoLoja {
     @AllArgsConstructor
     public static class DadosFiscal {
         private String ambiente; // "HOMOLOGACAO" ou "PRODUCAO"
-        private String regime;
+        private String regime;   // 1=Simples, 3=Normal
 
-        // CSC e Tokens
+        // --- Configurações NFC-e (Homologação) ---
         private String tokenHomologacao;
         private String cscIdHomologacao;
-        private String tokenProducao;
-        private String cscIdProducao;
-
-        // Controle NFe
         private Integer serieHomologacao;
         private Integer nfeHomologacao;
+
+        // --- Configurações NFC-e (Produção) ---
+        private String tokenProducao;
+        private String cscIdProducao;
         private Integer serieProducao;
         private Integer nfeProducao;
 
-        // Certificado
+        // --- Certificado Digital ---
         private String caminhoCertificado;
         private String senhaCert;
 
-        // Compliance
+        // --- Compliance & Regras ---
         private String csrtId;
         private String csrtHash;
         private String ibptToken;
@@ -152,14 +164,14 @@ public class ConfiguracaoLoja {
         private String pixTipo;
         private String pixChave;
 
-        // Booleans de pagamento
+        // Formas Aceitas
         private Boolean aceitaDinheiro;
         private Boolean aceitaPix;
         private Boolean aceitaCredito;
         private Boolean aceitaDebito;
+        private Boolean aceitaCrediario;
 
         // Crediário
-        private Boolean aceitaCrediario;
         private BigDecimal jurosMensal;
         private BigDecimal multaAtraso;
         private Integer diasCarencia;

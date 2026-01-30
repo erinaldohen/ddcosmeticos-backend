@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfiguracaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,55 +33,36 @@ public class ConfiguracaoLojaService {
         }
     }
 
+    // --- MÉTODOS DE BUSCA ---
+
     @Transactional(readOnly = true)
     public ConfiguracaoLoja buscarConfiguracao() {
         return repository.findFirstByOrderByIdAsc()
                 .orElseGet(this::criarConfiguracaoPadrao);
     }
 
-    @Transactional
-    public ConfiguracaoLoja salvarConfiguracao(ConfiguracaoLoja novaConfig) {
-        // Busca a existente ou cria uma padrão com toda a estrutura inicializada
-        ConfiguracaoLoja configExistente = repository.findFirstByOrderByIdAsc()
-                .orElseGet(this::criarConfiguracaoPadrao);
-
-        // 1. Atualização dos Dados da Loja (Com preservação de Logo)
-        if (novaConfig.getLoja() != null) {
-            // Se a nova config não trouxe URL de logo, mas a antiga tinha, mantém a antiga
-            if ((novaConfig.getLoja().getLogoUrl() == null || novaConfig.getLoja().getLogoUrl().isEmpty())
-                    && configExistente.getLoja() != null
-                    && configExistente.getLoja().getLogoUrl() != null) {
-
-                novaConfig.getLoja().setLogoUrl(configExistente.getLoja().getLogoUrl());
-            }
-            configExistente.setLoja(novaConfig.getLoja());
-        }
-
-        // 2. Atualização Segura dos outros módulos (Evita NullPointerException se o front mandar parcial)
-        if (novaConfig.getEndereco() != null) configExistente.setEndereco(novaConfig.getEndereco());
-
-        if (novaConfig.getFiscal() != null) {
-            // Preserva caminho do certificado se não vier no update
-            if (novaConfig.getFiscal().getCaminhoCertificado() == null && configExistente.getFiscal() != null) {
-                novaConfig.getFiscal().setCaminhoCertificado(configExistente.getFiscal().getCaminhoCertificado());
-                novaConfig.getFiscal().setSenhaCert(configExistente.getFiscal().getSenhaCert());
-            }
-            configExistente.setFiscal(novaConfig.getFiscal());
-        }
-
-        if (novaConfig.getFinanceiro() != null) configExistente.setFinanceiro(novaConfig.getFinanceiro());
-        if (novaConfig.getVendas() != null) configExistente.setVendas(novaConfig.getVendas());
-        if (novaConfig.getSistema() != null) configExistente.setSistema(novaConfig.getSistema());
-
-        return repository.save(configExistente);
+    @Transactional(readOnly = true)
+    public ConfiguracaoDTO buscarConfiguracaoDTO() {
+        ConfiguracaoLoja config = buscarConfiguracao();
+        return converterParaDTO(config);
     }
+
+    // --- MÉTODOS DE SALVAMENTO (JSON) ---
+
+    @Transactional
+    public ConfiguracaoDTO salvar(ConfiguracaoDTO dto) {
+        ConfiguracaoLoja config = buscarConfiguracao(); // Recupera a existente
+        atualizarEntidade(config, dto); // Aplica as mudanças do DTO na Entidade
+        ConfiguracaoLoja salva = repository.save(config);
+        return converterParaDTO(salva);
+    }
+
+    // --- MÉTODOS DE ARQUIVOS (UPLOAD) ---
 
     @Transactional
     public void salvarCertificado(MultipartFile file, String senha) {
         ConfiguracaoLoja config = buscarConfiguracao();
-
-        // Garante a existência do objeto antes de setar
-        if (config.getFiscal() == null) config.setFiscal(new ConfiguracaoLoja.DadosFiscal());
+        config.preencherNulos(); // Garante estrutura
 
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
         salvarArquivoEmDisco(file, fileName);
@@ -94,9 +76,7 @@ public class ConfiguracaoLojaService {
     @Transactional
     public String salvarLogo(MultipartFile file) {
         ConfiguracaoLoja config = buscarConfiguracao();
-
-        // Garante a existência do objeto antes de setar
-        if (config.getLoja() == null) config.setLoja(new ConfiguracaoLoja.DadosLoja());
+        config.preencherNulos();
 
         String extension = getFileExtension(file.getOriginalFilename());
         String fileName = "logo_" + UUID.randomUUID() + extension;
@@ -124,22 +104,173 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
-    // Método CRÍTICO: Garante que nunca existam nulos no banco
+    // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) ---
+
+    private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
+        c.preencherNulos();
+
+        // 1. LOJA (Preservando Logo se não vier no DTO)
+        String logoAtual = c.getLoja().getLogoUrl();
+        c.setLoja(new ConfiguracaoLoja.DadosLoja(
+                d.loja().razaoSocial(), d.loja().nomeFantasia(), d.loja().cnpj(), d.loja().ie(), d.loja().im(), d.loja().cnae(),
+                d.loja().email(), d.loja().telefone(), d.loja().whatsapp(), d.loja().site(), d.loja().instagram(), d.loja().slogan(),
+                d.loja().corDestaque(), d.loja().isMatriz(), d.loja().horarioAbre(), d.loja().horarioFecha(),
+                d.loja().toleranciaMinutos(), d.loja().bloqueioForaHorario(), d.loja().taxaEntregaPadrao(), d.loja().tempoEntregaMin(),
+                d.loja().logoUrl() // Tenta pegar do DTO
+        ));
+        // Se o DTO veio com logo vazia, restaura a antiga
+        if (d.loja().logoUrl() == null || d.loja().logoUrl().isEmpty()) {
+            c.getLoja().setLogoUrl(logoAtual);
+        }
+
+        // 2. ENDERECO
+        c.setEndereco(new ConfiguracaoLoja.EnderecoLoja(
+                d.endereco().cep(), d.endereco().logradouro(), d.endereco().numero(), d.endereco().complemento(),
+                d.endereco().bairro(), d.endereco().cidade(), d.endereco().uf()
+        ));
+
+        // 3. FISCAL (Preservando Certificado)
+        String certAtual = c.getFiscal().getCaminhoCertificado();
+        String senhaAtual = c.getFiscal().getSenhaCert();
+
+        ConfiguracaoLoja.DadosFiscal f = new ConfiguracaoLoja.DadosFiscal();
+        f.setAmbiente(d.fiscal().ambiente());
+        f.setRegime(d.fiscal().regime());
+
+        if (d.fiscal().homologacao() != null) {
+            f.setTokenHomologacao(d.fiscal().homologacao().token());
+            f.setCscIdHomologacao(d.fiscal().homologacao().cscId());
+            f.setSerieHomologacao(d.fiscal().homologacao().serie());
+            f.setNfeHomologacao(d.fiscal().homologacao().nfe());
+        }
+        if (d.fiscal().producao() != null) {
+            f.setTokenProducao(d.fiscal().producao().token());
+            f.setCscIdProducao(d.fiscal().producao().cscId());
+            f.setSerieProducao(d.fiscal().producao().serie());
+            f.setNfeProducao(d.fiscal().producao().nfe());
+        }
+
+        // Restaura certificado se não vier no DTO
+        f.setCaminhoCertificado(d.fiscal().caminhoCertificado() != null ? d.fiscal().caminhoCertificado() : certAtual);
+        f.setSenhaCert(d.fiscal().senhaCert() != null ? d.fiscal().senhaCert() : senhaAtual);
+
+        f.setCsrtId(d.fiscal().csrtId());
+        f.setCsrtHash(d.fiscal().csrtHash());
+        f.setIbptToken(d.fiscal().ibptToken());
+        f.setNaturezaPadrao(d.fiscal().naturezaPadrao());
+        f.setEmailContabil(d.fiscal().emailContabil());
+        f.setEnviarXmlAutomatico(d.fiscal().enviarXmlAutomatico());
+        f.setAliquotaInterna(d.fiscal().aliquotaInterna());
+        f.setModoContingencia(d.fiscal().modoContingencia());
+        f.setPriorizarMonofasico(d.fiscal().priorizarMonofasico());
+        f.setObsPadraoCupom(d.fiscal().obsPadraoCupom());
+        c.setFiscal(f);
+
+        // 4. FINANCEIRO
+        ConfiguracaoLoja.DadosFinanceiro fin = new ConfiguracaoLoja.DadosFinanceiro();
+        fin.setComissaoProdutos(d.financeiro().comissaoProdutos());
+        fin.setComissaoServicos(d.financeiro().comissaoServicos());
+        fin.setAlertaSangria(d.financeiro().alertaSangria());
+        fin.setFundoTrocoPadrao(d.financeiro().fundoTrocoPadrao());
+        fin.setMetaDiaria(d.financeiro().metaDiaria());
+        fin.setTaxaDebito(d.financeiro().taxaDebito());
+        fin.setTaxaCredito(d.financeiro().taxaCredito());
+        fin.setDescCaixa(d.financeiro().descCaixa());
+        fin.setDescGerente(d.financeiro().descGerente());
+        fin.setDescExtraPix(d.financeiro().descExtraPix());
+        fin.setBloquearAbaixoCusto(d.financeiro().bloquearAbaixoCusto());
+        fin.setPixTipo(d.financeiro().pixTipo());
+        fin.setPixChave(d.financeiro().pixChave());
+        fin.setJurosMensal(d.financeiro().jurosMensal());
+        fin.setMultaAtraso(d.financeiro().multaAtraso());
+        fin.setDiasCarencia(d.financeiro().diasCarencia());
+        fin.setFechamentoCego(d.financeiro().fechamentoCego());
+
+        if (d.financeiro().pagamentos() != null) {
+            fin.setAceitaDinheiro(d.financeiro().pagamentos().dinheiro());
+            fin.setAceitaPix(d.financeiro().pagamentos().pix());
+            fin.setAceitaCredito(d.financeiro().pagamentos().credito());
+            fin.setAceitaDebito(d.financeiro().pagamentos().debito());
+            fin.setAceitaCrediario(d.financeiro().pagamentos().crediario());
+        }
+        c.setFinanceiro(fin);
+
+        // 5. VENDAS
+        c.setVendas(new ConfiguracaoLoja.DadosVendas(
+                d.vendas().comportamentoCpf(), d.vendas().bloquearEstoque(), d.vendas().layoutCupom(),
+                d.vendas().imprimirVendedor(), d.vendas().imprimirTicketTroca(), d.vendas().autoEnterScanner(),
+                d.vendas().fidelidadeAtiva(), d.vendas().pontosPorReal(), d.vendas().usarBalanca(), d.vendas().agruparItens()
+        ));
+
+        // 6. SISTEMA
+        c.setSistema(new ConfiguracaoLoja.DadosSistema(
+                d.sistema().impressaoAuto(), d.sistema().larguraPapel(), d.sistema().backupAuto(), d.sistema().backupHora(),
+                d.sistema().rodape(), d.sistema().tema(), d.sistema().backupNuvem(), d.sistema().senhaGerenteCancelamento(),
+                d.sistema().nomeTerminal(), d.sistema().imprimirLogoCupom()
+        ));
+    }
+
+    private ConfiguracaoDTO converterParaDTO(ConfiguracaoLoja c) {
+        c.preencherNulos();
+
+        return new ConfiguracaoDTO(
+                c.getId(),
+                new ConfiguracaoDTO.LojaDTO(
+                        c.getLoja().getRazaoSocial(), c.getLoja().getNomeFantasia(), c.getLoja().getCnpj(), c.getLoja().getIe(),
+                        c.getLoja().getIm(), c.getLoja().getCnae(), c.getLoja().getEmail(), c.getLoja().getTelefone(),
+                        c.getLoja().getWhatsapp(), c.getLoja().getSite(), c.getLoja().getInstagram(), c.getLoja().getSlogan(),
+                        c.getLoja().getCorDestaque(), c.getLoja().getIsMatriz(), c.getLoja().getHorarioAbre(), c.getLoja().getHorarioFecha(),
+                        c.getLoja().getToleranciaMinutos(), c.getLoja().getBloqueioForaHorario(), c.getLoja().getTaxaEntregaPadrao(),
+                        c.getLoja().getTempoEntregaMin(), c.getLoja().getLogoUrl()
+                ),
+                new ConfiguracaoDTO.EnderecoDTO(
+                        c.getEndereco().getCep(), c.getEndereco().getLogradouro(), c.getEndereco().getNumero(),
+                        c.getEndereco().getComplemento(), c.getEndereco().getBairro(), c.getEndereco().getCidade(), c.getEndereco().getUf()
+                ),
+                new ConfiguracaoDTO.FiscalDTO(
+                        c.getFiscal().getAmbiente(), c.getFiscal().getRegime(),
+                        new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(), c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao()),
+                        new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(), c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao()),
+                        c.getFiscal().getCaminhoCertificado(), c.getFiscal().getSenhaCert(),
+                        c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
+                        c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
+                        c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),
+                        c.getFiscal().getModoContingencia(), c.getFiscal().getPriorizarMonofasico(), c.getFiscal().getObsPadraoCupom()
+                ),
+                new ConfiguracaoDTO.FinanceiroDTO(
+                        c.getFinanceiro().getComissaoProdutos(), c.getFinanceiro().getComissaoServicos(), c.getFinanceiro().getAlertaSangria(),
+                        c.getFinanceiro().getFundoTrocoPadrao(), c.getFinanceiro().getMetaDiaria(),
+                        c.getFinanceiro().getTaxaDebito(), c.getFinanceiro().getTaxaCredito(),
+                        c.getFinanceiro().getDescCaixa(), c.getFinanceiro().getDescGerente(),
+                        c.getFinanceiro().getDescExtraPix(), c.getFinanceiro().getBloquearAbaixoCusto(),
+                        c.getFinanceiro().getPixTipo(), c.getFinanceiro().getPixChave(),
+                        new ConfiguracaoDTO.PagamentosDTO(
+                                c.getFinanceiro().getAceitaDinheiro(), c.getFinanceiro().getAceitaPix(),
+                                c.getFinanceiro().getAceitaCredito(), c.getFinanceiro().getAceitaDebito(), c.getFinanceiro().getAceitaCrediario()
+                        ),
+                        c.getFinanceiro().getJurosMensal(), c.getFinanceiro().getMultaAtraso(),
+                        c.getFinanceiro().getDiasCarencia(), c.getFinanceiro().getFechamentoCego()
+                ),
+                new ConfiguracaoDTO.VendasDTO(
+                        c.getVendas().getComportamentoCpf(), c.getVendas().getBloquearEstoque(), c.getVendas().getLayoutCupom(),
+                        c.getVendas().getImprimirVendedor(), c.getVendas().getImprimirTicketTroca(), c.getVendas().getAutoEnterScanner(),
+                        c.getVendas().getFidelidadeAtiva(), c.getVendas().getPontosPorReal(), c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens()
+                ),
+                new ConfiguracaoDTO.SistemaDTO(
+                        c.getSistema().getImpressaoAuto(), c.getSistema().getLarguraPapel(), c.getSistema().getBackupAuto(),
+                        c.getSistema().getBackupHora(), c.getSistema().getRodape(), c.getSistema().getTema(),
+                        c.getSistema().getBackupNuvem(), c.getSistema().getSenhaGerenteCancelamento(),
+                        c.getSistema().getNomeTerminal(), c.getSistema().getImprimirLogoCupom()
+                )
+        );
+    }
+
     private ConfiguracaoLoja criarConfiguracaoPadrao() {
         ConfiguracaoLoja config = new ConfiguracaoLoja();
-
-        config.setLoja(new ConfiguracaoLoja.DadosLoja());
-        config.setEndereco(new ConfiguracaoLoja.EnderecoLoja());
-        config.setFiscal(new ConfiguracaoLoja.DadosFiscal());
-        config.setFinanceiro(new ConfiguracaoLoja.DadosFinanceiro());
-        config.setVendas(new ConfiguracaoLoja.DadosVendas());
-        config.setSistema(new ConfiguracaoLoja.DadosSistema());
-
-        // Defaults
+        config.preencherNulos();
         config.getSistema().setTema("light");
         config.getSistema().setImpressaoAuto(true);
         config.getFiscal().setAmbiente("HOMOLOGACAO");
-
         return repository.save(config);
     }
 }

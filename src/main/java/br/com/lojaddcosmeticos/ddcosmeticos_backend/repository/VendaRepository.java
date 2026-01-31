@@ -8,6 +8,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -118,4 +119,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         ORDER BY SUM(i.precoUnitario * i.quantidade) DESC
     """)
     List<ProdutoRankingDTO> buscarRankingMarcas(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
+    // --- NOVO MÉTODO BLINDADO PARA ATUALIZAR STATUS ---
+    @Modifying
+    @Query("UPDATE Venda v SET v.statusNfce = :novoStatus, v.motivoDoCancelamento = :motivo WHERE v.idVenda = :id")
+    void atualizarStatusVenda(@Param("id") Long id, @Param("novoStatus") StatusFiscal novoStatus, @Param("motivo") String motivo);
 }

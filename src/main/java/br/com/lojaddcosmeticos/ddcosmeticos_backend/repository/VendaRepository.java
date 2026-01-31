@@ -123,4 +123,11 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Modifying
     @Query("UPDATE Venda v SET v.statusNfce = :novoStatus, v.motivoDoCancelamento = :motivo WHERE v.idVenda = :id")
     void atualizarStatusVenda(@Param("id") Long id, @Param("novoStatus") StatusFiscal novoStatus, @Param("motivo") String motivo);
+
+    // CORREÇÃO: Carrega apenas ITENS (1ª Lista) para evitar MultipleBagFetchException
+    @Query("SELECT DISTINCT v FROM Venda v " +
+            "LEFT JOIN FETCH v.itens i " +
+            "LEFT JOIN FETCH i.produto " +
+            "WHERE v.idVenda = :id")
+    Optional<Venda> findByIdWithItens(@Param("id") Long id);
 }

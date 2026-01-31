@@ -5,42 +5,44 @@ import java.io.Serializable;
 import java.math.BigDecimal;
 
 public record ItemVendaResponseDTO(
+        // Adicionado ID para o Frontend conseguir manipular o item
+        Long produtoId,
+
         String codigoBarras,
-        String descricaoProduto,
+
+        // Padronizado para facilitar o frontend
+        String produtoDescricao,
+
         BigDecimal quantidade,
         BigDecimal precoUnitario,
-        BigDecimal descontoItem,
+        BigDecimal desconto, // Nome simplificado
         BigDecimal valorTotalItem,
 
-        // CAMPOS PARA CMV (Custo da Mercadoria Vendida)
+        // CAMPOS PARA RELATÓRIOS (CMV)
         BigDecimal custoUnitario,
         BigDecimal custoTotal
 ) implements Serializable {
 
-    /**
-     * Construtor auxiliar para facilitar a conversão a partir da Entidade.
-     * CORREÇÃO: Realizamos o cálculo matemático aqui (Preço x Qtd) em vez de chamar método inexistente.
-     */
     public ItemVendaResponseDTO(ItemVenda item) {
         this(
+                item.getProduto().getId(),
                 item.getProduto().getCodigoBarras(),
                 item.getProduto().getDescricao(),
                 item.getQuantidade(),
                 item.getPrecoUnitario(),
 
-                // Desconto (assumindo zero por enquanto)
-                BigDecimal.ZERO,
+                // 1. Recupera o Desconto Real (Evita Null)
+                item.getDesconto() != null ? item.getDesconto() : BigDecimal.ZERO,
 
-                // [CORREÇÃO LINHA 34] Calcula Total: Preço Unitário * Quantidade
-                (item.getPrecoUnitario() != null && item.getQuantidade() != null)
-                        ? item.getPrecoUnitario().multiply(item.getQuantidade())
-                        : BigDecimal.ZERO,
+                // 2. Calcula Total Líquido: (Preço * Qtd) - Desconto
+                (item.getPrecoUnitario().multiply(item.getQuantidade()))
+                        .subtract(item.getDesconto() != null ? item.getDesconto() : BigDecimal.ZERO),
 
-                // Custo Unitário
+                // 3. Custo Unitário (Historico salvo na venda)
                 item.getCustoUnitarioHistorico() != null ? item.getCustoUnitarioHistorico() : BigDecimal.ZERO,
 
-                // [CORREÇÃO LINHA 37] Calcula Custo Total: Custo Unitário * Quantidade
-                (item.getCustoUnitarioHistorico() != null && item.getQuantidade() != null)
+                // 4. Custo Total
+                (item.getCustoUnitarioHistorico() != null)
                         ? item.getCustoUnitarioHistorico().multiply(item.getQuantidade())
                         : BigDecimal.ZERO
         );

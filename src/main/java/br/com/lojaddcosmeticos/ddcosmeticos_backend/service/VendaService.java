@@ -171,31 +171,70 @@ public class VendaService {
 
     @Transactional
     public Venda suspenderVenda(VendaRequestDTO dto) {
+        Usuario usuario = capturarUsuarioLogado();
+
+        // 1. Vincular ao Caixa (Correção de consistência)
+        CaixaDiario caixa = validarCaixaAberto(usuario);
+
         Venda venda = new Venda();
-        venda.setUsuario(capturarUsuarioLogado());
+        venda.setUsuario(usuario);
+        venda.setCaixa(caixa); // <--- IMPORTANTE: Vincula ao caixa aberto
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa");
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusNfce(StatusFiscal.EM_ESPERA);
 
-        // Se houver cliente ID, vincula
         if (dto.clienteId() != null) {
             clienteRepository.findById(dto.clienteId()).ifPresent(venda::setCliente);
         }
 
-        // Define forma de pagamento "placeholder" se a lista vier vazia (comum em suspensão)
         if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
             venda.setFormaDePagamento(dto.pagamentos().get(0).formaPagamento());
         } else {
             venda.setFormaDePagamento(FormaDePagamento.DINHEIRO);
         }
 
-        // Processa itens sem baixar estoque real (apenas reserva lógica se necessário, aqui simplificado)
         BigDecimal totalItens = processarItensParaOrcamento(venda, dto.itens());
         venda.setValorTotal(totalItens);
         venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
         venda.setObservacao(dto.observacao());
 
         return vendaRepository.save(venda);
+    }
+
+    @Transactional
+    public void cancelarVenda(Long idVenda, String motivo) {
+        Venda venda = buscarVendaComItens(idVenda);
+
+        if (venda.getStatusNfce() == StatusFiscal.CANCELADA) {
+            throw new ValidationException("Esta venda já está cancelada.");
+        }
+
+        // --- CORREÇÃO DO ERRO 500 ---
+        // Se a venda estiver SUSPENSA, usamos atualização direta via Query
+        // Isso evita validações pesadas do Hibernate/Envers no objeto inteiro
+        if (venda.getStatusNfce() == StatusFiscal.EM_ESPERA) {
+            String motivoFinal = motivo != null ? motivo : "Retomada no PDV";
+            vendaRepository.atualizarStatusVenda(idVenda, StatusFiscal.CANCELADA, motivoFinal);
+            return; // <--- FIM (Não executa estorno de estoque/financeiro)
+        }
+        // ----------------------------
+
+        // Fluxo normal para vendas EFETIVADAS (Baixa de estoque e financeiro)
+        venda.getItens().forEach(item -> {
+            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
+            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
+            ajuste.setQuantidade(item.getQuantidade());
+            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
+            estoqueService.realizarAjusteManual(ajuste);
+        });
+
+        financeiroService.cancelarReceitaDeVenda(idVenda);
+
+        venda.setStatusNfce(StatusFiscal.CANCELADA);
+        venda.setMotivoDoCancelamento(motivo);
+        vendaRepository.save(venda);
+
+        auditoriaService.registrar("CANCELAMENTO_VENDA", "Venda #" + idVenda + " cancelada. Motivo: " + motivo);
     }
 
     // ... (Métodos efetivarVenda e cancelarVenda mantidos iguais, apenas ajustando se usarem Pagamento) ...
@@ -238,47 +277,6 @@ public class VendaService {
         return vendaRepository.save(venda);
     }
 
-    @Transactional
-    public void cancelarVenda(Long idVenda, String motivo) {
-        Venda venda = buscarVendaComItens(idVenda);
-
-        // Validação básica
-        if (venda.getStatusNfce() == StatusFiscal.CANCELADA) {
-            throw new ValidationException("Esta venda já está cancelada.");
-        }
-
-        // --- CORREÇÃO DO ERRO 500 ---
-        // Se a venda estiver SUSPENSA (EM_ESPERA), nós NÃO devemos devolver estoque
-        // nem estornar financeiro, pois eles nunca foram lançados.
-        // Apenas marcamos como cancelada para limpar da fila.
-        if (venda.getStatusNfce() == StatusFiscal.EM_ESPERA) {
-            venda.setStatusNfce(StatusFiscal.CANCELADA);
-            venda.setMotivoDoCancelamento(motivo != null ? motivo : "Cancelada/Retomada no PDV");
-            vendaRepository.save(venda);
-            return; // <--- ENCERRA AQUI, não executa a lógica abaixo
-        }
-        // ----------------------------
-
-        // LÓGICA PARA VENDA EFETIVADA (Devolução de Estoque e Financeiro)
-        venda.getItens().forEach(item -> {
-            AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
-            // Garante que pega o código de barras do produto
-            ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
-            ajuste.setQuantidade(item.getQuantidade());
-            ajuste.setMotivo(MotivoMovimentacaoDeEstoque.CANCELAMENTO_DE_VENDA);
-            estoqueService.realizarAjusteManual(ajuste);
-        });
-
-        // Estorna o financeiro apenas se for venda finalizada
-        financeiroService.cancelarReceitaDeVenda(idVenda);
-
-        venda.setStatusNfce(StatusFiscal.CANCELADA);
-        venda.setMotivoDoCancelamento(motivo);
-        vendaRepository.save(venda);
-
-        auditoriaService.registrar("CANCELAMENTO_VENDA", "Venda #" + idVenda + " cancelada. Motivo: " + motivo);
-    }
-
     // =========================================================================
     // 3. CONSULTAS (LISTAGEM) - Onde estava o erro
     // =========================================================================
@@ -295,11 +293,6 @@ public class VendaService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
         return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable).map(this::converterParaDTO);
-    }
-
-    @Transactional(readOnly = true)
-    public Venda buscarVendaComItens(Long id) {
-        return vendaRepository.findByIdComItens(id).orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
     }
 
     // =========================================================================
@@ -460,5 +453,18 @@ public class VendaService {
                 .orElseThrow(() -> new ResourceNotFoundException("Cliente não cadastrado."));
         BigDecimal divida = nvl(contaReceberRepository.somarDividaTotalPorDocumento(cliente.getDocumento()));
         if (divida.add(valor).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de crédito excedido!");
+    }
+    @Transactional(readOnly = true)
+    public Venda buscarVendaComItens(Long id) {
+        // 1. Busca Venda + Itens (Query Otimizada)
+        Venda venda = vendaRepository.findByIdWithItens(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+
+        // 2. Força o carregamento dos Pagamentos (Inicializa a 2ª lista)
+        // Como estamos dentro de uma transação (@Transactional), isso fará um SELECT separado automaticamente
+        // sem gerar o erro de MultipleBagFetch.
+        venda.getPagamentos().size();
+
+        return venda;
     }
 }

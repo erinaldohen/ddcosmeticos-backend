@@ -2,7 +2,9 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
@@ -12,10 +14,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 @Service
 public class DashboardService {
@@ -100,5 +107,75 @@ public class DashboardService {
 
     private BigDecimal safeBigDecimal(BigDecimal valor) {
         return valor != null ? valor : BigDecimal.ZERO;
+    }
+
+    public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
+        // 1. Busca vendas no período
+        List<Venda> vendas = vendaRepository.findByDataVendaBetween(inicio.atStartOfDay(), fim.atTime(LocalTime.MAX));
+
+        // 2. Variáveis acumuladoras
+        BigDecimal faturamento = BigDecimal.ZERO;
+        BigDecimal totalIBS = BigDecimal.ZERO;
+        BigDecimal totalCBS = BigDecimal.ZERO;
+        BigDecimal totalSeletivo = BigDecimal.ZERO;
+
+        // Mapa para agrupar por dia (Ordenado)
+        Map<String, FiscalDashboardDTO.FiscalDiarioDTO> diarioMap = new TreeMap<>();
+
+        for (Venda v : vendas) {
+            // Tratamento de nulos para evitar crash
+            BigDecimal ibs = v.getValorIbs() != null ? v.getValorIbs() : BigDecimal.ZERO;
+            BigDecimal cbs = v.getValorCbs() != null ? v.getValorCbs() : BigDecimal.ZERO;
+            BigDecimal seletivo = v.getValorIs() != null ? v.getValorIs() : BigDecimal.ZERO;
+            BigDecimal totalVenda = v.getValorTotal() != null ? v.getValorTotal() : BigDecimal.ZERO;
+
+            faturamento = faturamento.add(totalVenda);
+            totalIBS = totalIBS.add(ibs);
+            totalCBS = totalCBS.add(cbs);
+            totalSeletivo = totalSeletivo.add(seletivo);
+
+            // Agrupa histórico por dia (ex: "01/10")
+            String dia = v.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM"));
+
+            diarioMap.merge(dia,
+                    new FiscalDashboardDTO.FiscalDiarioDTO(dia, ibs, cbs, totalVenda),
+                    (a, b) -> new FiscalDashboardDTO.FiscalDiarioDTO(
+                            dia,
+                            a.ibs().add(b.ibs()),
+                            a.cbs().add(b.cbs()),
+                            a.vendas().add(b.vendas())
+                    )
+            );
+        }
+
+        BigDecimal totalImpostos = totalIBS.add(totalCBS).add(totalSeletivo);
+
+        // Simulação do Split Payment (Total Retido = Impostos)
+        BigDecimal totalRetido = totalImpostos;
+
+        // Cálculo Alíquota Efetiva Segura
+        double aliquotaEfetiva = 0.0;
+        if (faturamento.compareTo(BigDecimal.ZERO) > 0) {
+            aliquotaEfetiva = totalImpostos
+                    .divide(faturamento, 4, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal(100))
+                    .doubleValue();
+        }
+
+        // Montagem do Retorno
+        return new FiscalDashboardDTO(
+                faturamento,
+                totalIBS,
+                totalCBS,
+                totalSeletivo,
+                totalRetido,
+                aliquotaEfetiva,
+                new ArrayList<>(diarioMap.values()),
+                List.of(
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("IBS", totalIBS),
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("CBS", totalCBS),
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("Seletivo", totalSeletivo)
+                )
+        );
     }
 }

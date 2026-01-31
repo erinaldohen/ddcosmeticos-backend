@@ -32,6 +32,7 @@ public class ItemVenda {
 
     private BigDecimal quantidade;
     private BigDecimal precoUnitario;
+    private BigDecimal desconto;
 
     // ... outros campos (custo, impostos) ...
     private BigDecimal custoUnitarioHistorico;

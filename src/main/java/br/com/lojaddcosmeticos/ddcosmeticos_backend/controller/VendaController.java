@@ -19,48 +19,52 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/vendas")
+// @CrossOrigin(origins = "*") // Descomente se tiver problemas de CORS
 public class VendaController {
 
     @Autowired
     private VendaService vendaService;
 
     // 1. Realizar Venda (Finalizar)
+    // O Service retorna DTO, repassa DTO.
     @PostMapping
     public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
         VendaResponseDTO vendaRealizada = vendaService.realizarVenda(dto);
         return ResponseEntity.ok(vendaRealizada);
     }
 
-    // 2. Suspender Venda (Pausar)
+    // 2. Suspender Venda (Pausar - F2)
+    // O Service retorna a Entidade Venda. O front só precisa do ID para confirmação.
     @PostMapping("/suspender")
     public ResponseEntity<Long> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
-        // O serviço retorna a Entidade Venda, pegamos o ID para devolver ao front
         Venda vendaSuspensa = vendaService.suspenderVenda(dto);
         return ResponseEntity.ok(vendaSuspensa.getIdVenda());
     }
 
-    // 3. Listar Vendas Suspensas (Retomar)
+    // 3. Listar Vendas Suspensas (Fila de Espera)
+    // O Service retorna List<VendaResponseDTO>.
     @GetMapping("/suspensas")
     public ResponseEntity<List<VendaResponseDTO>> listarVendasSuspensas() {
-        // O serviço retorna List<VendaResponseDTO>
         return ResponseEntity.ok(vendaService.listarVendasSuspensas());
     }
 
-    // 4. Efetivar Venda Suspensa (Concluir o que estava pausado)
+    // 4. Efetivar Venda Suspensa (Retomada)
+    // Transforma uma venda "EM_ESPERA" em "FINALIZADA" (ou Pendente NFCe)
     @PostMapping("/{id}/efetivar")
     public ResponseEntity<Venda> efetivarVenda(@PathVariable Long id) {
+        // Nota: O service retorna Entidade aqui. Idealmente seria DTO,
+        // mas mantemos a compatibilidade com o Service atual.
         Venda venda = vendaService.efetivarVenda(id);
         return ResponseEntity.ok(venda);
     }
 
-    // 5. Histórico de Vendas (Filtros)
+    // 5. Histórico de Vendas (Tela de Consultas)
     @GetMapping
     public ResponseEntity<Page<VendaResponseDTO>> listarVendas(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim,
             @PageableDefault(size = 20, sort = "dataVenda") Pageable pageable) {
 
-        // O serviço retorna Page<VendaResponseDTO>
         return ResponseEntity.ok(vendaService.listarVendas(inicio, fim, pageable));
     }
 
@@ -72,7 +76,7 @@ public class VendaController {
         return ResponseEntity.noContent().build();
     }
 
-    // 7. Buscar Venda por ID (Detalhes)
+    // 7. Buscar Venda por ID (Detalhes / Reimpressão)
     @GetMapping("/{id}")
     public ResponseEntity<Venda> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(vendaService.buscarVendaComItens(id));

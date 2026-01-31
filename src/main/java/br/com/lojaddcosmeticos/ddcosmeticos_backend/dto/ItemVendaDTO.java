@@ -18,6 +18,7 @@ public record ItemVendaDTO(
 
         // Opcional: Se null, o backend usa o preço atual do cadastro.
         // Se preenchido, o backend acata (útil para descontos pontuais no PDV)
-        BigDecimal precoUnitario
+        BigDecimal precoUnitario,
+        BigDecimal desconto
 ) implements Serializable {
 }

@@ -4,9 +4,9 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.ToString; // <--- Importante
+import lombok.ToString;
 import org.hibernate.envers.Audited;
-import org.hibernate.envers.NotAudited;
+import org.hibernate.envers.RelationTargetAuditMode; // <--- Importante
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -27,6 +27,19 @@ public class Venda {
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
+    // Relacionamento auditado normalmente (pois Cliente provavelmente tem @Audited ou aceitamos auditoria padrão)
+    // Se der erro no Cliente também, use a mesma anotação abaixo.
+    @ManyToOne
+    @JoinColumn(name = "id_cliente")
+    private Cliente cliente;
+
+    // --- CORREÇÃO DO ERRO DO ENVERS ---
+    @ManyToOne
+    @JoinColumn(name = "id_caixa")
+    @Audited(targetAuditMode = RelationTargetAuditMode.NOT_AUDITED) // <--- ADICIONE ISTO
+    private CaixaDiario caixa;
+    // ----------------------------------
+
     private LocalDateTime dataVenda;
     private BigDecimal valorTotal;
     private BigDecimal descontoTotal;
@@ -38,19 +51,18 @@ public class Venda {
     private String clienteDocumento;
 
     @Enumerated(EnumType.STRING)
-    private FormaDePagamento formaDePagamento; // Principal (Legado)
+    private FormaDePagamento formaDePagamento;
 
     private Integer quantidadeParcelas;
 
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
-    @ToString.Exclude // <--- EVITA O LOOP INFINITO NO LOG
-    private List<ItemVenda> itens;
+    @ToString.Exclude
+    private List<ItemVenda> itens = new ArrayList<>();
 
-    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @ToString.Exclude
     private List<PagamentoVenda> pagamentos = new ArrayList<>();
 
-    // Campos Fiscais
     private BigDecimal valorIbs;
     private BigDecimal valorCbs;
     private BigDecimal valorIs;

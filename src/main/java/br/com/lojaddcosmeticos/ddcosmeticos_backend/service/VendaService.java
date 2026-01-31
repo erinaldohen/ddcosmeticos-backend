@@ -457,7 +457,7 @@ public class VendaService {
     @Transactional(readOnly = true)
     public Venda buscarVendaComItens(Long id) {
         // 1. Busca Venda + Itens (Query Otimizada)
-        Venda venda = vendaRepository.findByIdWithItens(id)
+        Venda venda = vendaRepository.findByIdComItens(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
 
         // 2. Força o carregamento dos Pagamentos (Inicializa a 2ª lista)

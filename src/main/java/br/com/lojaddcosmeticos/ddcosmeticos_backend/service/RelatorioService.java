@@ -41,9 +41,11 @@ public class RelatorioService {
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
         // 1. Busca dados reais das queries consolidadas
-        BigDecimal totalFaturado = vendaRepository.somarFaturamentoNoPeriodo(dataInicio, dataFim);
+        // CORREÇÃO: Método renomeado para somarFaturamento (que aceita NULL)
+        BigDecimal totalFaturado = vendaRepository.somarFaturamento(dataInicio, dataFim);
+
         List<VendaDiariaDTO> vendasDiarias = vendaRepository.agruparVendasPorDia(dataInicio, dataFim);
-        List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(dataInicio, dataFim);
+        List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorPagamento(dataInicio, dataFim);
 
         // Busca Top Marcas para o gráfico (Top 5)
         List<ProdutoRankingDTO> rankingMarcas = vendaRepository.buscarRankingMarcas(dataInicio, dataFim, PageRequest.of(0, 5));

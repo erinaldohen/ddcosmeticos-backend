@@ -4,7 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO; // Importante
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
@@ -40,64 +40,138 @@ public class DashboardService {
     @Autowired private AuditoriaService auditoriaService;
 
     // =========================================================================
-    // 1. DASHBOARD DE VENDAS
+    // 1. DASHBOARD DE VENDAS (Tela Principal)
     // =========================================================================
-    // Adicione os imports necessários:
     @Transactional(readOnly = true)
     public DashboardDTO carregarDashboard() {
         LocalDateTime agora = LocalDateTime.now();
+
+        // Definição de Períodos
         LocalDateTime inicioDia = agora.toLocalDate().atStartOfDay();
         LocalDateTime fimDia = agora.toLocalDate().atTime(LocalTime.MAX);
+
         LocalDateTime inicioMes = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimMes = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
-        // 1. Cards
+        // 1. Cards (Queries ajustadas para aceitar NULL)
         BigDecimal fatHoje = vendaRepository.somarFaturamento(inicioDia, fimDia);
         BigDecimal fatMes = vendaRepository.somarFaturamento(inicioMes, fimMes);
         Long vendasHoje = vendaRepository.contarVendas(inicioDia, fimDia);
-        Long vendasMes = vendaRepository.contarVendas(inicioMes, fimMes);
+        // Long vendasMes = vendaRepository.contarVendas(inicioMes, fimMes); // Não usado no DTO atual, mas útil saber
 
-        BigDecimal ticketMedio = (vendasMes > 0)
-                ? fatMes.divide(BigDecimal.valueOf(vendasMes), 2, RoundingMode.HALF_UP)
+        BigDecimal ticketMedio = (vendasHoje > 0)
+                ? fatHoje.divide(BigDecimal.valueOf(vendasHoje), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        // 2. Gráfico Barras (Dias)
+        // 2. Gráfico: Vendas por Dia
         List<Venda> vendasDoMes = vendaRepository.buscarVendasPorPeriodo(inicioMes, fimMes);
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
 
+        // Preenche dias com 0
         for (int i = 1; i <= agora.getDayOfMonth(); i++) {
-            mapaDias.put(agora.toLocalDate().withDayOfMonth(i).format(fmt), BigDecimal.ZERO);
+            String dia = agora.toLocalDate().withDayOfMonth(i).format(fmt);
+            mapaDias.put(dia, BigDecimal.ZERO);
         }
+
         for (Venda v : vendasDoMes) {
-            mapaDias.merge(v.getDataVenda().format(fmt), v.getValorTotal(), BigDecimal::add);
+            String dia = v.getDataVenda().format(fmt);
+            mapaDias.merge(dia, v.getValorTotal(), BigDecimal::add);
         }
+
         List<VendaDiariaDTO> graficoVendas = mapaDias.entrySet().stream()
                 .map(e -> new VendaDiariaDTO(e.getKey(), e.getValue(), 0L))
                 .collect(Collectors.toList());
 
-        // 3. Gráfico Pizza (Pagamentos)
+        // 3. Gráfico: Pagamentos
         List<VendaPorPagamentoDTO> graficoPagamentos = vendaRepository.agruparPorPagamento(inicioMes, fimMes);
 
-        // 4. Ranking (Top 5 Produtos)
+        // 4. Ranking
         List<ProdutoRankingDTO> ranking = vendaRepository.buscarRankingProdutos(inicioMes, fimMes, PageRequest.of(0, 5));
 
-        // 5. Últimas Vendas (Top 5)
-        List<VendaResponseDTO> ultimas = vendaRepository.findTop5ByStatusNfceNotOrderByDataVendaDesc(StatusFiscal.CANCELADA)
+        // 5. Últimas Vendas
+        List<VendaResponseDTO> ultimas = vendaRepository.findTop5Recentes(StatusFiscal.CANCELADA)
                 .stream().map(VendaResponseDTO::new).collect(Collectors.toList());
 
         return new DashboardDTO(fatHoje, fatMes, vendasHoje, ticketMedio, graficoVendas, graficoPagamentos, ranking, ultimas);
     }
 
     // =========================================================================
-    // 2. RESUMO OPERACIONAL
+    // 2. DASHBOARD FISCAL (O Método que faltava!)
     // =========================================================================
+    public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
+        // Usamos buscarVendasPorPeriodo para garantir que só pegamos vendas VÁLIDAS (Não canceladas)
+        List<Venda> vendas = vendaRepository.buscarVendasPorPeriodo(inicio.atStartOfDay(), fim.atTime(LocalTime.MAX));
+
+        BigDecimal faturamento = BigDecimal.ZERO;
+        BigDecimal totalIBS = BigDecimal.ZERO;
+        BigDecimal totalCBS = BigDecimal.ZERO;
+        BigDecimal totalSeletivo = BigDecimal.ZERO;
+
+        Map<String, FiscalDashboardDTO.FiscalDiarioDTO> diarioMap = new TreeMap<>();
+
+        for (Venda v : vendas) {
+            BigDecimal ibs = v.getValorIbs() != null ? v.getValorIbs() : BigDecimal.ZERO;
+            BigDecimal cbs = v.getValorCbs() != null ? v.getValorCbs() : BigDecimal.ZERO;
+            BigDecimal seletivo = v.getValorIs() != null ? v.getValorIs() : BigDecimal.ZERO;
+            BigDecimal totalVenda = v.getValorTotal() != null ? v.getValorTotal() : BigDecimal.ZERO;
+
+            faturamento = faturamento.add(totalVenda);
+            totalIBS = totalIBS.add(ibs);
+            totalCBS = totalCBS.add(cbs);
+            totalSeletivo = totalSeletivo.add(seletivo);
+
+            String dia = v.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM"));
+
+            diarioMap.merge(dia,
+                    new FiscalDashboardDTO.FiscalDiarioDTO(dia, ibs, cbs, totalVenda),
+                    (a, b) -> new FiscalDashboardDTO.FiscalDiarioDTO(
+                            dia,
+                            a.ibs().add(b.ibs()),
+                            a.cbs().add(b.cbs()),
+                            a.vendas().add(b.vendas())
+                    )
+            );
+        }
+
+        BigDecimal totalImpostos = totalIBS.add(totalCBS).add(totalSeletivo);
+        BigDecimal totalRetido = totalImpostos; // Simulação Split Payment
+
+        double aliquotaEfetiva = 0.0;
+        if (faturamento.compareTo(BigDecimal.ZERO) > 0) {
+            aliquotaEfetiva = totalImpostos
+                    .divide(faturamento, 4, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal(100))
+                    .doubleValue();
+        }
+
+        return new FiscalDashboardDTO(
+                faturamento,
+                totalIBS,
+                totalCBS,
+                totalSeletivo,
+                totalRetido,
+                aliquotaEfetiva,
+                new ArrayList<>(diarioMap.values()),
+                List.of(
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("IBS", totalIBS),
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("CBS", totalCBS),
+                        new FiscalDashboardDTO.FiscalDistribuicaoDTO("Seletivo", totalSeletivo)
+                )
+        );
+    }
+
+    // =========================================================================
+    // 3. OUTROS MÉTODOS (Operacional e Alertas)
+    // =========================================================================
+
     @Transactional(readOnly = true)
     public DashboardResumoDTO obterResumoGeral() {
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
         LocalDateTime fimDia = LocalDate.now().atTime(LocalTime.MAX);
         LocalDate hoje = LocalDate.now();
 
+        // Null Safety na query antiga
         Long qtdVendas = vendaRepository.countByDataVendaBetween(inicioDia, fimDia);
         BigDecimal totalVendido = vendaRepository.sumTotalVendaByDataVendaBetween(inicioDia, fimDia);
         if (totalVendido == null) totalVendido = BigDecimal.ZERO;
@@ -128,9 +202,5 @@ public class DashboardService {
 
     private BigDecimal safeBigDecimal(BigDecimal valor) {
         return valor != null ? valor : BigDecimal.ZERO;
-    }
-
-    public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
-        return null; // Implementação mantida no original
     }
 }

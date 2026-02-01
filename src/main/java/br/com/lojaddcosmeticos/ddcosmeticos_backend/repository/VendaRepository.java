@@ -21,46 +21,39 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    // --- CONTAGENS E BUSCAS SIMPLES ---
+    // ... (Métodos básicos mantidos) ...
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
     List<Venda> findByStatusNfce(StatusFiscal statusNfce);
     List<Venda> findByStatusNfceOrderByDataVendaDesc(StatusFiscal statusNfce);
-
-    // --- HISTÓRICO ---
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
     List<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
 
-    @Query("SELECT DISTINCT v FROM Venda v " +
-            "LEFT JOIN FETCH v.itens i " +
-            "LEFT JOIN FETCH i.produto " +
-            "WHERE v.idVenda = :id")
+    @Query("SELECT DISTINCT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.idVenda = :id")
     Optional<Venda> findByIdComItens(@Param("id") Long id);
 
-    @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     List<Venda> buscarVendasDoUsuarioNoPeriodo(@Param("usuarioId") Long usuarioId, @Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
-    BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
     // =========================================================================
-    // MÉTODOS DASHBOARD (NOVOS E ESSENCIAIS)
+    // MÉTODOS DASHBOARD (CORRIGIDOS PARA ACEITAR NULL)
     // =========================================================================
 
-    // 1. Cards
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    // 1. Soma Faturamento
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     BigDecimal somarFaturamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    // 2. Contar Vendas
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     Long contarVendas(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // 2. Gráfico Barras
-    @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce != 'CANCELADA'")
+    // 3. Lista para Gráficos
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     List<Venda> buscarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // 3. Gráfico Pizza (com COUNT(p) para satisfazer o DTO)
+    // 4. Gráfico Pizza (Pagamentos)
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
             CAST(p.formaPagamento AS string), 
@@ -68,18 +61,14 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
             COUNT(p)
         )
         FROM PagamentoVenda p 
-        WHERE p.venda.dataVenda BETWEEN :inicio AND :fim 
-        AND p.venda.statusNfce != 'CANCELADA'
+        JOIN p.venda v
+        WHERE v.dataVenda BETWEEN :inicio AND :fim 
+        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
         GROUP BY p.formaPagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // 4. Últimas Vendas (O método que faltava!)
-    // Retorna as Top 5 vendas que NÃO estejam canceladas, ordenadas por data
-    List<Venda> findTop5ByStatusNfceNotOrderByDataVendaDesc(StatusFiscal status);
-
-    // 5. Ranking de Produtos (Top 5 Produtos por valor) - Usado no Dashboard
-    // Nota: O DTO ProdutoRankingDTO deve ter 4 campos agora (Descricao, Valor, Qtd, Unidade)
+    // 5. Ranking Produtos
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
             p.descricao, 
@@ -91,13 +80,19 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         JOIN i.produto p 
         JOIN i.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusNfce != 'CANCELADA'
+        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
         GROUP BY p.descricao 
         ORDER BY SUM(i.precoUnitario * i.quantidade) DESC
     """)
     List<ProdutoRankingDTO> buscarRankingProdutos(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
 
-    // --- MÉTODOS DE RELATÓRIOS ANTIGOS (Mantidos para compatibilidade) ---
+    // 6. Últimas Vendas (Top 5)
+    @Query("SELECT v FROM Venda v WHERE (v.statusNfce IS NULL OR v.statusNfce != :statusIgnorado) ORDER BY v.dataVenda DESC LIMIT 5")
+    List<Venda> findTop5Recentes(@Param("statusIgnorado") StatusFiscal statusIgnorado);
+
+    // --- Outros Métodos (Mantidos) ---
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
@@ -108,7 +103,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         FROM PagamentoVenda p 
         JOIN p.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusNfce != 'CANCELADA'
+        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
         GROUP BY p.formaPagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
@@ -121,13 +116,12 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusNfce != 'CANCELADA' 
+        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
         GROUP BY v.dataVenda
         ORDER BY v.dataVenda ASC
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // Ranking antigo por MARCA (se ainda usar em relatórios)
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
             p.marca, 
@@ -139,7 +133,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         JOIN i.produto p 
         JOIN i.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND v.statusNfce != 'CANCELADA'
+        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
         GROUP BY p.marca 
         ORDER BY SUM(i.precoUnitario * i.quantidade) DESC
     """)

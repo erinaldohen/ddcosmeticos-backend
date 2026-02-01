@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardDTO; // <--- Importante: Novo DTO
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,20 +19,17 @@ public class DashboardController {
     @Autowired
     private DashboardService dashboardService;
 
-    // 1. Endpoint Principal para a Tela de Vendas (Gráficos e Cards Financeiros)
-    // O Frontend chama este endpoint para preencher a tela inicial
+    // Endpoint Principal
     @GetMapping
     public ResponseEntity<DashboardDTO> getDashboardCompleto() {
         return ResponseEntity.ok(dashboardService.carregarDashboard());
     }
 
-    // 2. Resumo Operacional (Focado em Estoque e Alertas - Pode ser usado em outra aba)
     @GetMapping("/resumo")
     public ResponseEntity<DashboardResumoDTO> getResumo() {
         return ResponseEntity.ok(dashboardService.obterResumoGeral());
     }
 
-    // 3. Alertas de Auditoria (Polling)
     @GetMapping("/alertas")
     public ResponseEntity<List<AuditoriaRequestDTO>> getAlertas() {
         return ResponseEntity.ok(dashboardService.buscarAlertasRecentes());

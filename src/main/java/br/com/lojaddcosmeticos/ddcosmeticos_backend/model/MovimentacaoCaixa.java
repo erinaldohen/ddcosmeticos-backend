@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -23,10 +24,9 @@ public class MovimentacaoCaixa {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // --- CORREÇÃO: Vínculo com o Caixa Diário ---
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "caixa_id", nullable = false)
-    @JsonIgnore // Evita erro de serialização infinita ao devolver JSON
+    @JsonIgnore
     private CaixaDiario caixa;
 
     @Enumerated(EnumType.STRING)
@@ -37,10 +37,12 @@ public class MovimentacaoCaixa {
     private BigDecimal valor;
 
     @Column(nullable = false)
-    private String motivo; // Motivo da movimentação (Ex: "Pgto Fornecedor", "Adição de Troco")
+    // CORREÇÃO: Permite receber 'observacao' do JSON do frontend e mapear para 'motivo'
+    @JsonProperty("observacao")
+    private String motivo;
 
     @Column(nullable = false)
     private LocalDateTime dataHora = LocalDateTime.now();
 
-    private String usuarioResponsavel; // Nome do operador/gerente que autorizou
+    private String usuarioResponsavel;
 }

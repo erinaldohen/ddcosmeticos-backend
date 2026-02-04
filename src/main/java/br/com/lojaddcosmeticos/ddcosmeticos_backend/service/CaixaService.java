@@ -23,7 +23,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,6 +34,12 @@ public class CaixaService {
     private final UsuarioRepository usuarioRepository;
     private final VendaRepository vendaRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
+
+    // --- NOVO: LISTAR MOTIVOS (CORRIGIDO) ---
+    // Usado pelo frontend para o autocomplete inteligente
+    public List<String> listarMotivosFrequentes() {
+        return movimentacaoRepository.findDistinctMotivos();
+    }
 
     // --- LISTAGEM DE MOVIMENTAÇÕES (USADO NO CONTROLLER) ---
     public List<MovimentacaoCaixa> buscarHistorico(LocalDate inicio, LocalDate fim) {
@@ -125,7 +130,7 @@ public class CaixaService {
         BigDecimal sangrias = BigDecimal.ZERO;
         BigDecimal suprimentos = BigDecimal.ZERO;
 
-        List<MovimentacaoCaixa> movs = caixa.getMovimentacoes(); // Garantido pelo Model atualizado
+        List<MovimentacaoCaixa> movs = caixa.getMovimentacoes();
         if (movs != null && !movs.isEmpty()) {
             sangrias = movs.stream()
                     .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA)
@@ -139,22 +144,21 @@ public class CaixaService {
         }
 
         // 3. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
-        // Pix e Cartão não somam na gaveta física
         BigDecimal saldoEsperado = caixa.getSaldoInicial()
                 .add(totalDinheiro)
                 .add(suprimentos)
                 .subtract(sangrias);
 
         // 4. Preenche o objeto com os dados finais
-        caixa.setValorCalculadoSistema(saldoEsperado); // CORRIGIDO: Era 'saldoCalculado'
-        caixa.setValorFechamento(saldoInformado);      // CORRIGIDO: Nome do campo no Model
+        caixa.setValorCalculadoSistema(saldoEsperado);
+        caixa.setValorFechamento(saldoInformado);
 
         // Preenche os totais analíticos para o relatório
         caixa.setTotalVendasDinheiro(totalDinheiro);
         caixa.setTotalVendasPix(totalPix);
         caixa.setTotalVendasCartao(totalCartao);
-        caixa.setTotalEntradas(suprimentos); // CORRIGIDO: Nome do campo no Model
-        caixa.setTotalSaidas(sangrias);      // CORRIGIDO: Nome do campo no Model
+        caixa.setTotalEntradas(suprimentos);
+        caixa.setTotalSaidas(sangrias);
 
         caixa.setDataFechamento(agora);
         caixa.setStatus(StatusCaixa.FECHADO);

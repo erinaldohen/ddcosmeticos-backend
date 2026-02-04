@@ -8,7 +8,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaRelatorioService; // <--- IMPORTANTE: Import Adicionado
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaRelatorioService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -45,12 +45,16 @@ public class CaixaController {
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
     private final FinanceiroService financeiroService;
-
-    // --- CORREÇÃO: INJEÇÃO DO SERVICE DE RELATÓRIO ---
     private final CaixaRelatorioService relatorioService;
-    // -------------------------------------------------
 
-    // --- 1. LISTAGEM COM PAGINAÇÃO E FILTRO DE DATA ---
+    // --- NOVO ENDPOINT: MOTIVOS FREQUENTES ---
+    @GetMapping("/motivos")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<String>> getMotivosFrequentes() {
+        return ResponseEntity.ok(caixaService.listarMotivosFrequentes());
+    }
+    // -----------------------------------------
+
     @GetMapping
     public ResponseEntity<Page<CaixaDiario>> listarTodos(
             Pageable pageable,
@@ -58,17 +62,13 @@ public class CaixaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
     ) {
         if (inicio != null && fim != null) {
-            // Converte para LocalDateTime para pegar o dia completo (00:00 até 23:59)
             LocalDateTime dataInicio = inicio.atStartOfDay();
             LocalDateTime dataFim = fim.atTime(23, 59, 59);
-
             return ResponseEntity.ok(caixaRepository.findByDataAberturaBetween(dataInicio, dataFim, pageable));
         }
-
         return ResponseEntity.ok(caixaRepository.findAll(pageable));
     }
 
-    // --- 2. BUSCA DETALHADA POR ID (ESSENCIAL PARA O BOTÃO 'OLHO') ---
     @GetMapping("/{id}")
     public ResponseEntity<CaixaDiario> buscarPorId(@PathVariable Long id) {
         return caixaRepository.findById(id)
@@ -76,14 +76,12 @@ public class CaixaController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // --- 3. STATUS ATUAL ---
     @GetMapping("/status")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiarioDTO> verificarStatus() {
         return ResponseEntity.ok(caixaService.buscarStatusAtual());
     }
 
-    // --- 4. MOVIMENTAÇÃO DIÁRIA (LEGADO/AUXILIAR) ---
     @GetMapping("/diario")
     public ResponseEntity<List<MovimentacaoCaixa>> getHistoricoDiario(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data
@@ -92,7 +90,6 @@ public class CaixaController {
         return ResponseEntity.ok(caixaService.buscarHistorico(target, target));
     }
 
-    // --- 5. OPERAÇÕES DE CAIXA ---
     @PostMapping("/abrir")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiario> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
@@ -133,7 +130,6 @@ public class CaixaController {
         return ResponseEntity.ok(financeiroService.registrarMovimentacaoManual(dto, usuario));
     }
 
-    // --- 6. EXPORTAÇÃO DE RELATÓRIO PDF ---
     @GetMapping("/relatorio/pdf")
     public void gerarRelatorioPdf(
             HttpServletResponse response,
@@ -146,11 +142,9 @@ public class CaixaController {
         String headerValue = "attachment; filename=relatorio_caixas.pdf";
         response.setHeader(headerKey, headerValue);
 
-        // Define datas padrão se vierem nulas
         LocalDate dInicio = (inicio != null) ? inicio : LocalDate.now().minusDays(30);
         LocalDate dFim = (fim != null) ? fim : LocalDate.now();
 
-        // Busca os dados (sem paginação, pois o relatório é da lista filtrada)
         List<CaixaDiario> lista = caixaRepository.findByDataAberturaBetweenOrderByDataAberturaDesc(
                 dInicio.atStartOfDay(),
                 dFim.atTime(23, 59, 59)

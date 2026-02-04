@@ -12,7 +12,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioReposi
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -21,42 +21,41 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
-import java.time.LocalDate; // <--- IMPORTANTE: Importar LocalDate
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 @Service
+@RequiredArgsConstructor
 public class CaixaService {
 
-    @Autowired private CaixaDiarioRepository caixaRepository;
-    @Autowired private UsuarioRepository usuarioRepository;
-    @Autowired private VendaRepository vendaRepository;
-    @Autowired private MovimentacaoCaixaRepository movimentacaoRepository;
+    private final CaixaDiarioRepository caixaRepository;
+    private final UsuarioRepository usuarioRepository;
+    private final VendaRepository vendaRepository;
+    private final MovimentacaoCaixaRepository movimentacaoRepository;
 
-    // --- NOVO MÉTODO (CORREÇÃO DO ERRO) ---
+    // --- LISTAGEM DE MOVIMENTAÇÕES (USADO NO CONTROLLER) ---
     public List<MovimentacaoCaixa> buscarHistorico(LocalDate inicio, LocalDate fim) {
-        // Converte LocalDate (apenas data) para LocalDateTime (data + hora)
-        // Ex: 2026-01-22 vira 2026-01-22T00:00:00
         LocalDateTime dataInicio = inicio.atStartOfDay();
-
-        // Ex: 2026-01-22 vira 2026-01-22T23:59:59
         LocalDateTime dataFim = fim.atTime(23, 59, 59);
-
         return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
-    // ---------------------------------------
 
+    // --- STATUS ATUAL (DTO) ---
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
 
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
 
         if (caixaOpt.isEmpty()) {
-            return null;
+            return null; // Frontend entende que não tem caixa aberto
         }
 
         CaixaDiario caixa = caixaOpt.get();
+
+        // Busca vendas desde a abertura até agora
         List<Venda> vendasHoje = vendaRepository.buscarVendasDoUsuarioNoPeriodo(
                 operador.getId(),
                 caixa.getDataAbertura(),
@@ -78,6 +77,7 @@ public class CaixaService {
         );
     }
 
+    // --- ABRIR CAIXA ---
     @Transactional
     public CaixaDiario abrirCaixa(BigDecimal fundoTroco) {
         Usuario operador = getUsuarioLogado();
@@ -92,54 +92,83 @@ public class CaixaService {
         caixa.setSaldoInicial(fundoTroco != null ? fundoTroco : BigDecimal.ZERO);
         caixa.setStatus(StatusCaixa.ABERTO);
 
+        // Inicializa acumuladores zerados
+        caixa.setTotalVendasDinheiro(BigDecimal.ZERO);
+        caixa.setTotalVendasPix(BigDecimal.ZERO);
+        caixa.setTotalVendasCartao(BigDecimal.ZERO);
+        caixa.setTotalEntradas(BigDecimal.ZERO);
+        caixa.setTotalSaidas(BigDecimal.ZERO);
+
         return caixaRepository.save(caixa);
     }
 
+    // --- FECHAR CAIXA (LÓGICA CRÍTICA) ---
     @Transactional
     public CaixaDiario fecharCaixa(BigDecimal saldoInformado) {
-        if (saldoInformado == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo final obrigatório.");
+        if (saldoInformado == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo final (gaveta) obrigatório.");
 
         Usuario operador = getUsuarioLogado();
         CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Não há caixa aberto."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Não há caixa aberto para este usuário."));
 
         LocalDateTime agora = LocalDateTime.now();
+
+        // 1. Calcula Vendas
         List<Venda> vendas = vendaRepository.buscarVendasDoUsuarioNoPeriodo(operador.getId(), caixa.getDataAbertura(), agora);
 
         BigDecimal totalDinheiro = somarPorForma(vendas, FormaDePagamento.DINHEIRO);
         BigDecimal totalPix = somarPorForma(vendas, FormaDePagamento.PIX);
-        BigDecimal totalCartao = somarPorForma(vendas, FormaDePagamento.CREDITO).add(somarPorForma(vendas, FormaDePagamento.DEBITO));
+        BigDecimal totalCartao = somarPorForma(vendas, FormaDePagamento.CREDITO)
+                .add(somarPorForma(vendas, FormaDePagamento.DEBITO));
 
+        // 2. Calcula Movimentações (Sangrias e Suprimentos)
         BigDecimal sangrias = BigDecimal.ZERO;
         BigDecimal suprimentos = BigDecimal.ZERO;
 
-        if (caixa.getMovimentacoes() != null) {
-            sangrias = caixa.getMovimentacoes().stream().filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA)
-                    .map(MovimentacaoCaixa::getValor).reduce(BigDecimal.ZERO, BigDecimal::add);
-            suprimentos = caixa.getMovimentacoes().stream().filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO)
-                    .map(MovimentacaoCaixa::getValor).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<MovimentacaoCaixa> movs = caixa.getMovimentacoes(); // Garantido pelo Model atualizado
+        if (movs != null && !movs.isEmpty()) {
+            sangrias = movs.stream()
+                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA)
+                    .map(MovimentacaoCaixa::getValor)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            suprimentos = movs.stream()
+                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO)
+                    .map(MovimentacaoCaixa::getValor)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
 
-        BigDecimal saldoEsperado = caixa.getSaldoInicial().add(totalDinheiro).add(suprimentos).subtract(sangrias);
+        // 3. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
+        // Pix e Cartão não somam na gaveta física
+        BigDecimal saldoEsperado = caixa.getSaldoInicial()
+                .add(totalDinheiro)
+                .add(suprimentos)
+                .subtract(sangrias);
 
-        caixa.setSaldoFinalCalculado(saldoEsperado);
-        caixa.setSaldoFinalInformado(saldoInformado);
-        caixa.setDiferenca(saldoInformado.subtract(saldoEsperado));
+        // 4. Preenche o objeto com os dados finais
+        caixa.setValorCalculadoSistema(saldoEsperado); // CORRIGIDO: Era 'saldoCalculado'
+        caixa.setValorFechamento(saldoInformado);      // CORRIGIDO: Nome do campo no Model
+
+        // Preenche os totais analíticos para o relatório
         caixa.setTotalVendasDinheiro(totalDinheiro);
         caixa.setTotalVendasPix(totalPix);
         caixa.setTotalVendasCartao(totalCartao);
-        caixa.setTotalSangrias(sangrias);
-        caixa.setTotalSuprimentos(suprimentos);
+        caixa.setTotalEntradas(suprimentos); // CORRIGIDO: Nome do campo no Model
+        caixa.setTotalSaidas(sangrias);      // CORRIGIDO: Nome do campo no Model
+
         caixa.setDataFechamento(agora);
-        caixa.setUsuarioFechamento(operador);
         caixa.setStatus(StatusCaixa.FECHADO);
 
         return caixaRepository.save(caixa);
     }
 
+    // --- UTILS ---
     private BigDecimal somarPorForma(List<Venda> vendas, FormaDePagamento forma) {
-        return vendas.stream().filter(v -> v.getFormaDePagamento() == forma)
-                .map(Venda::getValorTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (vendas == null || vendas.isEmpty()) return BigDecimal.ZERO;
+        return vendas.stream()
+                .filter(v -> v.getFormaDePagamento() == forma)
+                .map(Venda::getValorTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private Usuario getUsuarioLogado() {
@@ -147,9 +176,7 @@ public class CaixaService {
         if (auth == null || !auth.isAuthenticated()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não autenticado.");
         }
-
         String login = auth.getName();
-
         return usuarioRepository.findByMatriculaOrEmail(login, login)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
     }

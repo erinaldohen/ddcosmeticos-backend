@@ -1,58 +1,61 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
+import com.fasterxml.jackson.annotation.JsonIgnore; // Importante para evitar loop infinito no JSON
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.ArrayList; // Importante
+import java.util.List;      // Importante
 
-@Getter
-@Setter
+@Data
 @Entity
-@Table(name = "caixa_diario")
+@Table(name = "tb_caixa_diario")
 public class CaixaDiario {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "usuario_abertura_id", nullable = false)
-    private Usuario usuarioAbertura;
-
-    @ManyToOne
-    @JoinColumn(name = "usuario_fechamento_id")
-    private Usuario usuarioFechamento;
-
     private LocalDateTime dataAbertura;
     private LocalDateTime dataFechamento;
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal saldoInicial; // Fundo de troco
+    @ManyToOne
+    @JoinColumn(name = "usuario_abertura_id")
+    private Usuario usuarioAbertura;
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal saldoFinalInformado; // O que o operador contou na gaveta
+    // --- RELACIONAMENTO QUE FALTAVA ---
+    // Um Caixa tem MUITAS Movimentações
+    @OneToMany(mappedBy = "caixa", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonIgnore // Evita erro de recursão infinita ao listar caixas (StackOverflowError)
+    private List<MovimentacaoCaixa> movimentacoes = new ArrayList<>();
+    // ----------------------------------
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal saldoFinalCalculado; // O que o sistema calculou
+    // Valores Principais
+    private BigDecimal saldoInicial;
+    private BigDecimal valorFechamento;
+    private BigDecimal valorCalculadoSistema;
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal diferenca; // Quebra de caixa (Sobra ou Falta)
+    // Acumuladores (que adicionamos no passo anterior)
+    @Column(columnDefinition = "DECIMAL(10,2) DEFAULT 0.00")
+    private BigDecimal totalVendasDinheiro = BigDecimal.ZERO;
+
+    @Column(columnDefinition = "DECIMAL(10,2) DEFAULT 0.00")
+    private BigDecimal totalVendasPix = BigDecimal.ZERO;
+
+    @Column(columnDefinition = "DECIMAL(10,2) DEFAULT 0.00")
+    private BigDecimal totalVendasCartao = BigDecimal.ZERO;
+
+    @Column(columnDefinition = "DECIMAL(10,2) DEFAULT 0.00")
+    private BigDecimal totalEntradas = BigDecimal.ZERO;
+
+    @Column(columnDefinition = "DECIMAL(10,2) DEFAULT 0.00")
+    private BigDecimal totalSaidas = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
-    private StatusCaixa status; // ABERTO, FECHADO
+    private StatusCaixa status;
 
-    @OneToMany(mappedBy = "caixa", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private List<MovimentacaoCaixa> movimentacoes;
-
-    // Totais calculados para agilizar relatórios
-    private BigDecimal totalVendasDinheiro = BigDecimal.ZERO;
-    private BigDecimal totalVendasPix = BigDecimal.ZERO;
-    private BigDecimal totalVendasCartao = BigDecimal.ZERO;
-    private BigDecimal totalSangrias = BigDecimal.ZERO;
-    private BigDecimal totalSuprimentos = BigDecimal.ZERO;
+    private String observacoes;
 }

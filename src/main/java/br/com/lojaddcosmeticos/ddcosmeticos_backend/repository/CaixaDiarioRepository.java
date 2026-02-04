@@ -9,14 +9,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> {
 
-    // Método para buscar caixa aberto de um usuário
     Optional<CaixaDiario> findFirstByUsuarioAberturaAndStatus(Usuario usuario, StatusCaixa status);
 
-    // --- ADICIONE ESTE MÉTODO PARA O HISTÓRICO FUNCIONAR ---
+    // Método para paginação (usado na listagem da tela)
     Page<CaixaDiario> findByDataAberturaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
+
+    // --- ADICIONE ESTA LINHA (usada para o PDF) ---
+    List<CaixaDiario> findByDataAberturaBetweenOrderByDataAberturaDesc(LocalDateTime inicio, LocalDateTime fim);
 }

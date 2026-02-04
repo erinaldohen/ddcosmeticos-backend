@@ -8,9 +8,11 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaRelatorioService; // <--- IMPORTANTE: Import Adicionado
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FinanceiroService;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -23,6 +25,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.security.Principal;
 import java.time.LocalDate;
@@ -42,6 +45,10 @@ public class CaixaController {
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
     private final FinanceiroService financeiroService;
+
+    // --- CORREÇÃO: INJEÇÃO DO SERVICE DE RELATÓRIO ---
+    private final CaixaRelatorioService relatorioService;
+    // -------------------------------------------------
 
     // --- 1. LISTAGEM COM PAGINAÇÃO E FILTRO DE DATA ---
     @GetMapping
@@ -124,5 +131,31 @@ public class CaixaController {
             Principal principal) {
         String usuario = (principal != null) ? principal.getName() : "SISTEMA_LOCAL";
         return ResponseEntity.ok(financeiroService.registrarMovimentacaoManual(dto, usuario));
+    }
+
+    // --- 6. EXPORTAÇÃO DE RELATÓRIO PDF ---
+    @GetMapping("/relatorio/pdf")
+    public void gerarRelatorioPdf(
+            HttpServletResponse response,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
+    ) throws IOException {
+
+        response.setContentType("application/pdf");
+        String headerKey = "Content-Disposition";
+        String headerValue = "attachment; filename=relatorio_caixas.pdf";
+        response.setHeader(headerKey, headerValue);
+
+        // Define datas padrão se vierem nulas
+        LocalDate dInicio = (inicio != null) ? inicio : LocalDate.now().minusDays(30);
+        LocalDate dFim = (fim != null) ? fim : LocalDate.now();
+
+        // Busca os dados (sem paginação, pois o relatório é da lista filtrada)
+        List<CaixaDiario> lista = caixaRepository.findByDataAberturaBetweenOrderByDataAberturaDesc(
+                dInicio.atStartOfDay(),
+                dFim.atTime(23, 59, 59)
+        );
+
+        relatorioService.exportarPdf(response, lista, dInicio.toString(), dFim.toString());
     }
 }

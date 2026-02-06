@@ -16,13 +16,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
 public class FornecedorService {
 
     @Autowired
-    private FornecedorRepository repository;
+    private FornecedorRepository fornecedorRepository;
 
     @Autowired
     private ProdutoRepository produtoRepository;
@@ -31,15 +32,31 @@ public class FornecedorService {
     @Transactional(readOnly = true)
     public Page<FornecedorDTO> listar(String termo, Pageable pageable) {
         if (termo != null && !termo.trim().isEmpty()) {
-            return repository.buscarPorTermo(termo, pageable).map(this::converterParaDto);
+            return fornecedorRepository.buscarPorTermo(termo, pageable).map(this::converterParaDto);
         }
-        return repository.findAll(pageable).map(this::converterParaDto);
+        return fornecedorRepository.findAll(pageable).map(this::converterParaDto);
+    }
+
+    public Optional<Fornecedor> buscarPorCnpj(String cnpj) {
+        String cnpjLimpo = cnpj.replaceAll("\\D", "");
+        return fornecedorRepository.findByCnpj(cnpjLimpo);
+    }
+
+    public void inativar(Long id) {
+        Fornecedor fornecedor = fornecedorRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado"));
+
+        // LÓGICA DE SOFT DELETE
+        fornecedor.setAtivo(false);
+
+        // Salva a alteração (Update) em vez de deletar
+        fornecedorRepository.save(fornecedor);
     }
 
     // --- LISTAGEM PARA DROPDOWN ---
     @Transactional(readOnly = true)
     public List<FornecedorDTO> listarTodosParaDropdown() {
-        return repository.findAll().stream()
+        return fornecedorRepository.findAll().stream()
                 .filter(Fornecedor::isAtivo)
                 .map(this::converterParaDto)
                 .collect(Collectors.toList());
@@ -48,7 +65,7 @@ public class FornecedorService {
     // --- BUSCA POR ID ---
     @Transactional(readOnly = true)
     public FornecedorDTO buscarPorId(Long id) {
-        Fornecedor fornecedor = repository.findById(id)
+        Fornecedor fornecedor = fornecedorRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado ID: " + id));
         return converterParaDto(fornecedor);
     }
@@ -56,33 +73,33 @@ public class FornecedorService {
     // --- SALVAR ---
     @Transactional
     public FornecedorDTO salvar(FornecedorDTO dto) {
-        if (repository.existsByCnpj(dto.getCnpj())) {
+        if (fornecedorRepository.existsByCnpj(dto.getCnpj())) {
             throw new ValidationException("Já existe um fornecedor cadastrado com este CNPJ.");
         }
         Fornecedor fornecedor = new Fornecedor();
         copiarDtoParaEntidade(dto, fornecedor);
-        fornecedor = repository.save(fornecedor);
+        fornecedor = fornecedorRepository.save(fornecedor);
         return converterParaDto(fornecedor);
     }
 
     // --- ATUALIZAR ---
     @Transactional
     public FornecedorDTO atualizar(Long id, FornecedorDTO dto) {
-        Fornecedor fornecedor = repository.findById(id)
+        Fornecedor fornecedor = fornecedorRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Fornecedor não encontrado ID: " + id));
 
         copiarDtoParaEntidade(dto, fornecedor);
-        fornecedor = repository.save(fornecedor);
+        fornecedor = fornecedorRepository.save(fornecedor);
         return converterParaDto(fornecedor);
     }
 
     // --- EXCLUIR ---
     @Transactional
     public void excluir(Long id) {
-        if (!repository.existsById(id)) {
+        if (!fornecedorRepository.existsById(id)) {
             throw new ResourceNotFoundException("Fornecedor não encontrado");
         }
-        repository.deleteById(id);
+        fornecedorRepository.deleteById(id);
     }
 
     // --- PRODUTOS DO FORNECEDOR ---
@@ -114,7 +131,7 @@ public class FornecedorService {
     public Fornecedor buscarOuCriarRapido(String cnpj) {
         String cnpjLimpo = cnpj.replaceAll("\\D", "");
 
-        return repository.findByCnpj(cnpjLimpo).orElseGet(() -> {
+        return fornecedorRepository.findByCnpj(cnpjLimpo).orElseGet(() -> {
             // Se não encontrou no banco, cria um novo
             Fornecedor novo = new Fornecedor();
             novo.setCnpj(cnpjLimpo);
@@ -146,7 +163,7 @@ public class FornecedorService {
                 novo.setNomeFantasia("CADASTRO PENDENTE");
             }
 
-            return repository.save(novo);
+            return fornecedorRepository.save(novo);
         });
     }
 

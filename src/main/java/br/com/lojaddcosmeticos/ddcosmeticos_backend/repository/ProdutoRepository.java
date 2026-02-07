@@ -119,4 +119,10 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     // Em vez de SQL Nativo, use JPQL (que usa o nome da Classe, não da Tabela)
     @Query("SELECT p FROM Produto p WHERE p.codigoBarras = :ean")
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
+
+    @Query(value = "SELECT MAX(CAST(codigo_barras AS BIGINT)) FROM produtos WHERE codigo_barras ~ '^[0-9]+$'", nativeQuery = true)
+    Long findMaxCodigoBarras();
+
+    @Query("SELECT MAX(p.id) FROM Produto p")
+    Long findMaxId();
 }

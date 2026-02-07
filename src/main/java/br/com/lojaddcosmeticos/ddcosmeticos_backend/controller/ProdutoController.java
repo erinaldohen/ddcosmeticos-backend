@@ -174,4 +174,11 @@ public class ProdutoController {
         // Reutiliza a busca existente que já filtra por EAN ou Nome
         return ResponseEntity.ok(produtoService.listarResumo(termo, pageable));
     }
+
+    @GetMapping("/proximo-sequencial")
+    public ResponseEntity<String> obterProximoSequencial() {
+        String proximoEan = produtoService.gerarProximoEanInterno();
+        // Retorna apenas a string pura ou um JSON simples
+        return ResponseEntity.ok(proximoEan);
+    }
 }

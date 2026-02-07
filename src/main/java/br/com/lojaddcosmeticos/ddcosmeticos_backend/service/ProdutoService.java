@@ -546,4 +546,25 @@ public class ProdutoService {
 
         return null;
     }
+
+    // No arquivo br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService
+
+    public String gerarProximoEanInterno() {
+        // Busca o maior ID cadastrado na tabela
+        Long maxId = produtoRepository.findMaxId();
+
+        // Se não tiver nenhum produto, começa do 0
+        if (maxId == null) {
+            maxId = 0L;
+        }
+
+        // O próximo código será o ID atual + 1
+        long proximoId = maxId + 1;
+
+        // Formata: Prefixo '2' + 12 dígitos (preenchidos com zeros à esquerda)
+        // Exemplo: Se o próximo ID for 50, gera "2000000000050"
+        String eanInterno = String.format("2%012d", proximoId);
+
+        return eanInterno;
+    }
 }

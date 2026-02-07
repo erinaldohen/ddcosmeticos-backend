@@ -8,41 +8,47 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
-@RequestMapping("/configuracoes")
+@RequestMapping("/api/v1/configuracoes") // Recomendado incluir o prefixo da API
 public class ConfiguracaoLojaController {
 
     @Autowired
     private ConfiguracaoLojaService service;
 
-    // 1. GET - Retorna o DTO estruturado (Loja, Fiscal, Financeiro...)
+    /**
+     * 1. GET - Retorna as configurações estruturadas via DTO.
+     * Se não houver configuração no banco, o Service criará uma padrão.
+     */
     @GetMapping
     public ResponseEntity<ConfiguracaoDTO> buscar() {
-        // Usa o método novo do Service que já converte Entidade -> DTO
         ConfiguracaoDTO config = service.buscarConfiguracaoDTO();
         return ResponseEntity.ok(config);
     }
 
-    // 2. PUT - Recebe o DTO do Frontend e salva
+    /**
+     * 2. PUT - Recebe as alterações do Frontend e sincroniza com a entidade do banco.
+     */
     @PutMapping
     public ResponseEntity<ConfiguracaoDTO> atualizar(@RequestBody ConfiguracaoDTO dto) {
-        // O Service agora cuida de converter DTO -> Entidade e preservar dados antigos (logo/cert)
         ConfiguracaoDTO atualizada = service.salvar(dto);
         return ResponseEntity.ok(atualizada);
     }
 
-    // 3. Upload da Logo
+    /**
+     * 3. POST - Upload da logomarca da loja.
+     * Retorna a URL relativa do arquivo salvo (ex: /uploads/logo_xyz.png).
+     */
     @PostMapping("/logo")
     public ResponseEntity<String> uploadLogo(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body("Arquivo vazio");
+            return ResponseEntity.badRequest().body("Arquivo de imagem vazio.");
         }
-
-        // Retorna apenas a String da URL, o frontend trata
         String logoUrl = service.salvarLogo(file);
         return ResponseEntity.ok(logoUrl);
     }
 
-    // 4. Upload do Certificado
+    /**
+     * 4. POST - Upload do Certificado Digital A1 (.pfx ou .p12).
+     */
     @PostMapping("/certificado")
     public ResponseEntity<Void> uploadCertificado(
             @RequestParam("file") MultipartFile file,

@@ -187,7 +187,7 @@ public class ConfiguracaoLojaService {
         fin.setFechamentoCego(d.financeiro().fechamentoCego());
 
         if (d.financeiro().pagamentos() != null) {
-            fin.setAceitaDinheiro(d.financeiro().pagamentos().dinheiro());
+            fin.setAceitaDinheiro(Boolean.TRUE.equals(d.financeiro().pagamentos().dinheiro()));
             fin.setAceitaPix(d.financeiro().pagamentos().pix());
             fin.setAceitaCredito(d.financeiro().pagamentos().credito());
             fin.setAceitaDebito(d.financeiro().pagamentos().debito());

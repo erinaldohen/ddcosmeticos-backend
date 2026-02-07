@@ -1,5 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import org.hibernate.validator.constraints.br.CNPJ;
+
 import java.math.BigDecimal;
 import java.time.LocalTime;
 
@@ -13,7 +16,7 @@ public record ConfiguracaoDTO(
         SistemaDTO sistema
 ) {
     public record LojaDTO(
-            String razaoSocial, String nomeFantasia, String cnpj, String ie, String im, String cnae,
+            @NotBlank String razaoSocial, String nomeFantasia, @CNPJ String cnpj, String ie, String im, String cnae,
             String email, String telefone, String whatsapp, String site, String instagram, String slogan,
             String corDestaque, Boolean isMatriz, LocalTime horarioAbre, LocalTime horarioFecha,
             Integer toleranciaMinutos, Boolean bloqueioForaHorario, BigDecimal taxaEntregaPadrao,

@@ -151,6 +151,7 @@ public class ConfiguracaoLoja {
         private BigDecimal metaDiaria;
 
         // Taxas
+        @Column(precision = 10, scale = 2)
         private BigDecimal taxaDebito;
         private BigDecimal taxaCredito;
 
@@ -208,6 +209,7 @@ public class ConfiguracaoLoja {
         @Column(columnDefinition = "TIME")
         private LocalTime backupHora;
 
+        @Column(length = 500)
         private String rodape;
         private String tema;
         private Boolean backupNuvem;

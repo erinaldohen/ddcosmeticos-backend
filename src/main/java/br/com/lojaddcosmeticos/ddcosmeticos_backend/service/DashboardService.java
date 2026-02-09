@@ -4,7 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO; // Importante
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
@@ -15,7 +15,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarReposit
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +30,15 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@RequiredArgsConstructor // Mais limpo que @Autowired em todos os campos
 public class DashboardService {
 
-    @Autowired private ProdutoRepository produtoRepository;
-    @Autowired private VendaRepository vendaRepository;
-    @Autowired private ContaPagarRepository contaPagarRepository;
-    @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private PrecificacaoService precificacaoService;
-    @Autowired private AuditoriaService auditoriaService;
+    private final ProdutoRepository produtoRepository;
+    private final VendaRepository vendaRepository;
+    private final ContaPagarRepository contaPagarRepository;
+    private final ContaReceberRepository contaReceberRepository;
+    private final PrecificacaoService precificacaoService;
+    private final AuditoriaService auditoriaService;
 
     // =========================================================================
     // 1. DASHBOARD DE VENDAS (Tela Principal)
@@ -54,10 +55,10 @@ public class DashboardService {
         LocalDateTime fimMes = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
         // 1. Cards (Queries ajustadas para aceitar NULL)
-        BigDecimal fatHoje = vendaRepository.somarFaturamento(inicioDia, fimDia);
-        BigDecimal fatMes = vendaRepository.somarFaturamento(inicioMes, fimMes);
+        BigDecimal fatHoje = safeBigDecimal(vendaRepository.somarFaturamento(inicioDia, fimDia));
+        BigDecimal fatMes = safeBigDecimal(vendaRepository.somarFaturamento(inicioMes, fimMes));
         Long vendasHoje = vendaRepository.contarVendas(inicioDia, fimDia);
-        // Long vendasMes = vendaRepository.contarVendas(inicioMes, fimMes); // Não usado no DTO atual, mas útil saber
+        if(vendasHoje == null) vendasHoje = 0L;
 
         BigDecimal ticketMedio = (vendasHoje > 0)
                 ? fatHoje.divide(BigDecimal.valueOf(vendasHoje), 2, RoundingMode.HALF_UP)
@@ -68,7 +69,7 @@ public class DashboardService {
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
 
-        // Preenche dias com 0
+        // Preenche dias com 0 para o gráfico não ficar buracado
         for (int i = 1; i <= agora.getDayOfMonth(); i++) {
             String dia = agora.toLocalDate().withDayOfMonth(i).format(fmt);
             mapaDias.put(dia, BigDecimal.ZERO);
@@ -83,8 +84,8 @@ public class DashboardService {
                 .map(e -> new VendaDiariaDTO(e.getKey(), e.getValue(), 0L))
                 .collect(Collectors.toList());
 
-        // 3. Gráfico: Pagamentos
-        List<VendaPorPagamentoDTO> graficoPagamentos = vendaRepository.agruparPorPagamento(inicioMes, fimMes);
+        // 3. Gráfico: Pagamentos (CORRIGIDO: Usa o novo método do Repository)
+        List<VendaPorPagamentoDTO> graficoPagamentos = vendaRepository.agruparPorFormaPagamento(inicioMes, fimMes);
 
         // 4. Ranking
         List<ProdutoRankingDTO> ranking = vendaRepository.buscarRankingProdutos(inicioMes, fimMes, PageRequest.of(0, 5));
@@ -97,10 +98,9 @@ public class DashboardService {
     }
 
     // =========================================================================
-    // 2. DASHBOARD FISCAL (O Método que faltava!)
+    // 2. DASHBOARD FISCAL
     // =========================================================================
     public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
-        // Usamos buscarVendasPorPeriodo para garantir que só pegamos vendas VÁLIDAS (Não canceladas)
         List<Venda> vendas = vendaRepository.buscarVendasPorPeriodo(inicio.atStartOfDay(), fim.atTime(LocalTime.MAX));
 
         BigDecimal faturamento = BigDecimal.ZERO;
@@ -111,10 +111,10 @@ public class DashboardService {
         Map<String, FiscalDashboardDTO.FiscalDiarioDTO> diarioMap = new TreeMap<>();
 
         for (Venda v : vendas) {
-            BigDecimal ibs = v.getValorIbs() != null ? v.getValorIbs() : BigDecimal.ZERO;
-            BigDecimal cbs = v.getValorCbs() != null ? v.getValorCbs() : BigDecimal.ZERO;
-            BigDecimal seletivo = v.getValorIs() != null ? v.getValorIs() : BigDecimal.ZERO;
-            BigDecimal totalVenda = v.getValorTotal() != null ? v.getValorTotal() : BigDecimal.ZERO;
+            BigDecimal ibs = safeBigDecimal(v.getValorIbs());
+            BigDecimal cbs = safeBigDecimal(v.getValorCbs());
+            BigDecimal seletivo = safeBigDecimal(v.getValorIs());
+            BigDecimal totalVenda = safeBigDecimal(v.getValorTotal());
 
             faturamento = faturamento.add(totalVenda);
             totalIBS = totalIBS.add(ibs);
@@ -171,10 +171,8 @@ public class DashboardService {
         LocalDateTime fimDia = LocalDate.now().atTime(LocalTime.MAX);
         LocalDate hoje = LocalDate.now();
 
-        // Null Safety na query antiga
         Long qtdVendas = vendaRepository.countByDataVendaBetween(inicioDia, fimDia);
-        BigDecimal totalVendido = vendaRepository.sumTotalVendaByDataVendaBetween(inicioDia, fimDia);
-        if (totalVendido == null) totalVendido = BigDecimal.ZERO;
+        BigDecimal totalVendido = safeBigDecimal(vendaRepository.sumTotalVendaByDataVendaBetween(inicioDia, fimDia));
 
         BigDecimal pagarHoje = safeBigDecimal(contaPagarRepository.sumValorByDataVencimentoAndStatus(hoje, StatusConta.PENDENTE));
         BigDecimal receberHoje = safeBigDecimal(contaReceberRepository.sumValorByDataVencimento(hoje));

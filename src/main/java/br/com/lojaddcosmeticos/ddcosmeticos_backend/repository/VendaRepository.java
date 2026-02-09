@@ -21,7 +21,6 @@ import java.util.Optional;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    // ... (Métodos básicos mantidos) ...
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
     List<Venda> findByStatusNfce(StatusFiscal statusNfce);
     List<Venda> findByStatusNfceOrderByDataVendaDesc(StatusFiscal statusNfce);
@@ -38,7 +37,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     // =========================================================================
-    // MÉTODOS DASHBOARD (CORRIGIDOS PARA ACEITAR NULL)
+    // MÉTODOS DASHBOARD
     // =========================================================================
 
     // 1. Soma Faturamento
@@ -53,20 +52,19 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     List<Venda> buscarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    // 4. Gráfico Pizza (Pagamentos)
+    // 4. Gráfico Pizza (Pagamentos) - VERSÃO CORRETA (Sem CAST, com Enum)
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
-            CAST(p.formaPagamento AS string), 
-            SUM(p.valor),
-            COUNT(p)
+            v.formaDePagamento, 
+            SUM(v.valorTotal),
+            COUNT(v)
         )
-        FROM PagamentoVenda p 
-        JOIN p.venda v
+        FROM Venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
         AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
-        GROUP BY p.formaPagamento
+        GROUP BY v.formaDePagamento
     """)
-    List<VendaPorPagamentoDTO> agruparPorPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     // 5. Ranking Produtos
     @Query("""
@@ -93,20 +91,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // --- Outros Métodos (Mantidos) ---
     @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
     BigDecimal somarFaturamentoNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
-    @Query("""
-        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
-            CAST(p.formaPagamento AS string), 
-            SUM(p.valor),
-            COUNT(DISTINCT v)
-        )
-        FROM PagamentoVenda p 
-        JOIN p.venda v
-        WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
-        GROUP BY p.formaPagamento
-    """)
-    List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO(
@@ -142,4 +126,16 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Modifying
     @Query("UPDATE Venda v SET v.statusNfce = :novoStatus, v.motivoDoCancelamento = :motivo WHERE v.idVenda = :id")
     void atualizarStatusVenda(@Param("id") Long id, @Param("novoStatus") StatusFiscal novoStatus, @Param("motivo") String motivo);
+
+    // DBA: Query MESTRA para evitar LazyInitializationException.
+    @Query("SELECT v FROM Venda v " +
+            "LEFT JOIN FETCH v.itens i " +
+            "LEFT JOIN FETCH i.produto " +
+            "LEFT JOIN FETCH v.pagamentos " +
+            "WHERE v.idVenda = :id")
+    Optional<Venda> findByIdCompleto(@Param("id") Long id);
+
+    @Query("SELECT SUM(v.valorTotal) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    BigDecimal somarFaturamentoTotal(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
 }

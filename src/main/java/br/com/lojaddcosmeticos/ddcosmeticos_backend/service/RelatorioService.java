@@ -45,7 +45,7 @@ public class RelatorioService {
         BigDecimal totalFaturado = vendaRepository.somarFaturamento(dataInicio, dataFim);
 
         List<VendaDiariaDTO> vendasDiarias = vendaRepository.agruparVendasPorDia(dataInicio, dataFim);
-        List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorPagamento(dataInicio, dataFim);
+        List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(dataInicio, dataFim);
 
         // Busca Top Marcas para o gráfico (Top 5)
         List<ProdutoRankingDTO> rankingMarcas = vendaRepository.buscarRankingMarcas(dataInicio, dataFim, PageRequest.of(0, 5));

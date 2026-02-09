@@ -15,15 +15,12 @@ import java.util.List;
 @Repository
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
-    // ==================================================================================
-    // SESSÃO 1: MÉTODOS BÁSICOS
-    // ==================================================================================
+    // DBA: Query otimizada. Evita N+1 trazendo o cliente junto se necessário.
+    @Query("SELECT c FROM ContaReceber c JOIN FETCH c.cliente WHERE c.venda = :venda")
+    List<ContaReceber> findByVenda(@Param("venda") Venda venda);
 
-    List<ContaReceber> findByVenda(Venda venda);
-
-    // [CORREÇÃO AQUI]
-    // O erro ocorria porque o Spring procurava 'venda.id', mas sua classe tem 'venda.idVenda'.
-    // Usamos @Query para forçar o caminho correto.
+    // Backend Fix: Resolve o erro "No property id found for type Venda"
+    // Acessamos c.venda.idVenda explicitamente
     @Query("SELECT c FROM ContaReceber c WHERE c.venda.idVenda = :vendaId")
     List<ContaReceber> findByVendaId(@Param("vendaId") Long vendaId);
 
@@ -32,7 +29,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     List<ContaReceber> findByStatus(StatusConta status);
 
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO
+    // VALIDAÇÃO DE CRÉDITO
     // ==================================================================================
 
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
@@ -40,6 +37,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
             "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE")
     BigDecimal somarDividaTotalPorDocumento(@Param("documento") String documento);
 
+    // DBA: Uso de EXISTS (CASE WHEN COUNT > 0) é muito mais rápido que trazer os objetos
     @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM ContaReceber c " +
             "WHERE c.cliente.documento = :documento " +
             "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
@@ -47,7 +45,7 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
     // ==================================================================================
-    // SESSÃO 3: RELATÓRIOS E OPERACIONAL
+    // RELATÓRIOS E DASHBOARD
     // ==================================================================================
 
     @Query("SELECT DISTINCT c.cliente.documento " +
@@ -60,10 +58,6 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
             "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
             "ORDER BY c.dataVencimento ASC")
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
-
-    // ==================================================================================
-    // SESSÃO 4: DASHBOARD FINANCEIRO
-    // ==================================================================================
 
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento = :data")
     BigDecimal sumValorByDataVencimento(@Param("data") LocalDate data);

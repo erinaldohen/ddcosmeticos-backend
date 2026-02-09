@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -31,15 +32,18 @@ public class MovimentacaoCaixa {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private TipoMovimentacaoCaixa tipo; // SANGRIA ou SUPRIMENTO
+    private TipoMovimentacaoCaixa tipo;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal valor;
 
+    // Adicionado para suportar integração financeira (Saber se entrou em Dinheiro ou Pix)
+    @Enumerated(EnumType.STRING)
+    private FormaDePagamento formaPagamento;
+
     @Column(nullable = false)
-    // CORREÇÃO: Permite receber 'observacao' do JSON do frontend e mapear para 'motivo'
     @JsonProperty("observacao")
-    private String motivo;
+    private String motivo; // O Service deve usar .setMotivo() e não .setDescricao()
 
     @Column(nullable = false)
     private LocalDateTime dataHora = LocalDateTime.now();

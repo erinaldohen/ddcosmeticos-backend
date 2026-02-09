@@ -33,6 +33,8 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
     /**
      * Soma o total de contas vencidas (atrasadas) e ainda pendentes.
+     * OBS: Ajustei o caminho do Enum para usar o parâmetro ou o caminho completo se preferir,
+     * mas usar parametro 'status' é mais seguro em JPQL puro. Aqui mantive hardcoded como no seu exemplo.
      */
     @Query("""
         SELECT COALESCE(SUM(c.valorTotal), 0) 
@@ -54,18 +56,19 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
     BigDecimal somarAPagarPorData(@Param("data") LocalDate data);
 
     /**
-     * Agrupamento para gráficos de despesas por categoria.
-     * Requer que a classe ResumoDespesaDTO exista e tenha o construtor correto.
+     * Agrupamento para gráficos de despesas.
+     * CORREÇÃO: Alterado de 'categoria' (que não existe) para 'fornecedor.razaoSocial'.
      */
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO(
-            c.categoria, 
+            COALESCE(f.razaoSocial, 'Despesa Avulsa'), 
             COUNT(c), 
             SUM(c.valorTotal)
         ) 
         FROM ContaPagar c 
+        LEFT JOIN c.fornecedor f
         WHERE c.dataVencimento BETWEEN :inicio AND :fim 
-        GROUP BY c.categoria
+        GROUP BY f.razaoSocial
     """)
     List<ResumoDespesaDTO> agruparDespesasPorPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 
@@ -75,14 +78,12 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
     /**
      * Soma valor total por data de vencimento e status dinâmico.
-     * Usado no Dashboard para calcular o "Pagar Hoje" exato.
      */
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = :status")
     BigDecimal sumValorByDataVencimentoAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
 
     /**
      * Soma valor total vencido antes da data e com status dinâmico.
-     * Usado no Dashboard para calcular "Total Vencido".
      */
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :data AND c.status = :status")
     BigDecimal sumValorByDataVencimentoBeforeAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);

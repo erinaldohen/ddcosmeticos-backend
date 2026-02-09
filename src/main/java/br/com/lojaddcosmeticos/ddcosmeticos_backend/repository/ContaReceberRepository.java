@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaReceber;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,29 +16,33 @@ import java.util.List;
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
     // ==================================================================================
-    // SESSÃO 1: MÉTODOS BÁSICOS (Utilizados pelos Services)
+    // SESSÃO 1: MÉTODOS BÁSICOS
     // ==================================================================================
 
-    // Usado no FinanceiroService para cancelar receitas
-    List<ContaReceber> findByIdVendaRef(Long idVendaRef);
+    List<ContaReceber> findByVenda(Venda venda);
+
+    // [CORREÇÃO AQUI]
+    // O erro ocorria porque o Spring procurava 'venda.id', mas sua classe tem 'venda.idVenda'.
+    // Usamos @Query para forçar o caminho correto.
+    @Query("SELECT c FROM ContaReceber c WHERE c.venda.idVenda = :vendaId")
+    List<ContaReceber> findByVendaId(@Param("vendaId") Long vendaId);
+
+    List<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
 
     List<ContaReceber> findByStatus(StatusConta status);
 
-    // Usado no Fechamento de Caixa (FinanceiroService)
-    List<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
-
     // ==================================================================================
-    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO (VendaService)
+    // SESSÃO 2: VALIDAÇÃO DE CRÉDITO
     // ==================================================================================
 
-    @Query("SELECT COALESCE(SUM(c.valorLiquido), 0) FROM ContaReceber c " +
-            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
-            "AND c.status = 'PENDENTE'")
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
+            "WHERE c.cliente.documento = :documento " +
+            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE")
     BigDecimal somarDividaTotalPorDocumento(@Param("documento") String documento);
 
     @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM ContaReceber c " +
-            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
-            "AND c.status = 'PENDENTE' " +
+            "WHERE c.cliente.documento = :documento " +
+            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
             "AND c.dataVencimento < :hoje")
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
@@ -45,24 +50,24 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // SESSÃO 3: RELATÓRIOS E OPERACIONAL
     // ==================================================================================
 
-    @Query("SELECT DISTINCT v.clienteDocumento " +
+    @Query("SELECT DISTINCT c.cliente.documento " +
             "FROM ContaReceber c " +
-            "JOIN Venda v ON c.idVendaRef = v.id " +
-            "WHERE c.status = 'PENDENTE'")
+            "WHERE c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE")
     List<String> buscarDocumentosComPendencia();
 
     @Query("SELECT c FROM ContaReceber c " +
-            "WHERE c.idVendaRef IN (SELECT v.id FROM Venda v WHERE v.clienteDocumento = :documento) " +
-            "AND c.status = 'PENDENTE' " +
+            "WHERE c.cliente.documento = :documento " +
+            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
             "ORDER BY c.dataVencimento ASC")
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
+    // ==================================================================================
     // SESSÃO 4: DASHBOARD FINANCEIRO
+    // ==================================================================================
 
-    // [ADICIONADO] Essencial para o card "Saldo do Dia" no Dashboard
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento = :data")
     BigDecimal sumValorByDataVencimento(@Param("data") LocalDate data);
 
-    @Query("SELECT COALESCE(SUM(c.valorLiquido), 0) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
     BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

@@ -13,7 +13,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         // Pega o caminho absoluto da pasta "uploads" na raiz do projeto
-        Path uploadDir = Paths.get("uploads");
+        Path uploadDir = Paths.get("./uploads");
         String uploadPath = uploadDir.toFile().getAbsolutePath();
 
         // TRATAMENTO PARA WINDOWS (Crucial)
@@ -35,6 +35,6 @@ public class WebConfig implements WebMvcConfigurer {
         System.out.println("----------------------------------------------------");
 
         registry.addResourceHandler("/uploads/**")
-                .addResourceLocations(location);
+                .addResourceLocations("file:/" + uploadPath + "/");
     }
 }

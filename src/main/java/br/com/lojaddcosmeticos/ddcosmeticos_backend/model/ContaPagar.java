@@ -2,16 +2,18 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
-import org.hibernate.envers.Audited;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-@Data
 @Entity
-@Audited
-@Table(name = "conta_pagar")
+@Table(name = "tb_contas_pagar")
+@Data // <--- Importante: Gera os Getters e Setters (inclusive setValorPago)
+@NoArgsConstructor
+@AllArgsConstructor
 public class ContaPagar {
 
     @Id
@@ -19,19 +21,30 @@ public class ContaPagar {
     private Long id;
 
     private String descricao;
-    private String categoria;
 
-    @ManyToOne // Essencial para a linha 142 do seu Service
+    @ManyToOne
     @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
 
-    @Column(name = "valor_total", precision = 10, scale = 2)
+    @Column(precision = 10, scale = 2)
     private BigDecimal valorTotal;
 
-    private LocalDate dataEmissao;
+    // --- CAMPO QUE ESTAVA FALTANDO OU SEM SETTER ---
+    @Column(precision = 10, scale = 2)
+    private BigDecimal valorPago;
+
     private LocalDate dataVencimento;
+    private LocalDate dataEmissao;
     private LocalDate dataPagamento;
 
     @Enumerated(EnumType.STRING)
     private StatusConta status;
+
+    // Método auxiliar para evitar nulos no banco
+    @PrePersist
+    public void prePersist() {
+        if (this.valorPago == null) {
+            this.valorPago = BigDecimal.ZERO;
+        }
+    }
 }

@@ -35,32 +35,73 @@ public class CaixaService {
     private final VendaRepository vendaRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
 
-    // --- NOVO: LISTAR MOTIVOS (CORRIGIDO) ---
-    // Usado pelo frontend para o autocomplete inteligente
+    // ==================================================================================
+    //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
+    // ==================================================================================
+
+    /**
+     * Busca o caixa atualmente aberto.
+     * Tenta primeiro o caixa do usuário logado, se não encontrar, tenta qualquer caixa aberto (fallback).
+     */
+    public CaixaDiario buscarCaixaAberto() {
+        try {
+            Usuario operador = getUsuarioLogado();
+            Optional<CaixaDiario> caixaUser = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
+            if (caixaUser.isPresent()) return caixaUser.get();
+        } catch (Exception e) {
+            // Ignora erro de usuário não logado (pode ser chamado por processo agendado)
+        }
+        return caixaRepository.findByStatus(StatusCaixa.ABERTO).orElse(null);
+    }
+
+    /**
+     * Salva uma movimentação e atualiza o saldo do caixa em tempo real.
+     */
+    @Transactional
+    public void salvarMovimentacao(MovimentacaoCaixa movimentacao) {
+        if (movimentacao.getCaixa() == null) {
+            CaixaDiario caixa = buscarCaixaAberto();
+            if (caixa != null) {
+                movimentacao.setCaixa(caixa);
+
+                // Atualiza o saldo atual (snapshop do momento)
+                BigDecimal valor = movimentacao.getValor();
+                if (movimentacao.getTipo() == TipoMovimentacaoCaixa.ENTRADA || movimentacao.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO) {
+                    caixa.setSaldoAtual(caixa.getSaldoAtual().add(valor));
+                } else {
+                    caixa.setSaldoAtual(caixa.getSaldoAtual().subtract(valor));
+                }
+                caixaRepository.save(caixa);
+            }
+        }
+        movimentacaoRepository.save(movimentacao);
+    }
+
+    // ==================================================================================
+    //  MÉTODOS OPERACIONAIS (FRONTEND)
+    // ==================================================================================
+
     public List<String> listarMotivosFrequentes() {
         return movimentacaoRepository.findDistinctMotivos();
     }
 
-    // --- LISTAGEM DE MOVIMENTAÇÕES (USADO NO CONTROLLER) ---
     public List<MovimentacaoCaixa> buscarHistorico(LocalDate inicio, LocalDate fim) {
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(23, 59, 59);
         return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
 
-    // --- STATUS ATUAL (DTO) ---
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
 
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
 
         if (caixaOpt.isEmpty()) {
-            return null; // Frontend entende que não tem caixa aberto
+            return null;
         }
 
         CaixaDiario caixa = caixaOpt.get();
 
-        // Busca vendas desde a abertura até agora
         List<Venda> vendasHoje = vendaRepository.buscarVendasDoUsuarioNoPeriodo(
                 operador.getId(),
                 caixa.getDataAbertura(),
@@ -82,7 +123,6 @@ public class CaixaService {
         );
     }
 
-    // --- ABRIR CAIXA ---
     @Transactional
     public CaixaDiario abrirCaixa(BigDecimal fundoTroco) {
         Usuario operador = getUsuarioLogado();
@@ -95,9 +135,10 @@ public class CaixaService {
         caixa.setUsuarioAbertura(operador);
         caixa.setDataAbertura(LocalDateTime.now());
         caixa.setSaldoInicial(fundoTroco != null ? fundoTroco : BigDecimal.ZERO);
+        caixa.setSaldoAtual(caixa.getSaldoInicial()); // Saldo atual começa igual ao inicial
         caixa.setStatus(StatusCaixa.ABERTO);
 
-        // Inicializa acumuladores zerados
+        // Inicializa acumuladores
         caixa.setTotalVendasDinheiro(BigDecimal.ZERO);
         caixa.setTotalVendasPix(BigDecimal.ZERO);
         caixa.setTotalVendasCartao(BigDecimal.ZERO);
@@ -107,7 +148,6 @@ public class CaixaService {
         return caixaRepository.save(caixa);
     }
 
-    // --- FECHAR CAIXA (LÓGICA CRÍTICA) ---
     @Transactional
     public CaixaDiario fecharCaixa(BigDecimal saldoInformado) {
         if (saldoInformado == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo final (gaveta) obrigatório.");
@@ -133,27 +173,30 @@ public class CaixaService {
         List<MovimentacaoCaixa> movs = caixa.getMovimentacoes();
         if (movs != null && !movs.isEmpty()) {
             sangrias = movs.stream()
-                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA)
+                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA || m.getTipo() == TipoMovimentacaoCaixa.SAIDA)
                     .map(MovimentacaoCaixa::getValor)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             suprimentos = movs.stream()
-                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO)
+                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO || m.getTipo() == TipoMovimentacaoCaixa.ENTRADA)
                     .map(MovimentacaoCaixa::getValor)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
 
         // 3. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
+        // Nota: Vendas Pix/Cartão não somam na gaveta física
         BigDecimal saldoEsperado = caixa.getSaldoInicial()
                 .add(totalDinheiro)
                 .add(suprimentos)
                 .subtract(sangrias);
 
-        // 4. Preenche o objeto com os dados finais
+        // 4. Preenche dados finais
         caixa.setValorCalculadoSistema(saldoEsperado);
         caixa.setValorFechamento(saldoInformado);
 
-        // Preenche os totais analíticos para o relatório
+        // Atualiza saldo atual final
+        caixa.setSaldoAtual(saldoEsperado);
+
         caixa.setTotalVendasDinheiro(totalDinheiro);
         caixa.setTotalVendasPix(totalPix);
         caixa.setTotalVendasCartao(totalCartao);
@@ -164,6 +207,50 @@ public class CaixaService {
         caixa.setStatus(StatusCaixa.FECHADO);
 
         return caixaRepository.save(caixa);
+    }
+
+    // --- SANGRIA E SUPRIMENTO ---
+
+    @Transactional
+    public void realizarSangria(BigDecimal valor, String observacao) {
+        CaixaDiario caixa = buscarCaixaAberto();
+        if (caixa == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Caixa fechado ou não encontrado.");
+
+        if (valor.compareTo(caixa.getSaldoAtual()) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo insuficiente para sangria.");
+        }
+
+        MovimentacaoCaixa mov = new MovimentacaoCaixa();
+        mov.setCaixa(caixa);
+        mov.setTipo(TipoMovimentacaoCaixa.SANGRIA);
+        mov.setValor(valor);
+        mov.setMotivo("SANGRIA: " + observacao);
+        mov.setDataHora(LocalDateTime.now());
+
+        // Atualiza saldo
+        caixa.setSaldoAtual(caixa.getSaldoAtual().subtract(valor));
+
+        movimentacaoRepository.save(mov);
+        caixaRepository.save(caixa);
+    }
+
+    @Transactional
+    public void realizarSuprimento(BigDecimal valor, String observacao) {
+        CaixaDiario caixa = buscarCaixaAberto();
+        if (caixa == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Caixa fechado ou não encontrado.");
+
+        MovimentacaoCaixa mov = new MovimentacaoCaixa();
+        mov.setCaixa(caixa);
+        mov.setTipo(TipoMovimentacaoCaixa.SUPRIMENTO);
+        mov.setValor(valor);
+        mov.setMotivo("SUPRIMENTO: " + observacao);
+        mov.setDataHora(LocalDateTime.now());
+
+        // Atualiza saldo
+        caixa.setSaldoAtual(caixa.getSaldoAtual().add(valor));
+
+        movimentacaoRepository.save(mov);
+        caixaRepository.save(caixa);
     }
 
     // --- UTILS ---

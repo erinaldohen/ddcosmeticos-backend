@@ -122,10 +122,12 @@ public class ConfiguracaoLoja {
 
         // --- Certificado Digital ---
         private String caminhoCertificado;
+        @Convert(converter = br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter.class)
         private String senhaCert;
 
         // --- Compliance & Regras ---
         private String csrtId;
+        @Convert(converter = br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter.class)
         private String csrtHash;
         private String ibptToken;
         private String naturezaPadrao;

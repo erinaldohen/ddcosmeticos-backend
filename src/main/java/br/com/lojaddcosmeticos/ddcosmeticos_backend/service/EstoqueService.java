@@ -35,6 +35,7 @@ public class EstoqueService {
     @Autowired private FornecedorRepository fornecedorRepository;
     @Autowired private FornecedorService fornecedorService;
     @Autowired private ProdutoFornecedorRepository produtoFornecedorRepository;
+    @Autowired private CaixaService caixaService;
 
     // --- CONSULTAS E RELATÓRIOS ---
 
@@ -450,24 +451,59 @@ public class EstoqueService {
         }
     }
 
+    // Certifique-se de ter @Autowired private CaixaService caixaService; na classe
+
     private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) {
         ContaPagar conta = new ContaPagar();
         conta.setFornecedor(fornecedor);
         conta.setValorTotal(valor);
-        conta.setCategoria("COMPRA MERCADORIA");
+
+        // Descrição detalhada
         conta.setDescricao("Compra NF: " + (doc != null ? doc : "S/N") + " - Parc " + parcelaNum + "/" + totalParcelas);
         conta.setDataEmissao(LocalDate.now());
 
-        if (formaPagto == FormaDePagamento.DINHEIRO ||
+        // Lógica de Pagamento À VISTA
+        boolean pagamentoImediato = (formaPagto == FormaDePagamento.DINHEIRO ||
                 formaPagto == FormaDePagamento.PIX ||
-                formaPagto == FormaDePagamento.DEBITO) {
+                formaPagto == FormaDePagamento.DEBITO);
+
+        if (pagamentoImediato) {
             conta.setDataVencimento(LocalDate.now());
             conta.setDataPagamento(LocalDate.now());
-            conta.setStatus(StatusConta.PAGO);
+            conta.setStatus(StatusConta.PAGO); // Ou PAGO, verifique seu Enum
+
+            // CORREÇÃO 1: Define que o valor foi totalmente pago
+            conta.setValorPago(valor);
+
+            // CORREÇÃO 2: Lança a saída no Caixa (Pois o dinheiro saiu agora!)
+            try {
+                MovimentacaoCaixa mov = new MovimentacaoCaixa();
+                mov.setTipo(TipoMovimentacaoCaixa.SAIDA);
+                mov.setValor(valor);
+                mov.setFormaPagamento(formaPagto);
+                mov.setMotivo("Pagamento à vista - Compra NF: " + (doc != null ? doc : "S/N"));
+                mov.setDataHora(LocalDateTime.now());
+                // Vincula o usuário sistema ou pega do contexto se possível
+                mov.setUsuarioResponsavel("SISTEMA_ESTOQUE");
+
+                caixaService.salvarMovimentacao(mov);
+            } catch (Exception e) {
+                // Se o caixa estiver fechado, você pode optar por lançar erro ou deixar a conta como PENDENTE
+                System.err.println("Erro ao lançar no caixa: " + e.getMessage());
+                // Opcional: Reverter para PENDENTE se falhar o caixa?
+                // conta.setStatus(StatusConta.PENDENTE);
+                // conta.setValorPago(BigDecimal.ZERO);
+            }
+
         } else {
+            // Lógica de Pagamento A PRAZO
             conta.setDataVencimento(dataBase.plusMonths(incrementoMes));
             conta.setStatus(StatusConta.PENDENTE);
+
+            // CORREÇÃO 3: Inicializa com Zero para não ficar Null
+            conta.setValorPago(BigDecimal.ZERO);
         }
+
         contaPagarRepository.save(conta);
     }
 

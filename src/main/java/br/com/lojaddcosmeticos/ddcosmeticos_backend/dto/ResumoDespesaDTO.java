@@ -1,12 +1,10 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import java.io.Serializable;
 import java.math.BigDecimal;
 
+// Record simples para transportar os dados do gráfico/relatório
 public record ResumoDespesaDTO(
-        String categoria,
+        String categoria, // Aqui enviaremos o Nome do Fornecedor
         Long quantidade,
         BigDecimal valorTotal
-) implements Serializable {
-    private static final long serialVersionUID = 1L;
-}
+) {}

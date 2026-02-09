@@ -17,38 +17,52 @@ import java.time.format.DateTimeFormatter;
 @Service
 public class BackupService {
 
-    // Roda todo dia às 23:00
+    private static final String BANCO_ORIGEM_PATH = "dados/ddcosmeticos_dev.mv.db"; // Ajustado para o nome real do seu arquivo
+    private static final String PASTA_BACKUPS = "backups";
+
+    // Roda todo dia às 23:00 (Automático)
     @Scheduled(cron = "0 0 23 * * ?")
     public void realizarBackupAutomatico() {
         log.info("Iniciando rotina de backup automático...");
-
         try {
-            // Caminho do Banco H2 (Ajuste conforme seu ambiente, geralmente pasta 'dados')
-            File bancoOrigem = new File("dados/ddcosmeticos.mv.db");
-
-            if (!bancoOrigem.exists()) {
-                log.warn("Arquivo de banco de dados não encontrado para backup.");
-                return;
-            }
-
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            Path pastaDestino = Paths.get("backups");
-
-            if (!Files.exists(pastaDestino)) {
-                Files.createDirectories(pastaDestino);
-            }
-
-            Path destino = pastaDestino.resolve("backup_ddcosmeticos_" + timestamp + ".mv.db");
-
-            Files.copy(bancoOrigem.toPath(), destino, StandardCopyOption.REPLACE_EXISTING);
-
-            log.info("✅ Backup realizado com sucesso: {}", destino.toAbsolutePath());
-
-            // Limpeza de backups antigos (mantém os últimos 7 dias)
-            // ... (lógica de limpeza opcional)
-
+            criarCopiaBackup("automatico");
         } catch (IOException e) {
-            log.error("❌ Falha crítica ao realizar backup: {}", e.getMessage());
+            log.error("❌ Falha crítica ao realizar backup automático: {}", e.getMessage());
         }
+    }
+
+    // Chamado pelo Botão no Frontend (Manual)
+    public Path gerarBackupImediato() throws IOException {
+        log.info("Solicitação de backup manual iniciada.");
+        return criarCopiaBackup("manual");
+    }
+
+    // Lógica Centralizada
+    private Path criarCopiaBackup(String tipo) throws IOException {
+        File bancoOrigem = new File(BANCO_ORIGEM_PATH);
+
+        if (!bancoOrigem.exists()) {
+            // Tenta procurar sem o _dev caso tenha mudado o profile
+            bancoOrigem = new File("dados/ddcosmeticos.mv.db");
+            if (!bancoOrigem.exists()) {
+                throw new IOException("Arquivo de banco de dados não encontrado em: " + BANCO_ORIGEM_PATH);
+            }
+        }
+
+        Path pastaDestino = Paths.get(PASTA_BACKUPS);
+        if (!Files.exists(pastaDestino)) {
+            Files.createDirectories(pastaDestino);
+        }
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String nomeArquivo = "backup_" + tipo + "_" + timestamp + ".mv.db";
+
+        Path destino = pastaDestino.resolve(nomeArquivo);
+
+        // Copia o arquivo (Backup a quente no H2 pode exigir lock, mas copy costuma funcionar para leitura)
+        Files.copy(bancoOrigem.toPath(), destino, StandardCopyOption.REPLACE_EXISTING);
+
+        log.info("✅ Backup ({}) realizado com sucesso: {}", tipo, destino.toAbsolutePath());
+        return destino;
     }
 }

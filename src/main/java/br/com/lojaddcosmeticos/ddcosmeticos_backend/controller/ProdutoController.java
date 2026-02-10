@@ -4,7 +4,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -27,13 +27,9 @@ public class ProdutoController {
 
     @Autowired
     private ProdutoService produtoService;
-    @Autowired
-    private ProdutoRepository produtoRepository;
 
     // --- LEITURA (MÉTODO UNIFICADO) ---
 
-    // Este método substitui o antigo 'listar' e o 'filtrar'.
-    // Ele atende tanto a busca simples quanto a busca avançada.
     @GetMapping
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
@@ -48,6 +44,8 @@ public class ProdutoController {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("descricao"));
 
+        // Chama o método do service passando todos os filtros.
+        // Certifique-se que no ProdutoService existe este método com esta assinatura.
         return ResponseEntity.ok(produtoService.listarResumo(
                 termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, pageable
         ));
@@ -56,16 +54,6 @@ public class ProdutoController {
     @GetMapping("/lixeira")
     public ResponseEntity<List<Produto>> listarLixeira() {
         return ResponseEntity.ok(produtoService.buscarLixeira());
-    }
-
-    // Endpoint legado para manter compatibilidade com chamadas antigas que usam /resumo
-    @GetMapping("/resumo")
-    public ResponseEntity<Page<ProdutoListagemDTO>> listarResumo(
-            @RequestParam(required = false) String termo,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        // Redireciona para a lógica central passando nulos nos filtros novos
-        return listar(termo, null, null, null, false, false, false, page, size);
     }
 
     @GetMapping("/{id}")
@@ -81,6 +69,22 @@ public class ProdutoController {
     @GetMapping("/baixo-estoque")
     public ResponseEntity<List<Produto>> listarBaixoEstoque() {
         return ResponseEntity.ok(produtoService.listarBaixoEstoque());
+    }
+
+    @GetMapping("/ean/{ean}")
+    public ResponseEntity<ProdutoDTO> buscarPorEan(@PathVariable String ean) {
+        return ResponseEntity.ok(produtoService.buscarPorEanOuExterno(ean));
+    }
+
+    // Endpoint específico para o PDV (mais leve)
+    @GetMapping("/pdv")
+    public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
+            @RequestParam(required = false) String termo,
+            Pageable pageable) {
+        // Reutiliza a busca passando nulos nos outros filtros
+        return ResponseEntity.ok(produtoService.listarResumo(
+                termo, null, null, null, false, false, false, pageable
+        ));
     }
 
     // --- ESCRITA ---
@@ -99,7 +103,7 @@ public class ProdutoController {
     public ResponseEntity<Void> atualizarPreco(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
         Number novoPreco = (Number) payload.get("novoPreco");
         if (novoPreco != null) {
-            produtoService.definirPrecoVenda(id, new java.math.BigDecimal(novoPreco.toString()));
+            produtoService.definirPrecoVenda(id, new BigDecimal(novoPreco.toString()));
         }
         return ResponseEntity.noContent().build();
     }
@@ -121,13 +125,13 @@ public class ProdutoController {
     // --- FISCAL & INTELIGÊNCIA ---
 
     @PostMapping("/saneamento-fiscal")
-    @Operation(summary = "Recalcula tributos e SALVA no banco (Reforma, CST, NCM)")
+    @Operation(summary = "Recalcula tributos e SALVA no banco")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
         return ResponseEntity.ok(produtoService.saneamentoFiscal());
     }
 
     @PostMapping("/corrigir-ncms-ia")
-    @Operation(summary = "Varre o banco e corrige NCMs errados usando Inteligência Histórica")
+    @Operation(summary = "Correção de NCMs usando Inteligência")
     public ResponseEntity<Map<String, Object>> corrigirNcmsIA() {
         return ResponseEntity.ok(produtoService.corrigirNcmsEmMassa());
     }
@@ -135,13 +139,11 @@ public class ProdutoController {
     // --- IMPORTAÇÃO E EXPORTAÇÃO ---
 
     @PostMapping("/importar")
-    @Operation(summary = "Importa produtos via CSV ou Excel")
     public ResponseEntity<Map<String, Object>> importarArquivo(@RequestParam("arquivo") MultipartFile arquivo) {
         return ResponseEntity.ok(produtoService.importarProdutos(arquivo));
     }
 
     @GetMapping("/exportar/csv")
-    @Operation(summary = "Baixa o estoque atual em CSV")
     public ResponseEntity<byte[]> exportarCsv() {
         byte[] dados = produtoService.gerarRelatorioCsv();
         return ResponseEntity.ok()
@@ -151,7 +153,6 @@ public class ProdutoController {
     }
 
     @GetMapping("/exportar/excel")
-    @Operation(summary = "Baixa o estoque atual em Excel (XLSX)")
     public ResponseEntity<byte[]> exportarExcel() {
         byte[] dados = produtoService.gerarRelatorioExcel();
         return ResponseEntity.ok()
@@ -160,25 +161,13 @@ public class ProdutoController {
                 .body(dados);
     }
 
-    @GetMapping("/ean/{ean}")
-    public ResponseEntity<ProdutoDTO> buscarPorEan(@PathVariable String ean) {
-        // Chama um método específico no service que tenta DB -> Externo
-        ProdutoDTO produto = produtoService.buscarPorEanOuExterno(ean);
-        return ResponseEntity.ok(produto);
-    }
+    // --- UTILITÁRIOS ---
 
-    @GetMapping("/pdv")
-    public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
-            @RequestParam(required = false) String termo,
-            Pageable pageable) {
-        // Reutiliza a busca existente que já filtra por EAN ou Nome
-        return ResponseEntity.ok(produtoService.listarResumo(termo, pageable));
-    }
-
+    // CORREÇÃO CRÍTICA: Removido o método duplicado e mantido apenas este
     @GetMapping("/proximo-sequencial")
+    @Operation(summary = "Gera o próximo código de barras interno (começado com 2)")
     public ResponseEntity<String> obterProximoSequencial() {
         String proximoEan = produtoService.gerarProximoEanInterno();
-        // Retorna apenas a string pura ou um JSON simples
         return ResponseEntity.ok(proximoEan);
     }
 }

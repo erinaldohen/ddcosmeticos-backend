@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-// CORREÇÃO CRÍTICA: Adicionado /api/v1 para alinhar com o Frontend
 @RequestMapping("/api/v1/auth")
 public class AuthenticationController {
 
@@ -34,24 +33,22 @@ public class AuthenticationController {
 
     @PostMapping("/login")
     public ResponseEntity login(@RequestBody @Valid AuthenticationDTO data, HttpServletResponse response) {
-        // Tenta autenticar
-        var usernamePassword = new UsernamePasswordAuthenticationToken(data.matricula(), data.senha());
+        // Agora usamos data.login() e data.password()
+        var usernamePassword = new UsernamePasswordAuthenticationToken(data.login(), data.password());
         var auth = authenticationManager.authenticate(usernamePassword);
 
         var token = tokenService.generateToken((Usuario) auth.getPrincipal());
 
-        // Cookie HttpOnly
+        // Cookie Seguro
         Cookie cookie = new Cookie("jwt", token);
         cookie.setHttpOnly(true);
-        cookie.setSecure(false); // true em produção
+        cookie.setSecure(false); // True em produção HTTPS
         cookie.setPath("/");
         cookie.setMaxAge(7 * 24 * 60 * 60);
-
         response.addCookie(cookie);
 
         Usuario usuario = (Usuario) auth.getPrincipal();
 
-        // Retorna DTO estruturado
         return ResponseEntity.ok(new LoginResponseDTO(
                 null,
                 new UsuarioResponseDTO(
@@ -65,6 +62,7 @@ public class AuthenticationController {
         ));
     }
 
+    // ... manter logout e register como estavam ...
     @PostMapping("/logout")
     public ResponseEntity logout(HttpServletResponse response) {
         Cookie cookie = new Cookie("jwt", null);
@@ -79,9 +77,7 @@ public class AuthenticationController {
     @PostMapping("/register")
     public ResponseEntity register(@RequestBody @Valid RegisterDTO data){
         if(this.repository.findByEmail(data.getEmail()).isPresent()) return ResponseEntity.badRequest().build();
-
         String encryptedPassword = new BCryptPasswordEncoder().encode(data.getSenha());
-
         Usuario newUser = new Usuario(
                 data.getNome(),
                 data.getMatricula(),
@@ -89,7 +85,6 @@ public class AuthenticationController {
                 encryptedPassword,
                 data.getPerfil()
         );
-
         this.repository.save(newUser);
         return ResponseEntity.ok().build();
     }

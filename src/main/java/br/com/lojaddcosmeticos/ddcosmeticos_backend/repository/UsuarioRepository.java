@@ -10,11 +10,8 @@ import java.util.Optional;
 @Repository
 public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
 
-    // CORREÇÃO: Mapeia explicitamente 'login' para o campo 'email' do banco
-    @Query("SELECT u FROM Usuario u WHERE u.email = :login")
+    @Query("SELECT u FROM Usuario u WHERE u.email = :login OR u.matricula = :login")
     Usuario findByLogin(String login);
-
     Optional<Usuario> findByEmail(String email);
-
     Optional<Usuario> findByMatriculaOrEmail(String matricula, String email);
 }

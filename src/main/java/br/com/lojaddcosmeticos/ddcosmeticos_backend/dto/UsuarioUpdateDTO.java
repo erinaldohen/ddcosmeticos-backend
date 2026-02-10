@@ -4,6 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 
 public record UsuarioUpdateDTO(
         String nome,
+        String email, // Adicionado pois o controller tenta atualizar
         PerfilDoUsuario role,
-        String novaSenha // Opcional (só manda se for trocar)
+        String novaSenha // Opcional
 ) {}

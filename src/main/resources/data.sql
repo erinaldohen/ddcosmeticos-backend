@@ -24,3 +24,11 @@ MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, tele
 MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
     KEY(cnpj_cpf)
     VALUES ('00000000000100', true, 'estoque@teste.com', 'Fornecedor Estoque', 'Razao Estoque', '1144444444', 'JURIDICA');
+
+    -- ... (mantenha os inserts de fornecedor que já existem) ...
+
+    -- INSERÇÃO DE USUÁRIO PADRÃO (Senha: 123456)
+    -- A senha hash abaixo '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy' corresponde a '123456'
+    MERGE INTO usuario (email, matricula, nome, senha, perfil_do_usuario, ativo)
+        KEY(email)
+        VALUES ('admin@admin.com', 'ADMIN', 'Administrador Sistema', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'ROLE_ADMIN', true);

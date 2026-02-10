@@ -170,4 +170,5 @@ public class ProdutoController {
         String proximoEan = produtoService.gerarProximoEanInterno();
         return ResponseEntity.ok(proximoEan);
     }
+
 }

@@ -2,69 +2,100 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.UsuarioResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.UsuarioUpdateDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/usuarios")
-@Tag(name = "Usuários", description = "Gestão Administrativa de Operadores")
 public class UsuarioController {
 
-    @Autowired private UsuarioRepository repository;
-    @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired
+    private UsuarioRepository repository;
 
     @GetMapping
-    @Operation(summary = "Listar todos os usuários")
+    @Operation(summary = "Lista todos os usuários")
     public ResponseEntity<List<UsuarioResponseDTO>> listar() {
-        var lista = repository.findAll().stream()
+        List<UsuarioResponseDTO> usuarios = repository.findAll().stream()
                 .map(u -> new UsuarioResponseDTO(
                         u.getId(),
-                        u.getEmail(), // Login geralmente é o email
                         u.getNome(),
+                        u.getEmail(),
+                        u.getMatricula(),
                         u.getPerfilDoUsuario(),
-                        u.isEnabled()
+                        u.isAtivo()
                 ))
-                .toList();
-        return ResponseEntity.ok(lista);
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(usuarios);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<UsuarioResponseDTO> buscarPorId(@PathVariable Long id) {
+        return repository.findById(id)
+                .map(u -> ResponseEntity.ok(new UsuarioResponseDTO(
+                        u.getId(),
+                        u.getNome(),
+                        u.getEmail(),
+                        u.getMatricula(),
+                        u.getPerfilDoUsuario(),
+                        u.isAtivo()
+                )))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')") // Só Admin pode editar outros
-    @Operation(summary = "Atualizar usuário (Role, Nome ou Senha)")
-    public ResponseEntity<Void> atualizar(@PathVariable Long id, @RequestBody UsuarioUpdateDTO dados) {
-        Usuario usuario = repository.findById(id).orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+    @Operation(summary = "Atualiza dados do usuário")
+    public ResponseEntity<UsuarioResponseDTO> atualizar(@PathVariable Long id, @RequestBody @Valid UsuarioUpdateDTO dados) {
+        return repository.findById(id)
+                .map(usuario -> {
+                    // CORREÇÃO: Usando acessores de Record (.campo()) em vez de Getters (.getCampo())
 
-        if (dados.nome() != null) usuario.setNome(dados.nome());
-        if (dados.role() != null) usuario.setPerfilDoUsuario(dados.role());
+                    if (dados.nome() != null) {
+                        usuario.setNome(dados.nome());
+                    }
 
-        // Se mandou senha nova, criptografa e salva
-        if (dados.novaSenha() != null && !dados.novaSenha().isBlank()) {
-            usuario.setSenha(passwordEncoder.encode(dados.novaSenha()));
-        }
+                    if (dados.email() != null) {
+                        usuario.setEmail(dados.email());
+                    }
 
-        repository.save(usuario);
-        return ResponseEntity.ok().build();
+                    // CORREÇÃO: Usando 'novaSenha()' conforme definido no DTO
+                    if (dados.novaSenha() != null && !dados.novaSenha().isBlank()) {
+                        usuario.setSenha(new BCryptPasswordEncoder().encode(dados.novaSenha()));
+                    }
+
+                    // CORREÇÃO: Usando 'role()' conforme definido no DTO
+                    if (dados.role() != null) {
+                        usuario.setPerfilDoUsuario(dados.role());
+                    }
+
+                    repository.save(usuario);
+
+                    return ResponseEntity.ok(new UsuarioResponseDTO(
+                            usuario.getId(),
+                            usuario.getNome(),
+                            usuario.getEmail(),
+                            usuario.getMatricula(),
+                            usuario.getPerfilDoUsuario(),
+                            usuario.isAtivo()
+                    ));
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Inativar/Ativar Usuário")
-    public ResponseEntity<Void> alternarStatus(@PathVariable Long id) {
-        Usuario usuario = repository.findById(id).orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
-
-        // Exclusão física (Se preferir soft delete, descomente a linha abaixo e comente o delete)
-        // usuario.setAtivo(!usuario.isAtivo()); repository.save(usuario);
-        repository.delete(usuario);
-
-        return ResponseEntity.ok().build();
+    @Operation(summary = "Desativa um usuário (Soft Delete)")
+    public ResponseEntity<Void> deletar(@PathVariable Long id) {
+        if (repository.existsById(id)) {
+            repository.deleteById(id);
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.notFound().build();
     }
 }

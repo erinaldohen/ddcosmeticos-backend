@@ -8,6 +8,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,13 @@ public class ProdutoService {
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired private AuditoriaService auditoriaService;
     @Autowired private CosmosService cosmosService;
+
+    // --- MÉTODOS DE CACHE E LISTAGEM ---
+
+    @Cacheable(value = "produtos")
+    public Page<ProdutoDTO> listarTodos(Pageable pageable) {
+        return produtoRepository.findAll(pageable).map(ProdutoDTO::new);
+    }
 
     // --- IMPORTAÇÃO CSV ---
     public Map<String, Object> importarProdutos(MultipartFile file) {
@@ -334,6 +343,7 @@ public class ProdutoService {
     public List<HistoricoProdutoDTO> buscarHistorico(Long id) { return auditoriaService.buscarHistoricoDoProduto(id); }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true) // Limpa o cache ao salvar ou atualizar
     public ProdutoDTO salvar(ProdutoDTO dto) {
         Produto produto = new Produto();
         atualizarDados(produto, dto); // Preenche os dados
@@ -342,12 +352,14 @@ public class ProdutoService {
     }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true) // Garante limpeza de cache também neste método
     public Produto salvar(Produto produto) {
         calculadoraFiscalService.aplicarRegrasFiscais(produto);
         return produtoRepository.save(produto);
     }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public Produto atualizar(Long id, ProdutoDTO dto) {
         Produto produto = buscarPorId(id);
         atualizarDados(produto, dto);
@@ -377,9 +389,11 @@ public class ProdutoService {
     }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public void definirPrecoVenda(Long id, BigDecimal p) { Produto prod = buscarPorId(id); prod.setPrecoVenda(p); produtoRepository.save(prod); }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public void inativarPorEan(String ean) {
         if (ean == null) throw new IllegalArgumentException("EAN invalido");
         String eanLimpo = ean.trim();
@@ -391,9 +405,11 @@ public class ProdutoService {
     }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public void reativarPorEan(String ean) { produtoRepository.findByEanIrrestrito(ean).ifPresent(p -> { p.setAtivo(true); produtoRepository.save(p); }); }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public Map<String, Object> saneamentoFiscal() {
         List<Produto> todos = produtoRepository.findAll();
         int alterados = 0;
@@ -419,6 +435,7 @@ public class ProdutoService {
     }
 
     @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
     public Map<String, Object> corrigirNcmsEmMassa() {
         List<Produto> todos = produtoRepository.findAll();
         int corrigidos = 0;
@@ -546,8 +563,6 @@ public class ProdutoService {
 
         return null;
     }
-
-    // No arquivo br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService
 
     public String gerarProximoEanInterno() {
         // Busca o maior ID cadastrado na tabela

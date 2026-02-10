@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import org.hibernate.Hibernate;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.*;
@@ -96,7 +97,7 @@ public class VendaService {
             item.setPrecoUnitario(itemDto.precoUnitario());
             item.setDesconto(itemDto.desconto() != null ? itemDto.desconto() : BigDecimal.ZERO);
 
-            item.setCustoUnitarioHistorico(produto.getPrecoMedioPonderado() != null ? produto.getPrecoMedioPonderado() : BigDecimal.ZERO);
+            item.setCustoUnitarioHistorico(nvl(produto.getPrecoMedioPonderado()));
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
             item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
 
@@ -174,7 +175,7 @@ public class VendaService {
         Usuario usuario = capturarUsuarioLogado();
 
         // 1. Vincular ao Caixa (Correção de consistência)
-        CaixaDiario caixa = validarCaixaAberto(usuario);
+        CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(usuario, StatusCaixa.ABERTO).orElse(null);
 
         Venda venda = new Venda();
         venda.setUsuario(usuario);
@@ -463,7 +464,7 @@ public class VendaService {
         // 2. Força o carregamento dos Pagamentos (Inicializa a 2ª lista)
         // Como estamos dentro de uma transação (@Transactional), isso fará um SELECT separado automaticamente
         // sem gerar o erro de MultipleBagFetch.
-        venda.getPagamentos().size();
+        Hibernate.initialize(venda.getPagamentos());
 
         return venda;
     }

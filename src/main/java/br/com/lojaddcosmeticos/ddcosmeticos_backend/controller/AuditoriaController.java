@@ -11,10 +11,9 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
-@RequestMapping("/auditoria")
+@RequestMapping("/api/v1/auditoria")
 public class AuditoriaController {
 
     @Autowired

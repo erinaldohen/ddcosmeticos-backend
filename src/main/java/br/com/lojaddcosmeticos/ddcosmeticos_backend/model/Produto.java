@@ -7,6 +7,7 @@ import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate; // Importante para a validade
 import java.time.LocalDateTime;
 
 @Data
@@ -21,14 +22,22 @@ public class Produto {
 
     // --- DADOS BÁSICOS ---
     private String descricao;
+
     @Column(name = "codigo_barras", unique = true)
-    private String codigoBarras;
+    private String codigoBarras; // EAN / GTIN
+
+    @Column(unique = true)
+    private String sku; // NOVO: Código interno da loja (Stock Keeping Unit)
 
     private String marca;
     private String categoria;
     private String subcategoria;
-    private String unidade;
+    private String unidade; // UN, KG, LT
     private String urlImagem;
+
+    // --- CONTROLE DE VALIDADE & LOTE (NOVO) ---
+    private String lote; // Rastreabilidade
+    private LocalDate validade; // Essencial para o relatório de vencidos
 
     // --- DADOS FISCAIS ---
     private String ncm;
@@ -56,7 +65,7 @@ public class Produto {
     private Integer estoqueMinimo;
     private Integer diasParaReposicao; // Lead time (tempo de entrega do fornecedor)
 
-    // NOVO: Média de vendas diária (calculada por job noturno) para inteligência de estoque
+    // Média de vendas diária para inteligência de estoque
     @Column(precision = 10, scale = 4)
     private BigDecimal vendaMediaDiaria;
 
@@ -69,6 +78,8 @@ public class Produto {
     @Column(updatable = false)
     private LocalDateTime dataCadastro;
     private LocalDateTime dataAtualizacao;
+
+    // --- EVENTOS DO CICLO DE VIDA ---
 
     @PrePersist
     public void prePersist() {
@@ -84,6 +95,9 @@ public class Produto {
         // Inicialização de inteligência
         if (this.vendaMediaDiaria == null) this.vendaMediaDiaria = BigDecimal.ZERO;
         if (this.diasParaReposicao == null) this.diasParaReposicao = 7; // Padrão 7 dias
+
+        // Se não tiver SKU, usa o código de barras ou gera um provisório
+        if (this.sku == null && this.codigoBarras != null) this.sku = this.codigoBarras;
     }
 
     @PreUpdate
@@ -94,6 +108,8 @@ public class Produto {
         if (this.estoqueNaoFiscal == null) this.estoqueNaoFiscal = 0;
     }
 
+    // --- MÉTODOS AUXILIARES ---
+
     public Boolean isMonofasico() {
         return isMonofasico != null && isMonofasico;
     }
@@ -103,8 +119,16 @@ public class Produto {
     }
 
     /**
+     * Verifica se o produto está vencido.
+     * Usado pelo InventarioController para filtragem.
+     */
+    public boolean isVencido() {
+        if (this.validade == null) return false;
+        return LocalDate.now().isAfter(this.validade);
+    }
+
+    /**
      * Atualiza o saldo total somando Fiscal + Não Fiscal.
-     * Chamado pelo EstoqueIntelligenceService.
      */
     public void atualizarSaldoTotal() {
         this.quantidadeEmEstoque = (this.estoqueFiscal != null ? this.estoqueFiscal : 0)
@@ -113,7 +137,6 @@ public class Produto {
 
     /**
      * Recalcula o estoque mínimo ideal baseado na média de vendas.
-     * Fórmula: Média Diária * (Dias Reposição + Margem Segurança Fixa de 2 dias)
      */
     public void recalcularEstoqueMinimoSugerido() {
         if (this.vendaMediaDiaria != null && this.vendaMediaDiaria.compareTo(BigDecimal.ZERO) > 0) {
@@ -122,7 +145,7 @@ public class Produto {
 
             this.estoqueMinimo = this.vendaMediaDiaria
                     .multiply(new BigDecimal(diasTotais))
-                    .setScale(0, RoundingMode.CEILING) // Arredonda pra cima para não faltar
+                    .setScale(0, RoundingMode.CEILING)
                     .intValue();
         }
     }

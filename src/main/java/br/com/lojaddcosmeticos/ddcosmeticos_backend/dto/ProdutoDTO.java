@@ -2,10 +2,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 public record ProdutoDTO(
         Long id,
@@ -15,10 +18,18 @@ public record ProdutoDTO(
         String descricao,
 
         String codigoBarras,
+        String sku, // NOVO: Código interno
+
         String marca,
         String categoria,
         String subcategoria,
         String unidade,
+
+        // INVENTÁRIO & RASTREABILIDADE (NOVOS)
+        String lote, // NOVO
+
+        @JsonFormat(pattern = "yyyy-MM-dd")
+        LocalDate validade, // NOVO
 
         // FISCAL
         String ncm,
@@ -43,22 +54,26 @@ public record ProdutoDTO(
         // ESTOQUE
         Integer estoqueMinimo,
         Integer diasParaReposicao,
+
         String urlImagem,
         boolean ativo
 ) {
     /**
      * Construtor compacto para conversão de Entidade para DTO.
-     * Permite que você continue usando: new ProdutoDTO(produto) no Service/Controller.
+     * Atualizado para incluir SKU, Lote e Validade.
      */
     public ProdutoDTO(Produto p) {
         this(
                 p.getId(),
                 p.getDescricao(),
                 p.getCodigoBarras(),
+                p.getSku(),       // Mapeando SKU
                 p.getMarca(),
                 p.getCategoria(),
                 p.getSubcategoria(),
                 p.getUnidade(),
+                p.getLote(),      // Mapeando Lote
+                p.getValidade(),  // Mapeando Validade
                 p.getNcm(),
                 p.getCest(),
                 p.getCst(),

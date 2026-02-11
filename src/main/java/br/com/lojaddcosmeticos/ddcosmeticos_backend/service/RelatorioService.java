@@ -197,20 +197,20 @@ public class RelatorioService {
 
             NumberFormat moeda = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
             for (SugestaoCompraDTO item : sugestoes) {
-                table.addCell(criarCelula(item.getDescricao(), Element.ALIGN_LEFT));
-                table.addCell(criarCelula(item.getMarca(), Element.ALIGN_LEFT));
+                table.addCell(criarCelula(item.descricao(), Element.ALIGN_LEFT));
+                table.addCell(criarCelula(item.marca(), Element.ALIGN_LEFT));
 
-                PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.getNivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
+                PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.nivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
                 cellUrgencia.setHorizontalAlignment(Element.ALIGN_CENTER);
-                if (item.getNivelUrgencia().contains("CRÍTICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
-                else if (item.getNivelUrgencia().contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
+                if (item.nivelUrgencia().contains("CRÍTICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
+                else if (item.nivelUrgencia().contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
                 else cellUrgencia.setBackgroundColor(new Color(220, 255, 220));
                 table.addCell(cellUrgencia);
 
-                table.addCell(criarCelula(String.valueOf(item.getEstoqueAtual()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(String.valueOf(item.getEstoqueMinimo()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(String.valueOf(item.getQuantidadeSugerida()), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(moeda.format(item.getCustoEstimado()), Element.ALIGN_RIGHT));
+                table.addCell(criarCelula(String.valueOf(item.estoqueAtual()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(String.valueOf(item.estoqueMinimo()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(String.valueOf(item.quantidadeSugerida()), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(moeda.format(item.custoEstimado()), Element.ALIGN_RIGHT));
             }
             document.add(table);
             document.close();

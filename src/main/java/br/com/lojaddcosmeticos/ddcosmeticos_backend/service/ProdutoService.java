@@ -70,7 +70,6 @@ public class ProdutoService {
         Map<String, Object> resultado = new HashMap<>();
 
         try {
-            // Tenta decodificar. Se falhar acentos, o ideal seria tentar ISO-8859-1
             String conteudo = new String(bytes, StandardCharsets.UTF_8);
             if (conteudo.startsWith("\uFEFF")) conteudo = conteudo.substring(1);
 
@@ -159,19 +158,18 @@ public class ProdutoService {
         String ean = getVal(dados, mapa.get("ean")).replaceAll("[^0-9]", "");
         if (ean.isEmpty()) return null;
 
-        // [ATUALIZAÇÃO CRÍTICA] Busca o produto existente para atualizar em vez de duplicar
         Produto p = produtoRepository.findByEanIrrestrito(ean)
-                .stream().findFirst() // Pega o primeiro se houver duplicidade antiga
+                .stream().findFirst()
                 .orElse(new Produto());
 
-        // Se é novo
         if (p.getId() == null) {
             p.setCodigoBarras(ean);
+            // Default SKU para o EAN se for novo
+            p.setSku(ean);
             p.setAtivo(true);
             p.setOrigem("0"); p.setCst("102"); p.setNcm("00000000");
             p.setQuantidadeEmEstoque(0); p.setEstoqueFiscal(0); p.setEstoqueNaoFiscal(0);
         } else {
-            // Se já existe, não mexe no status a menos que o arquivo peça
             if (mapa.containsKey("ativo")) {
                 String a = getVal(dados, mapa.get("ativo")).toUpperCase();
                 p.setAtivo(a.startsWith("S") || a.equals("1") || a.equals("TRUE"));
@@ -187,20 +185,12 @@ public class ProdutoService {
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
 
-        // Estoque: Soma ao existente se for atualização, ou define se for novo
         int qtdArquivo = 0;
         if (mapa.containsKey("qtd")) {
             qtdArquivo = lerDecimal(getVal(dados, mapa.get("qtd"))).intValue();
         }
 
-        // Se já existia, soma. Se é novo, define.
-        if (p.getId() != null) {
-            // Opção: Somar ou Substituir? Normalmente importação massiva substitui para balanço.
-            // Aqui vamos manter a lógica de substituir para garantir integridade com o arquivo
-            p.setQuantidadeEmEstoque(qtdArquivo);
-        } else {
-            p.setQuantidadeEmEstoque(qtdArquivo);
-        }
+        p.setQuantidadeEmEstoque(qtdArquivo);
 
         if (mapa.containsKey("fiscal")) p.setEstoqueFiscal(lerDecimal(getVal(dados, mapa.get("fiscal"))).intValue());
         if (p.getEstoqueFiscal() == null) p.setEstoqueFiscal(0);
@@ -232,7 +222,6 @@ public class ProdutoService {
         if (!ncmSuspeito) {
             p.setNcm(ncmArquivo);
         } else {
-            // Tenta adivinhar NCM
             String ncmInteligente = null;
             String[] palavras = p.getDescricao().split(" ");
             for (String palavra : palavras) {
@@ -241,7 +230,7 @@ public class ProdutoService {
                     try {
                         ncmInteligente = produtoRepository.findNcmInteligente(pl);
                         if (ncmInteligente != null) break;
-                    } catch (Exception ignored) {} // Ignora erro de query
+                    } catch (Exception ignored) {}
                 }
             }
             if (ncmInteligente != null) p.setNcm(ncmInteligente);
@@ -254,7 +243,6 @@ public class ProdutoService {
             if(!o.isEmpty()) p.setOrigem(o.substring(0, 1));
         }
 
-        // Aplica regras fiscais se tiver NCM
         if (p.getNcm() != null && !p.getNcm().equals("00000000")) {
             try { calculadoraFiscalService.aplicarRegrasFiscais(p); } catch (Exception ignored) {}
         }
@@ -273,12 +261,9 @@ public class ProdutoService {
         if (val == null || val.trim().isEmpty()) return BigDecimal.ZERO;
         try {
             val = val.replace("R$", "").trim();
-            // Lógica para detectar padrão BR (1.000,00) vs US (1000.00)
             if (val.contains(",") && val.contains(".")) {
-                // Formato misto (ex: 1.200,50) -> Remove ponto, troca vírgula
                 val = val.replace(".", "").replace(",", ".");
             } else if (val.contains(",")) {
-                // Apenas vírgula (ex: 15,90) -> Troca por ponto
                 val = val.replace(",", ".");
             }
             return new BigDecimal(val);
@@ -343,16 +328,16 @@ public class ProdutoService {
     public List<HistoricoProdutoDTO> buscarHistorico(Long id) { return auditoriaService.buscarHistoricoDoProduto(id); }
 
     @Transactional
-    @CacheEvict(value = "produtos", allEntries = true) // Limpa o cache ao salvar ou atualizar
+    @CacheEvict(value = "produtos", allEntries = true)
     public ProdutoDTO salvar(ProdutoDTO dto) {
         Produto produto = new Produto();
-        atualizarDados(produto, dto); // Preenche os dados
-        Produto salvo = salvar(produto); // Salva com regras fiscais
+        atualizarDados(produto, dto);
+        Produto salvo = salvar(produto);
         return new ProdutoDTO(salvo);
     }
 
     @Transactional
-    @CacheEvict(value = "produtos", allEntries = true) // Garante limpeza de cache também neste método
+    @CacheEvict(value = "produtos", allEntries = true)
     public Produto salvar(Produto produto) {
         calculadoraFiscalService.aplicarRegrasFiscais(produto);
         return produtoRepository.save(produto);
@@ -369,6 +354,9 @@ public class ProdutoService {
     private void atualizarDados(Produto p, ProdutoDTO d) {
         p.setDescricao(d.descricao());
         p.setCodigoBarras(d.codigoBarras());
+        p.setSku(d.sku());           // NOVO: Atualiza SKU
+        p.setLote(d.lote());         // NOVO: Atualiza Lote
+        p.setValidade(d.validade()); // NOVO: Atualiza Validade
         p.setMarca(d.marca());
         p.setCategoria(d.categoria());
         p.setSubcategoria(d.subcategoria());
@@ -461,10 +449,11 @@ public class ProdutoService {
     public byte[] gerarRelatorioCsv() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         StringBuilder sb = new StringBuilder();
-        sb.append("ID;EAN;Descrição;Marca;Categoria;NCM;Preço Custo;Preço Venda;Estoque;Estoque Mínimo\n");
+        sb.append("ID;EAN;SKU;Descrição;Marca;Categoria;NCM;Preço Custo;Preço Venda;Estoque;Estoque Mínimo\n");
         for (Produto p : produtos) {
             sb.append(p.getId()).append(";")
                     .append(tratarCampoCsv(p.getCodigoBarras())).append(";")
+                    .append(tratarCampoCsv(p.getSku())).append(";")
                     .append(tratarCampoCsv(p.getDescricao())).append(";")
                     .append(tratarCampoCsv(p.getMarca())).append(";")
                     .append(tratarCampoCsv(p.getCategoria())).append(";")
@@ -491,7 +480,7 @@ public class ProdutoService {
             headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
             Row headerRow = sheet.createRow(0);
-            String[] colunas = {"ID", "EAN", "Descrição", "Marca", "Categoria", "NCM", "Preço Custo", "Preço Venda", "Estoque", "Mínimo"};
+            String[] colunas = {"ID", "EAN", "SKU", "Descrição", "Marca", "Categoria", "NCM", "Preço Custo", "Preço Venda", "Estoque", "Mínimo"};
             for (int i = 0; i < colunas.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(colunas[i]);
@@ -503,14 +492,15 @@ public class ProdutoService {
                 Row row = sheet.createRow(rowIdx++);
                 row.createCell(0).setCellValue(p.getId());
                 row.createCell(1).setCellValue(p.getCodigoBarras() != null ? p.getCodigoBarras() : "");
-                row.createCell(2).setCellValue(p.getDescricao() != null ? p.getDescricao() : "");
-                row.createCell(3).setCellValue(p.getMarca() != null ? p.getMarca() : "");
-                row.createCell(4).setCellValue(p.getCategoria() != null ? p.getCategoria() : "");
-                row.createCell(5).setCellValue(p.getNcm() != null ? p.getNcm() : "");
-                row.createCell(6).setCellValue(p.getPrecoCusto() != null ? p.getPrecoCusto().doubleValue() : 0.0);
-                row.createCell(7).setCellValue(p.getPrecoVenda() != null ? p.getPrecoVenda().doubleValue() : 0.0);
-                row.createCell(8).setCellValue(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0);
-                row.createCell(9).setCellValue(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0);
+                row.createCell(2).setCellValue(p.getSku() != null ? p.getSku() : "");
+                row.createCell(3).setCellValue(p.getDescricao() != null ? p.getDescricao() : "");
+                row.createCell(4).setCellValue(p.getMarca() != null ? p.getMarca() : "");
+                row.createCell(5).setCellValue(p.getCategoria() != null ? p.getCategoria() : "");
+                row.createCell(6).setCellValue(p.getNcm() != null ? p.getNcm() : "");
+                row.createCell(7).setCellValue(p.getPrecoCusto() != null ? p.getPrecoCusto().doubleValue() : 0.0);
+                row.createCell(8).setCellValue(p.getPrecoVenda() != null ? p.getPrecoVenda().doubleValue() : 0.0);
+                row.createCell(9).setCellValue(p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0);
+                row.createCell(10).setCellValue(p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0);
             }
             for (int i = 0; i < colunas.length; i++) { sheet.autoSizeColumn(i); }
             workbook.write(out);
@@ -522,26 +512,27 @@ public class ProdutoService {
     private String formatarMoedaCsv(BigDecimal valor) { return valor == null ? "0,00" : valor.toString().replace(".", ","); }
 
     public ProdutoDTO buscarPorEanOuExterno(String ean) {
-        // 1. Tenta buscar no banco local
         Optional<Produto> produtoLocal = produtoRepository.findByCodigoBarras(ean);
         if (produtoLocal.isPresent()) {
             return new ProdutoDTO(produtoLocal.get());
         }
 
-        // 2. Se não achou local, TENTA API EXTERNA
         try {
             Optional<ProdutoExternoDTO> dadosExternos = cosmosService.consultarEan(ean);
-
             if (dadosExternos.isPresent()) {
                 ProdutoExternoDTO ext = dadosExternos.get();
+                // ATENÇÃO: Campos novos (SKU, Lote, Validade) iniciados como null para Record
                 return new ProdutoDTO(
                         null,
                         ext.getNome(),
                         ext.getEan(),
+                        null, // SKU
                         ext.getMarca(),
                         ext.getCategoria(),
-                        null,
+                        null, // Subcategoria
                         "UN",
+                        null, // Lote
+                        null, // Validade
                         ext.getNcm(),
                         ext.getCest(),
                         "102",
@@ -560,26 +551,52 @@ public class ProdutoService {
         } catch (Exception e) {
             log.error("Erro ao consultar API externa: {}", e.getMessage());
         }
-
         return null;
     }
 
     public String gerarProximoEanInterno() {
-        // Busca o maior ID cadastrado na tabela
         Long maxId = produtoRepository.findMaxId();
+        if (maxId == null) maxId = 0L;
+        return String.format("2%012d", maxId + 1);
+    }
 
-        // Se não tiver nenhum produto, começa do 0
-        if (maxId == null) {
-            maxId = 0L;
+    // --- MÉTODOS PARA O INVENTÁRIO ---
+
+    public List<Produto> listarTodosAtivos() {
+        return produtoRepository.findAllByAtivoTrue();
+    }
+
+    public List<SugestaoCompraDTO> gerarSugestaoCompra() {
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+        List<SugestaoCompraDTO> sugestoes = new ArrayList<>();
+
+        for (Produto produto : produtos) {
+            if (produto.getQuantidadeEmEstoque() <= produto.getEstoqueMinimo()) {
+                int quantidadeFaltante = produto.getEstoqueMinimo() - produto.getQuantidadeEmEstoque();
+                int sugestaoCompra = Math.max(quantidadeFaltante + 10, 10);
+
+                BigDecimal custoEstimado = produto.getPrecoCusto() != null
+                        ? produto.getPrecoCusto().multiply(new BigDecimal(sugestaoCompra))
+                        : BigDecimal.ZERO;
+
+                String urgencia = "NORMAL";
+                if (produto.getQuantidadeEmEstoque() == 0) urgencia = "CRÍTICO (ZERADO)";
+                else if (produto.getQuantidadeEmEstoque() < produto.getEstoqueMinimo() / 2) urgencia = "ALTA";
+
+                SugestaoCompraDTO dto = new SugestaoCompraDTO(
+                        produto.getCodigoBarras(),
+                        produto.getDescricao(),
+                        produto.getMarca(),
+                        produto.getQuantidadeEmEstoque(),
+                        produto.getEstoqueMinimo(),
+                        sugestaoCompra,
+                        urgencia,
+                        custoEstimado
+                );
+                sugestoes.add(dto);
+            }
         }
-
-        // O próximo código será o ID atual + 1
-        long proximoId = maxId + 1;
-
-        // Formata: Prefixo '2' + 12 dígitos (preenchidos com zeros à esquerda)
-        // Exemplo: Se o próximo ID for 50, gera "2000000000050"
-        String eanInterno = String.format("2%012d", proximoId);
-
-        return eanInterno;
+        sugestoes.sort((a, b) -> b.nivelUrgencia().compareTo(a.nivelUrgencia()));
+        return sugestoes;
     }
 }

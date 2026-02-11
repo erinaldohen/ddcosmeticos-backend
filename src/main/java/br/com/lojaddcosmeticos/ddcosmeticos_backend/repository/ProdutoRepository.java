@@ -19,7 +19,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     // --- MÉTODOS BÁSICOS ---
     boolean existsByCodigoBarras(String codigoBarras);
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
-    List<Produto> findAllByAtivoTrue();
     List<Produto> findByNcm(String ncm);
 
     // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE) ---
@@ -77,14 +76,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
     long contarProdutosSemFiscal();
 
-    // LIXEIRA
-    @Query(value = "SELECT * FROM produto WHERE ativo <> 1 OR ativo IS NULL", nativeQuery = true)
-    List<Produto> findAllLixeira();
-
-    @Modifying
-    @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
-    void reativarProduto(@Param("id") Long id);
-
     @Query("""
         SELECT DISTINCT p 
         FROM Produto p 
@@ -125,4 +116,15 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Query("SELECT MAX(p.id) FROM Produto p")
     Long findMaxId();
+
+    // Adicione esta linha:
+    List<Produto> findAllByAtivoTrue();
+
+    // Se você tiver queries de lixeira, mantenha-as aqui...
+    @Query("SELECT p FROM Produto p WHERE p.ativo = false")
+    List<Produto> findAllLixeira();
+
+    @Modifying
+    @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
+    void reativarProduto(Long id);
 }

@@ -50,7 +50,7 @@ public class EstoqueIntelligenceService {
 
         // Ordenação segura (evitando NullPointerException na comparação)
         sugestoes.sort(Comparator.comparing(
-                (SugestaoCompraDTO dto) -> dto.getNivelUrgencia() != null ? dto.getNivelUrgencia() : "",
+                (SugestaoCompraDTO sugestaoCompraDTO) -> sugestaoCompraDTO.nivelUrgencia() != null ? sugestaoCompraDTO.nivelUrgencia() : "",
                 Comparator.reverseOrder() // Ordem alfabética reversa para Z-CRÍTICO vir antes
         ));
 

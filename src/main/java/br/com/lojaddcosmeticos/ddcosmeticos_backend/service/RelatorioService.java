@@ -5,7 +5,9 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.AuditoriaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import com.lowagie.text.*;
 import com.lowagie.text.pdf.PdfPCell;
@@ -25,6 +27,7 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -33,24 +36,20 @@ import java.util.Locale;
 @Service
 public class RelatorioService {
 
-    @Autowired
-    private VendaRepository vendaRepository;
+    @Autowired private VendaRepository vendaRepository;
+    @Autowired private AuditoriaRepository auditoriaRepository; // Injeção necessária para o PDF de auditoria
 
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(LocalTime.MAX);
 
-        // 1. Busca dados reais das queries consolidadas
-        // CORREÇÃO: Método renomeado para somarFaturamento (que aceita NULL)
         BigDecimal totalFaturado = vendaRepository.somarFaturamento(dataInicio, dataFim);
+        if (totalFaturado == null) totalFaturado = BigDecimal.ZERO;
 
         List<VendaDiariaDTO> vendasDiarias = vendaRepository.agruparVendasPorDia(dataInicio, dataFim);
         List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(dataInicio, dataFim);
-
-        // Busca Top Marcas para o gráfico (Top 5)
         List<ProdutoRankingDTO> rankingMarcas = vendaRepository.buscarRankingMarcas(dataInicio, dataFim, PageRequest.of(0, 5));
 
-        // 2. Cálculos para os Cards do Dashboard
         long totalVendasCount = vendasDiarias.stream()
                 .mapToLong(v -> v.getQuantidade() != null ? v.getQuantidade() : 0L)
                 .sum();
@@ -60,24 +59,117 @@ public class RelatorioService {
             ticketMedio = totalFaturado.divide(new BigDecimal(totalVendasCount), 2, RoundingMode.HALF_UP);
         }
 
-        BigDecimal lucroEstimado = totalFaturado.multiply(new BigDecimal("0.35")); // Baseado na margem padrão da loja
+        BigDecimal lucroEstimado = totalFaturado.multiply(new BigDecimal("0.35"));
 
-        // 3. Retorno mapeado para o RelatorioVendasDTO (alinhado com o React)
         return RelatorioVendasDTO.builder()
                 .dataGeracao(LocalDateTime.now())
                 .totalFaturado(totalFaturado)
                 .quantidadeVendas((int) totalVendasCount)
                 .ticketMedio(ticketMedio)
                 .lucroBrutoEstimado(lucroEstimado)
-                .vendasDiarias(vendasDiarias)     // Popula gráfico "Tendência Diária"
-                .porPagamento(porPagamento)       // Popula gráfico "Meios de Pagamento"
-                .rankingMarcas(rankingMarcas)     // Popula gráfico "Top Marcas"
+                .vendasDiarias(vendasDiarias)
+                .porPagamento(porPagamento)
+                .rankingMarcas(rankingMarcas)
                 .build();
     }
 
-    // --- MÉTODOS DE PDF E ETIQUETAS (MANTIDOS) ---
+    // --- MÉTODOS DE PDF ---
+
+    /**
+     * Método novo para atender a chamada do Controller na linha 46.
+     * Gera PDF de auditoria filtrado.
+     */
+    public byte[] gerarPdfAuditoria(String search, String inicioStr, String fimStr) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Cabeçalho
+            Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+            Paragraph titulo = new Paragraph("RELATÓRIO CONSOLIDADO DE AUDITORIA", fontTitulo);
+            titulo.setAlignment(Element.ALIGN_CENTER);
+            document.add(titulo);
+
+            Font fontSub = FontFactory.getFont(FontFactory.HELVETICA, 10, Color.GRAY);
+            Paragraph sub = new Paragraph("Cópia Controlada - DD Cosméticos - Gerado em: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")), fontSub);
+            sub.setAlignment(Element.ALIGN_CENTER);
+            document.add(sub);
+            document.add(new Paragraph(" ")); // Espaço
+
+            // Filtros de Data
+            LocalDateTime dataInicio = (inicioStr != null && !inicioStr.isEmpty())
+                    ? LocalDate.parse(inicioStr).atStartOfDay()
+                    : LocalDateTime.of(1970, 1, 1, 0, 0);
+
+            LocalDateTime dataFim = (fimStr != null && !fimStr.isEmpty())
+                    ? LocalDate.parse(fimStr).atTime(LocalTime.MAX)
+                    : LocalDateTime.now().plusDays(1);
+
+            String termo = (search != null) ? search.toLowerCase() : "";
+
+            // Busca os dados (Assumindo que o repositório tem o método buscarListaPorFiltros)
+            // Se não tiver, use findAll e filtre via stream Java, ou crie a query no repo.
+            // Aqui usaremos findAll com filtro Java por segurança se o repo não tiver a query pronta
+            List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc().stream()
+                    .filter(a -> a.getDataHora().isAfter(dataInicio) && a.getDataHora().isBefore(dataFim))
+                    .filter(a -> termo.isEmpty()
+                            || (a.getUsuarioResponsavel() != null && a.getUsuarioResponsavel().toLowerCase().contains(termo))
+                            || (a.getMensagem() != null && a.getMensagem().toLowerCase().contains(termo))
+                            || (a.getTipoEvento() != null && a.getTipoEvento().toLowerCase().contains(termo)))
+                    .limit(500) // Limite de segurança
+                    .toList();
+
+            // Tabela
+            PdfPTable table = new PdfPTable(4);
+            table.setWidthPercentage(100);
+            table.setWidths(new float[]{2.5f, 2f, 2.5f, 4f}); // Data, User, Evento, Msg
+
+            String[] headers = {"Data/Hora", "Usuário", "Evento", "Descrição"};
+            for (String h : headers) {
+                PdfPCell cell = new PdfPCell(new Phrase(h, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
+                cell.setBackgroundColor(new Color(30, 41, 59)); // Azul escuro
+                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cell.setPadding(6);
+                table.addCell(cell);
+            }
+
+            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd/MM/yy HH:mm");
+            boolean zebra = false;
+
+            for (Auditoria log : logs) {
+                Color bg = zebra ? new Color(241, 245, 249) : Color.WHITE;
+
+                table.addCell(criarCelulaComBg(log.getDataHora().format(dtf), Element.ALIGN_CENTER, bg));
+                table.addCell(criarCelulaComBg(log.getUsuarioResponsavel(), Element.ALIGN_CENTER, bg));
+                table.addCell(criarCelulaComBg(log.getTipoEvento(), Element.ALIGN_CENTER, bg));
+                table.addCell(criarCelulaComBg(log.getMensagem(), Element.ALIGN_LEFT, bg));
+
+                zebra = !zebra;
+            }
+
+            document.add(table);
+            document.close();
+            return out.toByteArray();
+
+        } catch (Exception e) {
+            log.error("Erro ao gerar PDF de Auditoria", e);
+            throw new RuntimeException("Erro na geração do relatório.", e);
+        }
+    }
+
+    // Método auxiliar para célula com cor de fundo (Zebra Striping)
+    private PdfPCell criarCelulaComBg(String texto, int alinhamento, Color bg) {
+        PdfPCell cell = new PdfPCell(new Phrase(texto != null ? texto : "", FontFactory.getFont(FontFactory.HELVETICA, 9)));
+        cell.setHorizontalAlignment(alinhamento);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setBackgroundColor(bg);
+        cell.setPadding(4);
+        return cell;
+    }
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {
+        // ... (código existente mantido) ...
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4.rotate());
             PdfWriter.getInstance(document, out);

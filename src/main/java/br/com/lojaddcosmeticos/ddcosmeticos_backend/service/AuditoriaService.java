@@ -22,6 +22,7 @@ import org.hibernate.envers.AuditReaderFactory;
 import org.hibernate.envers.RevisionType;
 import org.hibernate.envers.query.AuditEntity;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -74,11 +75,10 @@ public class AuditoriaService {
     }
 
     // =========================================================================
-    // 2. CONSULTAS PARA O DASHBOARD
+    // 2. CONSULTAS PARA O DASHBOARD E TELA DE AUDITORIA
     // =========================================================================
 
     @Transactional(readOnly = true)
-    // CORREÇÃO: Renomeado de listarUltimasAlteracoes para listarUltimosEventos
     public List<AuditoriaRequestDTO> listarUltimosEventos(int limite) {
         Pageable pageable = PageRequest.of(0, limite, Sort.by("dataHora").descending());
 
@@ -92,12 +92,28 @@ public class AuditoriaService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Método novo para atender a chamada do Controller na linha 34.
+     * Busca paginada com filtros opcionais.
+     */
+    @Transactional(readOnly = true)
+    public Page<Auditoria> buscarFiltrado(String search, LocalDateTime inicio, LocalDateTime fim, Pageable pageable) {
+        // Se as datas forem nulas, define um intervalo padrão (ex: 1970 até futuro distante) ou trata na query
+        LocalDateTime dataInicio = (inicio != null) ? inicio : LocalDateTime.of(1970, 1, 1, 0, 0);
+        LocalDateTime dataFim = (fim != null) ? fim : LocalDateTime.now().plusDays(1);
+        String termoBusca = (search != null) ? search.toLowerCase() : "";
+
+        // Chama o método do repositório (que deve usar @Query)
+        return auditoriaRepository.buscarPorFiltros(termoBusca, dataInicio, dataFim, pageable);
+    }
+
     // =========================================================================
-    // 3. RELATÓRIOS (PDF)
+    // 3. RELATÓRIOS (PDF - iText 7)
     // =========================================================================
 
     @Transactional(readOnly = true)
     public byte[] gerarRelatorioMensalPDF() {
+        // ... (código existente mantido) ...
         List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc();
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfWriter writer = new PdfWriter(out);
@@ -128,7 +144,7 @@ public class AuditoriaService {
     }
 
     // =========================================================================
-    // 4. HIBERNATE ENVERS (Histórico de Alterações de Produtos)
+    // 4. HIBERNATE ENVERS
     // =========================================================================
 
     @Transactional(readOnly = true)

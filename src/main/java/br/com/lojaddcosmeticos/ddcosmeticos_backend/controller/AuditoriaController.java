@@ -1,63 +1,64 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.AuditoriaService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/auditoria")
-// REMOVIDO DAQUI: @PreAuthorize("hasRole('ADMIN')") -> Isso estava bloqueando tudo!
-// REMOVIDO: @CrossOrigin -> O SecurityConfig já resolve isso.
+@RequestMapping("/auditoria")
 public class AuditoriaController {
 
-    @Autowired private AuditoriaService auditoriaService;
+    @Autowired
+    private AuditoriaService auditoriaService;
 
-    // --- LIBERADO PARA O DASHBOARD (Qualquer um logado) ---
+    @Autowired
+    private RelatorioService relatorioService;
+
+    // BUSCA SINCRONIZADA COM FILTROS
     @GetMapping("/eventos")
-    @PreAuthorize("isAuthenticated()") // Libera para o Dashboard
-    public ResponseEntity<List<AuditoriaRequestDTO>> listarUltimosEventos() {
-        return ResponseEntity.ok(auditoriaService.listarUltimosEventos(10));
+    public ResponseEntity<Page<Auditoria>> listarEventos(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime inicio,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime fim,
+            Pageable pageable) {
+
+        return ResponseEntity.ok(auditoriaService.buscarFiltrado(search, inicio, fim, pageable));
     }
 
-    // Mantenha os outros métodos restritos a ADMIN se desejar
-    @GetMapping("/produto/{id}")
-    @PreAuthorize("hasRole('ADMIN')") // Exemplo: Histórico completo só Admin vê
-    public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistoricoProduto(@PathVariable Long id) {
-        return ResponseEntity.ok(auditoriaService.buscarHistoricoDoProduto(id));
-    }
-
-    // --- RESTRITO: LIXEIRA (Apenas Admin) ---
-    @GetMapping("/lixeira")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<Produto>> listarLixeira() {
-        return ResponseEntity.ok(auditoriaService.buscarLixeira());
-    }
-
-    // --- RESTRITO: RESTAURAR (Apenas Admin) ---
-    @PostMapping("/restaurar/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> restaurarProduto(@PathVariable Long id) {
-        auditoriaService.restaurarProduto(id);
-        return ResponseEntity.ok().build();
-    }
-
-    // --- RESTRITO: RELATÓRIO PDF (Apenas Admin) ---
+    // EXPORTAÇÃO DE PDF COM GESTÃO DE STREAM
     @GetMapping("/relatorio/pdf")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<byte[]> baixarRelatorio() {
-        byte[] pdf = auditoriaService.gerarRelatorioMensalPDF();
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=auditoria_dd.pdf")
-                .contentType(MediaType.APPLICATION_PDF)
-                .body(pdf);
+    public ResponseEntity<byte[]> exportarRelatorio(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String inicio,
+            @RequestParam(required = false) String fim) {
+
+        try {
+            // O Service processa o HTML/Thymeleaf e converte para PDF
+            byte[] pdfBytes = relatorioService.gerarPdfAuditoria(search, inicio, fim);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_PDF);
+
+            // Define o nome do arquivo para o navegador
+            String filename = "Auditoria_DD_" + System.currentTimeMillis() + ".pdf";
+            headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
+
+            // Cache-Control para evitar que o navegador armazene versões antigas de relatórios sensíveis
+            headers.setCacheControl(CacheControl.noCache().getHeaderValue());
+
+            return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+
+        } catch (Exception e) {
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 }

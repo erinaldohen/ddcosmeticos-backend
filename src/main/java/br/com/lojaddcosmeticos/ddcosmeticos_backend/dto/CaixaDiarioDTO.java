@@ -6,10 +6,11 @@ public record CaixaDiarioDTO(
         Long id,
         String status,
         BigDecimal saldoInicial,
+        BigDecimal saldoAtual, // Adicionado para facilitar
+        BigDecimal totalEntradas, // Suprimentos
+        BigDecimal totalSaidas,   // Sangrias
         BigDecimal totalVendasDinheiro,
         BigDecimal totalVendasPix,
-        BigDecimal totalVendasCartao
-) {
-    // Construtor vazio ou estático auxiliar se necessário,
-    // mas o record já resolve a transferência de dados.
-}
+        BigDecimal totalVendasCredito, // Separado
+        BigDecimal totalVendasDebito   // Separado
+) {}

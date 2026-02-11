@@ -93,33 +93,36 @@ public class CaixaService {
 
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
-
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
 
-        if (caixaOpt.isEmpty()) {
-            return null;
-        }
+        if (caixaOpt.isEmpty()) return null;
 
         CaixaDiario caixa = caixaOpt.get();
+        LocalDateTime agora = LocalDateTime.now();
 
+        // Recalcula totais em tempo real baseados nas vendas
         List<Venda> vendasHoje = vendaRepository.buscarVendasDoUsuarioNoPeriodo(
-                operador.getId(),
-                caixa.getDataAbertura(),
-                LocalDateTime.now()
+                operador.getId(), caixa.getDataAbertura(), agora
         );
 
         BigDecimal dinheiro = somarPorForma(vendasHoje, FormaDePagamento.DINHEIRO);
         BigDecimal pix = somarPorForma(vendasHoje, FormaDePagamento.PIX);
-        BigDecimal cartao = somarPorForma(vendasHoje, FormaDePagamento.CREDITO)
-                .add(somarPorForma(vendasHoje, FormaDePagamento.DEBITO));
+
+        // Separação solicitada
+        BigDecimal credito = somarPorForma(vendasHoje, FormaDePagamento.CREDITO);
+        BigDecimal debito = somarPorForma(vendasHoje, FormaDePagamento.DEBITO);
 
         return new CaixaDiarioDTO(
                 caixa.getId(),
                 "ABERTO",
                 caixa.getSaldoInicial(),
+                caixa.getSaldoAtual(),
+                caixa.getTotalEntradas(),
+                caixa.getTotalSaidas(),
                 dinheiro,
                 pix,
-                cartao
+                credito, // Passa separado
+                debito   // Passa separado
         );
     }
 

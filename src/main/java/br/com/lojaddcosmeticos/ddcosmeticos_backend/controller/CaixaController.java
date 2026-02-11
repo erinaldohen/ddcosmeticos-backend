@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
@@ -34,35 +35,52 @@ public class CaixaController {
 
     private final CaixaService caixaService;
     private final CaixaDiarioRepository caixaRepository;
-    // Opcional: Se você ainda não criou o serviço de relatório, comente essa linha e o endpoint PDF
     private final CaixaRelatorioService relatorioService;
 
     // --- OPERACIONAL ---
 
     @GetMapping("/status")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<CaixaDiarioDTO> verificarStatus() {
-        return ResponseEntity.ok(caixaService.buscarStatusAtual());
+    public ResponseEntity<?> verificarStatusCaixa() {
+        try {
+            // CORREÇÃO: Usa o método existente no Service que retorna DTO
+            CaixaDiarioDTO caixa = caixaService.buscarStatusAtual();
+
+            if (caixa != null && "ABERTO".equals(caixa.status())) { // Acessa campo do record sem get
+                return ResponseEntity.ok(Map.of(
+                        "status", "ABERTO",
+                        "aberto", true,
+                        "caixa", caixa
+                ));
+            } else {
+                return ResponseEntity.ok(Map.of(
+                        "status", "FECHADO",
+                        "aberto", false
+                ));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of(
+                    "status", "FECHADO",
+                    "aberto", false
+            ));
+        }
     }
 
     @PostMapping("/abrir")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiario> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
         BigDecimal saldoInicial = payload.get("saldoInicial");
+        // O método abrirCaixa retorna a Entidade CaixaDiario
         return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
     }
 
-    @PostMapping("/fechar")
+    @PostMapping("/{id}/fechar")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<CaixaDiario> fecharCaixa(@RequestBody Map<String, BigDecimal> payload) {
-        // O Frontend deve enviar "saldoFinalInformado" ou "saldoFinal"
-        BigDecimal valor = payload.get("saldoFinalInformado");
-        if (valor == null) valor = payload.get("saldoFinal");
-
-        return ResponseEntity.ok(caixaService.fecharCaixa(valor));
+    public ResponseEntity<CaixaDiario> fecharCaixa(@PathVariable Long id, @RequestBody FechamentoCaixaDTO dto) {
+        // CORREÇÃO: Acessa o campo correto do Record (sem get e com o nome exato)
+        return ResponseEntity.ok(caixaService.fecharCaixa(dto.saldoFinalDinheiroEmEspecie()));
     }
 
-    // --- MOVIMENTAÇÕES (SANGRIA E SUPRIMENTO) ---
+    // --- MOVIMENTAÇÕES ---
 
     @GetMapping("/motivos")
     @PreAuthorize("isAuthenticated()")
@@ -73,7 +91,6 @@ public class CaixaController {
     @PostMapping("/sangria")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> realizarSangria(@RequestBody MovimentacaoDTO dto) {
-        // Correção do erro "void type not allowed": Chamamos o método e retornamos build() separado
         caixaService.realizarSangria(dto.getValor(), dto.getMotivo());
         return ResponseEntity.ok().build();
     }
@@ -94,9 +111,11 @@ public class CaixaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
     ) {
         if (inicio != null && fim != null) {
-            LocalDateTime dataInicio = inicio.atStartOfDay();
-            LocalDateTime dataFim = fim.atTime(23, 59, 59);
-            return ResponseEntity.ok(caixaRepository.findByDataAberturaBetween(dataInicio, dataFim, pageable));
+            return ResponseEntity.ok(caixaRepository.findByDataAberturaBetween(
+                    inicio.atStartOfDay(),
+                    fim.atTime(23, 59, 59),
+                    pageable
+            ));
         }
         return ResponseEntity.ok(caixaRepository.findAll(pageable));
     }
@@ -129,9 +148,7 @@ public class CaixaController {
         }
 
         response.setContentType("application/pdf");
-        String headerKey = "Content-Disposition";
-        String headerValue = "attachment; filename=relatorio_caixas.pdf";
-        response.setHeader(headerKey, headerValue);
+        response.setHeader("Content-Disposition", "attachment; filename=relatorio_caixas.pdf");
 
         LocalDate dInicio = (inicio != null) ? inicio : LocalDate.now().minusDays(30);
         LocalDate dFim = (fim != null) ? fim : LocalDate.now();

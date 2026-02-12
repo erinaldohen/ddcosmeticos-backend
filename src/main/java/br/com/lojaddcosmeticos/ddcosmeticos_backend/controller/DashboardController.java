@@ -19,36 +19,36 @@ import java.util.List;
 @RequestMapping("/api/v1/dashboard")
 @RequiredArgsConstructor
 @Tag(name = "Dashboard", description = "Endpoints para dados analíticos e indicadores")
-@CrossOrigin(origins = "*")
+// CORREÇÃO: Removemos @CrossOrigin(origins = "*") pois conflita com allowCredentials=true do CorsConfig
+// Se precisar usar, use: @CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class DashboardController {
 
     private final DashboardService dashboardService;
 
-    // 1. Dashboard Principal (Tela Inicial)
-    // Resolvemos o erro 400 removendo @RequestParam obrigatórios
+    // 1. ENDPOINT PRINCIPAL
     @GetMapping
-    @Operation(summary = "Carregar Dashboard Completo", description = "Retorna KPIs, gráficos e tabelas")
+    @Operation(summary = "Carregar Dashboard")
     public ResponseEntity<DashboardDTO> getDashboardCompleto() {
         return ResponseEntity.ok(dashboardService.carregarDashboard());
     }
 
-    // 2. Resumo Operacional (Header/Mobile)
+    // 2. Resumo Operacional
     @GetMapping("/resumo")
-    @Operation(summary = "Resumo Operacional", description = "Dados rápidos para widgets")
+    @Operation(summary = "Resumo Operacional")
     public ResponseEntity<DashboardResumoDTO> getResumoGeral() {
         return ResponseEntity.ok(dashboardService.obterResumoGeral());
     }
 
-    // 3. Alertas de Auditoria
+    // 3. Alertas
     @GetMapping("/alertas")
-    @Operation(summary = "Alertas de Auditoria", description = "Últimas ações críticas")
+    @Operation(summary = "Alertas de Auditoria")
     public ResponseEntity<List<AuditoriaRequestDTO>> getAlertasRecentes() {
         return ResponseEntity.ok(dashboardService.buscarAlertasRecentes());
     }
 
     // 4. Dados Fiscais
     @GetMapping("/fiscal")
-    @Operation(summary = "Dados Fiscais", description = "Resumo de notas e impostos")
+    @Operation(summary = "Dados Fiscais")
     public ResponseEntity<FiscalDashboardDTO> getDadosFiscais(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim

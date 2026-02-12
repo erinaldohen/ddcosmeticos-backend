@@ -15,15 +15,15 @@ import java.util.List;
 @Repository
 public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
 
-    // CORREÇÃO CRÍTICA:
+    // CORREÇÃO APLICADA:
     // 1. Removido 'i.precoTotal' (que não existe no banco).
-    // 2. Substituído por cálculo matemático: (i.precoUnitario * i.quantidade).
-    // 3. Adicionado CAST para garantir que o DTO receba os tipos certos (Long e BigDecimal).
+    // 2. Substituído por '(i.precoUnitario * i.quantidade)'.
+    // 3. Adicionado CAST para Long e BigDecimal para evitar erro de construtor no H2/MySQL.
 
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DashboardDTO$TopProdutoDTO(
             i.produto.descricao, 
-            CAST(SUM(i.quantidade) AS Long), 
+            CAST(SUM(i.quantidade) AS long), 
             CAST(SUM(i.precoUnitario * i.quantidade) AS BigDecimal)
         ) 
         FROM ItemVenda i 

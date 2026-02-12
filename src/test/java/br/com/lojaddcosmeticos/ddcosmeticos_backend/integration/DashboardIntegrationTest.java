@@ -122,7 +122,7 @@ public class DashboardIntegrationTest {
         v.setValorTotal(total);
         v.setFormaDePagamento(FormaDePagamento.DINHEIRO);
         v.setUsuario(usuario);
-        v.setStatusNfce(StatusFiscal.NAO_EMITIDA);
+        v.setStatusNfce(StatusFiscal.PENDENTE);
         vendaRepository.save(v);
     }
 
@@ -146,7 +146,7 @@ public class DashboardIntegrationTest {
 
     private void criarContaReceber(BigDecimal valor, LocalDate vencimento) {
         ContaReceber c = new ContaReceber();
-        c.setValorLiquido(valor);
+        c.setValorPago(valor);
         c.setValorTotal(valor);
         c.setDataVencimento(vencimento);
         c.setDataEmissao(LocalDate.now());

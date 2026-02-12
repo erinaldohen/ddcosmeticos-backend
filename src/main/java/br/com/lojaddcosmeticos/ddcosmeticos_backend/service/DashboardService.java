@@ -156,7 +156,18 @@ public class DashboardService {
     // =========================================================================
     @Transactional(readOnly = true)
     public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
-        return null;
+        // CORREÇÃO: O DTO agora exige 8 parâmetros.
+        // Passando valores zerados e listas vazias para compilar.
+        return new FiscalDashboardDTO(
+                BigDecimal.ZERO, // 1. Total Faturamento
+                BigDecimal.ZERO, // 2. Total Impostos
+                BigDecimal.ZERO, // 3. Total ICMS
+                BigDecimal.ZERO, // 4. Total PIS
+                BigDecimal.ZERO, // 5. Total COFINS
+                0.0,             // 6. Carga Tributária Média (Double)
+                Collections.emptyList(), // 7. Lista de Gráfico Diário
+                Collections.emptyList()  // 8. Lista de Distribuição
+        );
     }
 
     // =========================================================================

@@ -87,12 +87,12 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     // DTO: (String, BigDecimal, Long, String)
     @Query("""
-        SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
-            p.descricao, 
-            CAST(SUM(i.precoUnitario * i.quantidade) AS BigDecimal), 
-            CAST(SUM(i.quantidade) AS Long),
-            'UN'
-        ) 
+    SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO(
+        p.descricao, 
+        CAST(SUM(i.precoUnitario * i.quantidade) AS BigDecimal), 
+        CAST(SUM(i.quantidade) AS Long),
+        'UN'
+    ) 
         FROM ItemVenda i 
         JOIN i.produto p 
         JOIN i.venda v
@@ -135,4 +135,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         ORDER BY CAST(v.dataVenda AS LocalDate) ASC
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+
 }

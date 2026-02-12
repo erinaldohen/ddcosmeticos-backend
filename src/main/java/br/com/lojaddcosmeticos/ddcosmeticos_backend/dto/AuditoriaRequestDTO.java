@@ -1,11 +1,16 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento; // Importe o Enum
+import com.fasterxml.jackson.annotation.JsonFormat;
 import java.time.LocalDateTime;
 
-// Record para mapear o JSON do Frontend: { acao, detalhes, usuario, dataHora }
 public record AuditoriaRequestDTO(
-        String acao,
-        String detalhes,
-        String usuario,
+        // Agora é fortemente tipado com o Enum
+        TipoEvento tipoEvento,
+
+        String mensagem,
+        String usuarioResponsavel,
+
+        @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
         LocalDateTime dataHora
 ) {}

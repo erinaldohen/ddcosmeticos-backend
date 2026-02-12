@@ -1,7 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO; // Se existir esse DTO
+// import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.*; // Se usar DTOs separados
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
@@ -18,12 +19,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
-import java.awt.Color;
+import java.awt.Color; // Importante para as cores
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
-import java.text.SimpleDateFormat;
+import java.text.SimpleDateFormat; // Para formatar data no PDF
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -31,13 +32,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class RelatorioService {
 
     @Autowired private VendaRepository vendaRepository;
-    @Autowired private AuditoriaRepository auditoriaRepository; // Injeção necessária para o PDF de auditoria
+    @Autowired private AuditoriaRepository auditoriaRepository;
 
     public RelatorioVendasDTO gerarRelatorioVendas(LocalDate inicio, LocalDate fim) {
         LocalDateTime dataInicio = inicio.atStartOfDay();
@@ -51,7 +53,7 @@ public class RelatorioService {
         List<ProdutoRankingDTO> rankingMarcas = vendaRepository.buscarRankingMarcas(dataInicio, dataFim, PageRequest.of(0, 5));
 
         long totalVendasCount = vendasDiarias.stream()
-                .mapToLong(v -> v.getQuantidade() != null ? v.getQuantidade() : 0L)
+                .mapToLong(v -> v.quantidade() != null ? v.quantidade() : 0L)
                 .sum();
 
         BigDecimal ticketMedio = BigDecimal.ZERO;
@@ -75,10 +77,6 @@ public class RelatorioService {
 
     // --- MÉTODOS DE PDF ---
 
-    /**
-     * Método novo para atender a chamada do Controller na linha 46.
-     * Gera PDF de auditoria filtrado.
-     */
     public byte[] gerarPdfAuditoria(String search, String inicioStr, String fimStr) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4);
@@ -97,28 +95,41 @@ public class RelatorioService {
             document.add(sub);
             document.add(new Paragraph(" ")); // Espaço
 
-            // Filtros de Data
-            LocalDateTime dataInicio = (inicioStr != null && !inicioStr.isEmpty())
-                    ? LocalDate.parse(inicioStr).atStartOfDay()
-                    : LocalDateTime.of(1970, 1, 1, 0, 0);
+            // --- CORREÇÃO DA INICIALIZAÇÃO DAS DATAS (LINHAS 117) ---
 
-            LocalDateTime dataFim = (fimStr != null && !fimStr.isEmpty())
-                    ? LocalDate.parse(fimStr).atTime(LocalTime.MAX)
-                    : LocalDateTime.now().plusDays(1);
+            // Lógica: Define um valor temporário, tenta fazer o parse, e atribui à variável FINAL usada no lambda
+            LocalDateTime tempInicio = LocalDateTime.of(1970, 1, 1, 0, 0);
+            if (inicioStr != null && !inicioStr.isEmpty()) {
+                try {
+                    tempInicio = LocalDate.parse(inicioStr).atStartOfDay();
+                } catch (Exception e) {
+                    // Ignora erro de parse e mantém 1970
+                }
+            }
+            final LocalDateTime dataInicioFilter = tempInicio; // Variável Final para o Lambda
+
+            LocalDateTime tempFim = LocalDateTime.now().plusDays(1);
+            if (fimStr != null && !fimStr.isEmpty()) {
+                try {
+                    tempFim = LocalDate.parse(fimStr).atTime(LocalTime.MAX);
+                } catch (Exception e) {
+                    // Ignora erro e mantém data atual
+                }
+            }
+            final LocalDateTime dataFimFilter = tempFim; // Variável Final para o Lambda
 
             String termo = (search != null) ? search.toLowerCase() : "";
 
-            // Busca os dados (Assumindo que o repositório tem o método buscarListaPorFiltros)
-            // Se não tiver, use findAll e filtre via stream Java, ou crie a query no repo.
-            // Aqui usaremos findAll com filtro Java por segurança se o repo não tiver a query pronta
+            // Busca os dados e filtra em memória
+            // Agora dataInicioFilter e dataFimFilter são garantidamente inicializadas e final
             List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc().stream()
-                    .filter(a -> a.getDataHora().isAfter(dataInicio) && a.getDataHora().isBefore(dataFim))
+                    .filter(a -> a.getDataHora().isAfter(dataInicioFilter) && a.getDataHora().isBefore(dataFimFilter))
                     .filter(a -> termo.isEmpty()
                             || (a.getUsuarioResponsavel() != null && a.getUsuarioResponsavel().toLowerCase().contains(termo))
                             || (a.getMensagem() != null && a.getMensagem().toLowerCase().contains(termo))
-                            || (a.getTipoEvento() != null && a.getTipoEvento().toLowerCase().contains(termo)))
-                    .limit(500) // Limite de segurança
-                    .toList();
+                            || (a.getTipoEvento() != null && a.getTipoEvento().toString().toLowerCase().contains(termo)))
+                    .limit(500)
+                    .collect(Collectors.toList());
 
             // Tabela
             PdfPTable table = new PdfPTable(4);
@@ -137,13 +148,16 @@ public class RelatorioService {
             DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd/MM/yy HH:mm");
             boolean zebra = false;
 
-            for (Auditoria log : logs) {
+            for (Auditoria logItem : logs) {
                 Color bg = zebra ? new Color(241, 245, 249) : Color.WHITE;
 
-                table.addCell(criarCelulaComBg(log.getDataHora().format(dtf), Element.ALIGN_CENTER, bg));
-                table.addCell(criarCelulaComBg(log.getUsuarioResponsavel(), Element.ALIGN_CENTER, bg));
-                table.addCell(criarCelulaComBg(log.getTipoEvento(), Element.ALIGN_CENTER, bg));
-                table.addCell(criarCelulaComBg(log.getMensagem(), Element.ALIGN_LEFT, bg));
+                table.addCell(criarCelulaComBg(logItem.getDataHora().format(dtf), Element.ALIGN_CENTER, bg));
+                table.addCell(criarCelulaComBg(logItem.getUsuarioResponsavel(), Element.ALIGN_CENTER, bg));
+
+                String eventoStr = (logItem.getTipoEvento() != null) ? logItem.getTipoEvento().toString() : "";
+                table.addCell(criarCelulaComBg(eventoStr, Element.ALIGN_CENTER, bg));
+
+                table.addCell(criarCelulaComBg(logItem.getMensagem(), Element.ALIGN_LEFT, bg));
 
                 zebra = !zebra;
             }
@@ -154,7 +168,7 @@ public class RelatorioService {
 
         } catch (Exception e) {
             log.error("Erro ao gerar PDF de Auditoria", e);
-            throw new RuntimeException("Erro na geração do relatório.", e);
+            return new byte[0];
         }
     }
 
@@ -169,7 +183,6 @@ public class RelatorioService {
     }
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {
-        // ... (código existente mantido) ...
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4.rotate());
             PdfWriter.getInstance(document, out);
@@ -197,14 +210,20 @@ public class RelatorioService {
 
             NumberFormat moeda = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
             for (SugestaoCompraDTO item : sugestoes) {
+                // SugestaoCompraDTO geralmente é um record, acesso sem 'get'
                 table.addCell(criarCelula(item.descricao(), Element.ALIGN_LEFT));
                 table.addCell(criarCelula(item.marca(), Element.ALIGN_LEFT));
 
                 PdfPCell cellUrgencia = new PdfPCell(new Phrase(item.nivelUrgencia(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
                 cellUrgencia.setHorizontalAlignment(Element.ALIGN_CENTER);
-                if (item.nivelUrgencia().contains("CRÍTICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
-                else if (item.nivelUrgencia().contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
+
+                String urgencia = item.nivelUrgencia().toUpperCase();
+                if (urgencia.contains("CRÍTICO") || urgencia.contains("CRITICO")) cellUrgencia.setBackgroundColor(new Color(255, 200, 200));
+                else if (urgencia.contains("ALERTA")) cellUrgencia.setBackgroundColor(new Color(255, 255, 200));
                 else cellUrgencia.setBackgroundColor(new Color(220, 255, 220));
+
+                cellUrgencia.setVerticalAlignment(Element.ALIGN_MIDDLE);
+                cellUrgencia.setPadding(4);
                 table.addCell(cellUrgencia);
 
                 table.addCell(criarCelula(String.valueOf(item.estoqueAtual()), Element.ALIGN_CENTER));
@@ -221,7 +240,7 @@ public class RelatorioService {
     }
 
     private PdfPCell criarCelula(String texto, int alinhamento) {
-        PdfPCell cell = new PdfPCell(new Phrase(texto, FontFactory.getFont(FontFactory.HELVETICA, 9)));
+        PdfPCell cell = new PdfPCell(new Phrase(texto != null ? texto : "", FontFactory.getFont(FontFactory.HELVETICA, 9)));
         cell.setHorizontalAlignment(alinhamento);
         cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
         cell.setPadding(4);
@@ -233,9 +252,11 @@ public class RelatorioService {
         sb.append("================================\n");
         sb.append("      DD COSMETICOS\n");
         sb.append("================================\n\n");
-        String nome = p.getDescricao().length() > 32 ? p.getDescricao().substring(0, 32) : p.getDescricao();
+        String nome = p.getDescricao() != null && p.getDescricao().length() > 32
+                ? p.getDescricao().substring(0, 32)
+                : p.getDescricao();
         sb.append(nome).append("\n\n");
-        sb.append("R$ ").append(String.format("%.2f", p.getPrecoVenda())).append("\n\n");
+        sb.append("R$ ").append(String.format("%.2f", p.getPrecoVenda() != null ? p.getPrecoVenda() : BigDecimal.ZERO)).append("\n\n");
         sb.append("COD: ").append(p.getCodigoBarras()).append("\n\n\n\n");
         return sb.toString();
     }

@@ -127,4 +127,12 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(Long id);
+
+    // Contagem Rápida de Vencidos
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.validade < CURRENT_DATE AND p.ativo = true")
+    long countVencidos();
+
+    // Contagem Baixo Estoque (Assumindo estoqueMinimo configurado)
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= p.estoqueMinimo AND p.ativo = true")
+    long countBaixoEstoque();
 }

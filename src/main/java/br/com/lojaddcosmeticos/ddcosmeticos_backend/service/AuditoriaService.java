@@ -1,8 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
@@ -34,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -59,10 +60,21 @@ public class AuditoriaService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void registrar(String acao, String detalhes, String entidade, Long idEntidade) {
+        TipoEvento tipoEventoEnum;
+        try {
+            tipoEventoEnum = TipoEvento.valueOf(acao.toUpperCase());
+        } catch (Exception e) {
+            tipoEventoEnum = TipoEvento.INFO;
+        }
+        registrar(tipoEventoEnum, detalhes, entidade, idEntidade);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void registrar(TipoEvento tipo, String detalhes, String entidade, Long idEntidade) {
         try {
             Auditoria auditoria = new Auditoria();
             auditoria.setDataHora(LocalDateTime.now());
-            auditoria.setTipoEvento(acao);
+            auditoria.setTipoEvento(tipo);
             auditoria.setMensagem(detalhes);
             auditoria.setEntidadeAfetada(entidade);
             auditoria.setIdEntidadeAfetada(idEntidade);
@@ -75,7 +87,7 @@ public class AuditoriaService {
     }
 
     // =========================================================================
-    // 2. CONSULTAS PARA O DASHBOARD E TELA DE AUDITORIA
+    // 2. CONSULTAS
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -92,59 +104,17 @@ public class AuditoriaService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Método novo para atender a chamada do Controller na linha 34.
-     * Busca paginada com filtros opcionais.
-     */
     @Transactional(readOnly = true)
     public Page<Auditoria> buscarFiltrado(String search, LocalDateTime inicio, LocalDateTime fim, Pageable pageable) {
-        // Se as datas forem nulas, define um intervalo padrão (ex: 1970 até futuro distante) ou trata na query
         LocalDateTime dataInicio = (inicio != null) ? inicio : LocalDateTime.of(1970, 1, 1, 0, 0);
         LocalDateTime dataFim = (fim != null) ? fim : LocalDateTime.now().plusDays(1);
         String termoBusca = (search != null) ? search.toLowerCase() : "";
 
-        // Chama o método do repositório (que deve usar @Query)
         return auditoriaRepository.buscarPorFiltros(termoBusca, dataInicio, dataFim, pageable);
     }
 
     // =========================================================================
-    // 3. RELATÓRIOS (PDF - iText 7)
-    // =========================================================================
-
-    @Transactional(readOnly = true)
-    public byte[] gerarRelatorioMensalPDF() {
-        // ... (código existente mantido) ...
-        List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc();
-        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            PdfWriter writer = new PdfWriter(out);
-            PdfDocument pdf = new PdfDocument(writer);
-            Document document = new Document(pdf);
-
-            document.add(new Paragraph("DD Cosméticos - Relatório de Segurança").setBold().setFontSize(16));
-            document.add(new Paragraph("Gerado em: " + LocalDateTime.now()));
-
-            Table table = new Table(new float[]{3, 3, 5});
-            table.addHeaderCell("Data/Hora");
-            table.addHeaderCell("Evento");
-            table.addHeaderCell("Detalhes");
-
-            logs.stream().limit(200).forEach(l -> {
-                table.addCell(l.getDataHora().toString());
-                table.addCell(l.getTipoEvento());
-                table.addCell(l.getMensagem());
-            });
-
-            document.add(table);
-            document.close();
-            return out.toByteArray();
-        } catch (Exception e) {
-            log.error("Erro ao gerar PDF de auditoria", e);
-            return new byte[0];
-        }
-    }
-
-    // =========================================================================
-    // 4. HIBERNATE ENVERS
+    // 3. HIBERNATE ENVERS (CORRIGIDO)
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -161,38 +131,62 @@ public class AuditoriaService {
 
         for (Object[] row : results) {
             Produto p = (Produto) row[0];
-            CustomRevisionEntity rev = (CustomRevisionEntity) row[1];
+
+            // Cast seguro para a entidade padrão de revisão do Envers
+            org.hibernate.envers.DefaultRevisionEntity rev = (org.hibernate.envers.DefaultRevisionEntity) row[1];
+
             RevisionType type = (RevisionType) row[2];
 
             historico.add(new HistoricoProdutoDTO(
-                    rev.getId(),
-                    new Date(rev.getTimestamp()),
-                    type.name(),
-                    p.getDescricao(),
-                    p.getPrecoVenda(),
-                    p.getPrecoCusto(),
-                    p.getQuantidadeEmEstoque()
+                    rev.getId(),                 // 1. Integer (ID da Revisão)
+                    rev.getRevisionDate(),       // 2. Date (java.util.Date direto, sem converter)
+                    type.name(),                 // 3. String (ADD, MOD, DEL)
+                    p.getDescricao(),            // 4. String (Descrição)
+                    p.getPrecoVenda(),           // 5. BigDecimal (Preço Venda)
+                    p.getPrecoCusto(),           // 6. BigDecimal (Preço Custo - FALTAVA ESTE)
+                    p.getQuantidadeEmEstoque()   // 7. Integer (Estoque)
             ));
         }
         return historico;
     }
 
     // =========================================================================
-    // 5. LIXEIRA E RESTAURAÇÃO
+    // 4. RELATÓRIOS (PDF)
     // =========================================================================
 
-    public List<Produto> buscarLixeira() {
-        return produtoRepository.findAllLixeira();
-    }
+    @Transactional(readOnly = true)
+    public byte[] gerarRelatorioMensalPDF() {
+        List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(out);
+            PdfDocument pdf = new PdfDocument(writer);
+            Document document = new Document(pdf);
 
-    @Transactional
-    public void restaurarProduto(Long id) {
-        produtoRepository.reativarProduto(id);
-        registrar("RESTAURACAO_PRODUTO", "Produto ID " + id + " restaurado da lixeira.");
+            document.add(new Paragraph("DD Cosméticos - Relatório de Segurança").setBold().setFontSize(16));
+            document.add(new Paragraph("Gerado em: " + LocalDateTime.now()));
+
+            Table table = new Table(new float[]{3, 3, 5});
+            table.addHeaderCell("Data/Hora");
+            table.addHeaderCell("Evento");
+            table.addHeaderCell("Detalhes");
+
+            logs.stream().limit(200).forEach(auditoria -> {
+                table.addCell(auditoria.getDataHora().toString());
+                table.addCell(auditoria.getTipoEvento() != null ? auditoria.getTipoEvento().name() : "N/A");
+                table.addCell(auditoria.getMensagem() != null ? auditoria.getMensagem() : "");
+            });
+
+            document.add(table);
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            log.error("Erro ao gerar PDF de auditoria", e);
+            return new byte[0];
+        }
     }
 
     // =========================================================================
-    // 6. AUXILIARES
+    // 5. AUXILIARES
     // =========================================================================
 
     private String capturarNomeUsuarioLogado() {
@@ -200,15 +194,13 @@ public class AuditoriaService {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth != null && auth.isAuthenticated() && !auth.getPrincipal().equals("anonymousUser")) {
                 if (auth.getPrincipal() instanceof String) {
-                    return usuarioRepository.findByMatriculaOrEmail((String) auth.getPrincipal(), (String) auth.getPrincipal())
-                            .map(Usuario::getNome)
-                            .orElse((String) auth.getPrincipal());
+                    return (String) auth.getPrincipal();
                 } else if (auth.getPrincipal() instanceof Usuario) {
                     return ((Usuario) auth.getPrincipal()).getNome();
                 }
             }
         } catch (Exception e) {
-            log.warn("Não foi possível identificar o usuário para auditoria.");
+            log.warn("Usuario anonimo ou erro na auth");
         }
         return "Sistema";
     }

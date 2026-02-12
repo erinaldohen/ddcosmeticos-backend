@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -8,9 +9,9 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-@Data // Gera Getters, Setters, ToString, Equals, HashCode
-@NoArgsConstructor // Gera construtor vazio (obrigatório pro JPA)
-@AllArgsConstructor // Gera construtor com todos os campos
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @Table(name = "auditoria")
 public class Auditoria implements Serializable {
@@ -23,8 +24,11 @@ public class Auditoria implements Serializable {
     @Column(name = "data_hora", nullable = false)
     private LocalDateTime dataHora = LocalDateTime.now();
 
-    @Column(name = "tipo_evento", nullable = false)
-    private String tipoEvento;
+    // --- CORREÇÃO AQUI ---
+    // @Enumerated(EnumType.STRING) garante que grave "LOGIN" e não o número 0.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tipo_evento", nullable = false, length = 50) // Adicionei length por segurança
+    private TipoEvento tipoEvento;
 
     @Column(columnDefinition = "TEXT")
     private String mensagem;

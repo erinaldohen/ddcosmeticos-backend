@@ -1,28 +1,34 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
-@Data
-@NoArgsConstructor
-public class VendaDiariaDTO {
-    private LocalDate data;
-    private BigDecimal total;
-    private Long quantidade;
+public record VendaDiariaDTO(
+        LocalDate data,
+        BigDecimal total,
+        Long quantidade
+) {
 
-    // Construtor exigido pelo Hibernate para a Query do Repository
+    // Construtor auxiliar exigido pelo Hibernate para a Query do Repository
+    // O Hibernate chamará este construtor ao fazer "new package...VendaDiariaDTO(...)"
     public VendaDiariaDTO(Object data, Number total, Long quantidade) {
-        if (data instanceof java.sql.Date) {
-            this.data = ((java.sql.Date) data).toLocalDate();
-        } else if (data instanceof java.time.LocalDate) {
-            this.data = (java.time.LocalDate) data;
-        } else if (data instanceof java.time.LocalDateTime) {
-            this.data = ((java.time.LocalDateTime) data).toLocalDate();
-        }
+        this(
+                converterData(data),
+                total != null ? new BigDecimal(total.toString()) : BigDecimal.ZERO,
+                quantidade != null ? quantidade : 0L
+        );
+    }
 
-        this.total = total != null ? new BigDecimal(total.toString()) : BigDecimal.ZERO;
-        this.quantidade = quantidade != null ? quantidade : 0L;
+    // Método auxiliar para tratar os diferentes tipos de data antes de chamar o 'this'
+    private static LocalDate converterData(Object data) {
+        if (data instanceof java.sql.Date date) {
+            return date.toLocalDate();
+        } else if (data instanceof LocalDate date) {
+            return date;
+        } else if (data instanceof LocalDateTime dateTime) {
+            return dateTime.toLocalDate();
+        }
+        return null; // Ou LocalDate.now() se preferir um default
     }
 }

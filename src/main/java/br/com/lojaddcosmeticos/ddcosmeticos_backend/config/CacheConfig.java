@@ -15,7 +15,9 @@ public class CacheConfig {
 
     @Bean
     public CacheManager cacheManager() {
-        CaffeineCacheManager cacheManager = new CaffeineCacheManager("produtos", "configuracoes");
+        // CORREÇÃO: Adicionado "dashboard" à lista de caches permitidos
+        CaffeineCacheManager cacheManager = new CaffeineCacheManager("produtos", "configuracoes", "dashboard");
+
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(10, TimeUnit.MINUTES) // Cache expira em 10 min
                 .maximumSize(5000)); // Máximo de 5 mil itens na memória

@@ -48,7 +48,6 @@ public class VendaService {
     // =========================================================================
 
     @Transactional
-    @CacheEvict(value = "dashboard", allEntries = true)
     public VendaResponseDTO realizarVenda(VendaRequestDTO dto) {
         // 1. Validações Iniciais
         Usuario usuarioLogado = capturarUsuarioLogado();
@@ -56,8 +55,7 @@ public class VendaService {
 
         CaixaDiario caixa = validarCaixaAberto(usuarioLogado);
 
-        // 2. Validação de Pagamentos (Regra de Negócio)
-        // Se for suspensão, o controller usa outro método. Aqui é finalização, então precisa de pagamento.
+        // 2. Validação de Pagamentos
         if (dto.pagamentos() == null || dto.pagamentos().isEmpty()) {
             throw new ValidationException("É necessário informar ao menos uma forma de pagamento.");
         }
@@ -123,7 +121,7 @@ public class VendaService {
             throw new ValidationException("O valor pago (R$ " + totalPago + ") é menor que o total da venda (R$ " + valorFinal + ").");
         }
 
-        // 8. Processamento dos Pagamentos (USANDO A CLASSE CORRETA: PagamentoVenda)
+        // 8. Processamento dos Pagamentos
         List<PagamentoVenda> pagamentos = dto.pagamentos().stream().map(pgDto -> {
             PagamentoVenda pg = new PagamentoVenda();
             pg.setVenda(venda);
@@ -135,14 +133,12 @@ public class VendaService {
 
         venda.setPagamentos(pagamentos);
 
-        // Define forma principal para compatibilidade legado
         if (!pagamentos.isEmpty()) {
             venda.setFormaDePagamento(pagamentos.get(0).getFormaPagamento());
         }
 
         venda.setStatusNfce(StatusFiscal.PENDENTE);
 
-        // Validação de Descontos e Impostos
         BigDecimal totalDescontosConcedidos = venda.getDescontoTotal()
                 .add(itens.stream().map(ItemVenda::getDesconto).reduce(BigDecimal.ZERO, BigDecimal::add));
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
@@ -157,8 +153,10 @@ public class VendaService {
         // 11. Emissão NFC-e
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
             try {
-                nfceService.emitirNfce(venda, false);
+                nfceService.emitirNfce(venda);
             } catch (Exception e) {
+                // Loga o erro, mas NÃO relança a exceção.
+                // Como a transação da NFC-e é REQUIRES_NEW, o rollback dela não afeta a venda.
                 log.error("Erro ao emitir NFC-e: {}", e.getMessage());
             }
         }
@@ -173,13 +171,11 @@ public class VendaService {
     @Transactional
     public Venda suspenderVenda(VendaRequestDTO dto) {
         Usuario usuario = capturarUsuarioLogado();
-
-        // 1. Vincular ao Caixa (Correção de consistência)
         CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(usuario, StatusCaixa.ABERTO).orElse(null);
 
         Venda venda = new Venda();
         venda.setUsuario(usuario);
-        venda.setCaixa(caixa); // <--- IMPORTANTE: Vincula ao caixa aberto
+        venda.setCaixa(caixa);
         venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Venda Suspensa");
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusNfce(StatusFiscal.EM_ESPERA);
@@ -210,17 +206,12 @@ public class VendaService {
             throw new ValidationException("Esta venda já está cancelada.");
         }
 
-        // --- CORREÇÃO DO ERRO 500 ---
-        // Se a venda estiver SUSPENSA, usamos atualização direta via Query
-        // Isso evita validações pesadas do Hibernate/Envers no objeto inteiro
         if (venda.getStatusNfce() == StatusFiscal.EM_ESPERA) {
             String motivoFinal = motivo != null ? motivo : "Retomada no PDV";
             vendaRepository.atualizarStatusVenda(idVenda, StatusFiscal.CANCELADA, motivoFinal);
-            return; // <--- FIM (Não executa estorno de estoque/financeiro)
+            return;
         }
-        // ----------------------------
 
-        // Fluxo normal para vendas EFETIVADAS (Baixa de estoque e financeiro)
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -237,8 +228,6 @@ public class VendaService {
 
         auditoriaService.registrar("CANCELAMENTO_VENDA", "Venda #" + idVenda + " cancelada. Motivo: " + motivo);
     }
-
-    // ... (Métodos efetivarVenda e cancelarVenda mantidos iguais, apenas ajustando se usarem Pagamento) ...
 
     @Transactional
     public Venda efetivarVenda(Long idVendaPrevia) {
@@ -263,7 +252,7 @@ public class VendaService {
                 venda.getIdVenda(),
                 venda.getValorTotal(),
                 venda.getFormaDePagamento().name(),
-                venda.getQuantidadeParcelas(),
+                venda.getQuantidadeParcelas(), // Método deve existir na Venda
                 buscarIdClientePorDocumento(venda.getClienteDocumento())
         );
 
@@ -271,7 +260,8 @@ public class VendaService {
         caixaRepository.save(caixa);
 
         try {
-            nfceService.emitirNfce(venda, false);
+            // CORREÇÃO: Removido parâmetro 'false'
+            nfceService.emitirNfce(venda);
         } catch (Exception e) {
             log.error("Erro NFCe venda {}: {}", venda.getIdVenda(), e.getMessage());
         }
@@ -279,7 +269,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 3. CONSULTAS (LISTAGEM) - Onde estava o erro
+    // 3. CONSULTAS
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -296,17 +286,23 @@ public class VendaService {
         return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable).map(this::converterParaDTO);
     }
 
+    @Transactional(readOnly = true)
+    public Venda buscarVendaComItens(Long id) {
+        Venda venda = vendaRepository.findByIdComItens(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+        Hibernate.initialize(venda.getPagamentos()); // Carrega pagamentos lazy
+        return venda;
+    }
+
     // =========================================================================
-    // 4. ATUALIZAÇÃO FINANCEIRA (CORRIGIDO PARA USAR PagamentoVenda)
+    // 4. ATUALIZAÇÃO FINANCEIRA
     // =========================================================================
 
     private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoVenda> pagamentos) {
         if (pagamentos == null || pagamentos.isEmpty()) {
-            // Fallback para legado se não tiver lista
             atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
             return;
         }
-
         for (PagamentoVenda pag : pagamentos) {
             atualizarSaldoCaixaUnico(caixa, pag.getValor(), pag.getFormaPagamento());
         }
@@ -332,7 +328,6 @@ public class VendaService {
                 ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
                 : new ArrayList<>();
 
-        // CORREÇÃO: Usando PagamentoVenda no stream
         List<PagamentoResponseDTO> pagamentosDto = new ArrayList<>();
         if (venda.getPagamentos() != null) {
             pagamentosDto = venda.getPagamentos().stream()
@@ -362,8 +357,6 @@ public class VendaService {
         );
     }
 
-    // ... (Mantenha os outros métodos auxiliares como processarSaidaEstoqueComAuditoria, validarLimites, etc.) ...
-
     private void processarSaidaEstoqueComAuditoria(Produto produto, int qtdVenda) {
         if (produto.getQuantidadeEmEstoque() < qtdVenda) {
             String msg = String.format("Venda sem estoque: %s. Qtd: %d, Anterior: %d",
@@ -379,7 +372,7 @@ public class VendaService {
             Produto p = produtoRepository.findById(dto.produtoId()).orElseThrow();
             ItemVenda i = new ItemVenda();
             i.setVenda(venda); i.setProduto(p); i.setQuantidade(dto.quantidade()); i.setPrecoUnitario(dto.precoUnitario());
-            i.setDesconto(dto.desconto() != null ? dto.desconto() : BigDecimal.ZERO); // Mapeia desconto na suspensão
+            i.setDesconto(dto.desconto() != null ? dto.desconto() : BigDecimal.ZERO);
 
             if (venda.getItens() == null) venda.setItens(new ArrayList<>());
             venda.getItens().add(i);
@@ -388,7 +381,6 @@ public class VendaService {
         return total;
     }
 
-    // ... (métodos de busca regra, calcular total, nvl, auth, caixa, cliente mantidos do original) ...
     private RegraTributaria buscarRegraVigente() {
         return regraTributariaRepository.findRegraVigente(LocalDate.now())
                 .orElse(new RegraTributaria(LocalDate.now().getYear(), LocalDate.now(), LocalDate.now(), "0.00", "0.00", "1.0"));
@@ -454,18 +446,5 @@ public class VendaService {
                 .orElseThrow(() -> new ResourceNotFoundException("Cliente não cadastrado."));
         BigDecimal divida = nvl(contaReceberRepository.somarDividaTotalPorDocumento(cliente.getDocumento()));
         if (divida.add(valor).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de crédito excedido!");
-    }
-    @Transactional(readOnly = true)
-    public Venda buscarVendaComItens(Long id) {
-        // 1. Busca Venda + Itens (Query Otimizada)
-        Venda venda = vendaRepository.findByIdComItens(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
-
-        // 2. Força o carregamento dos Pagamentos (Inicializa a 2ª lista)
-        // Como estamos dentro de uma transação (@Transactional), isso fará um SELECT separado automaticamente
-        // sem gerar o erro de MultipleBagFetch.
-        Hibernate.initialize(venda.getPagamentos());
-
-        return venda;
     }
 }

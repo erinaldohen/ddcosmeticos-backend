@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -47,6 +48,26 @@ public class ConfiguracaoLoja {
         if (financeiro == null) financeiro = new DadosFinanceiro();
         if (vendas == null) vendas = new DadosVendas();
         if (sistema == null) sistema = new DadosSistema();
+    }
+
+    // ==================================================================================
+    // MÉTODOS UTILITÁRIOS PARA O SERVICE DE NFE
+    // ==================================================================================
+
+    public String getCnpjLimpo() {
+        if (loja != null && loja.getCnpj() != null) {
+            return loja.getCnpj().replaceAll("\\D", "");
+        }
+        return "00000000000000";
+    }
+
+    public String getCscIdAtivo() {
+        if (fiscal == null) return "";
+        return isProducao() ? fiscal.getCscIdProducao() : fiscal.getCscIdHomologacao();
+    }
+
+    public boolean isProducao() {
+        return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
     }
 
     // ==================================================================================
@@ -121,13 +142,19 @@ public class ConfiguracaoLoja {
         private Integer nfeProducao;
 
         // --- Certificado Digital ---
-        private String caminhoCertificado;
-        @Convert(converter = br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter.class)
+        private String caminhoCertificado; // Mantido para compatibilidade, mas o foco agora é o arquivo abaixo
+
+        // CAMPO NOVO (Adicionado apenas AQUI)
+        @Lob
+        @Column(columnDefinition = "LONGBLOB") // Para MySQL. O H2 aceita também.
+        private byte[] arquivoCertificado;
+
+        @Convert(converter = CryptoConverter.class)
         private String senhaCert;
 
         // --- Compliance & Regras ---
         private String csrtId;
-        @Convert(converter = br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter.class)
+        @Convert(converter = CryptoConverter.class)
         private String csrtHash;
         private String ibptToken;
         private String naturezaPadrao;

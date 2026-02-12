@@ -19,46 +19,41 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/vendas")
-// @CrossOrigin(origins = "*") // Descomente se tiver problemas de CORS
 public class VendaController {
 
     @Autowired
     private VendaService vendaService;
 
-    // 1. Realizar Venda (Finalizar)
-    // O Service retorna DTO, repassa DTO.
+    // 1. Realizar Venda (Finalizar) - OK (Retorna DTO)
     @PostMapping
     public ResponseEntity<VendaResponseDTO> realizarVenda(@RequestBody @Valid VendaRequestDTO dto) {
         VendaResponseDTO vendaRealizada = vendaService.realizarVenda(dto);
         return ResponseEntity.ok(vendaRealizada);
     }
 
-    // 2. Suspender Venda (Pausar - F2)
-    // O Service retorna a Entidade Venda. O front só precisa do ID para confirmação.
+    // 2. Suspender Venda (Pausar - F2) - OK (Retorna ID)
     @PostMapping("/suspender")
     public ResponseEntity<Long> suspenderVenda(@RequestBody @Valid VendaRequestDTO dto) {
         Venda vendaSuspensa = vendaService.suspenderVenda(dto);
         return ResponseEntity.ok(vendaSuspensa.getIdVenda());
     }
 
-    // 3. Listar Vendas Suspensas (Fila de Espera)
-    // O Service retorna List<VendaResponseDTO>.
+    // 3. Listar Vendas Suspensas - OK (Retorna Lista DTO)
     @GetMapping("/suspensas")
     public ResponseEntity<List<VendaResponseDTO>> listarVendasSuspensas() {
         return ResponseEntity.ok(vendaService.listarVendasSuspensas());
     }
 
-    // 4. Efetivar Venda Suspensa (Retomada)
-    // Transforma uma venda "EM_ESPERA" em "FINALIZADA" (ou Pendente NFCe)
+    // 4. Efetivar Venda Suspensa - ALERTA (Retorna Entidade)
+    // Se o frontend esperar campos específicos que só existem no DTO (ex: listas formatadas), pode quebrar.
+    // Mas se o front lida bem com o objeto Venda puro, ok.
     @PostMapping("/{id}/efetivar")
     public ResponseEntity<Venda> efetivarVenda(@PathVariable Long id) {
-        // Nota: O service retorna Entidade aqui. Idealmente seria DTO,
-        // mas mantemos a compatibilidade com o Service atual.
         Venda venda = vendaService.efetivarVenda(id);
         return ResponseEntity.ok(venda);
     }
 
-    // 5. Histórico de Vendas (Tela de Consultas)
+    // 5. Histórico de Vendas - OK (Retorna Page DTO)
     @GetMapping
     public ResponseEntity<Page<VendaResponseDTO>> listarVendas(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
@@ -68,7 +63,7 @@ public class VendaController {
         return ResponseEntity.ok(vendaService.listarVendas(inicio, fim, pageable));
     }
 
-    // 6. Cancelar Venda
+    // 6. Cancelar Venda - OK
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> cancelarVenda(@PathVariable Long id, @RequestBody Map<String, String> payload) {
         String motivo = payload.get("motivo");
@@ -76,7 +71,8 @@ public class VendaController {
         return ResponseEntity.noContent().build();
     }
 
-    // 7. Buscar Venda por ID (Detalhes / Reimpressão)
+    // 7. Buscar Venda por ID - OK (Retorna Entidade Carregada)
+    // O Service garante que Itens e Pagamentos estão carregados (Hibernate.initialize)
     @GetMapping("/{id}")
     public ResponseEntity<Venda> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(vendaService.buscarVendaComItens(id));

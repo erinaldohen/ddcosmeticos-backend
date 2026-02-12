@@ -2,10 +2,6 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.NfeService;
-import br.com.swconsultoria.nfe.Nfe;
-import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
-import br.com.swconsultoria.nfe.dom.enuns.DocumentoEnum; // <--- Import Novo
-import br.com.swconsultoria.nfe.schema_4.consStatServ.TRetConsStatServ;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,22 +16,15 @@ public class NfeController {
     @Autowired
     private NfeService nfeService;
 
-    @Autowired
-    private ConfiguracoesNfe configuracoesNfe;
+    // REMOVIDO: private ConfiguracoesNfe configuracoesNfe; (Causa do erro de inicialização)
 
     @GetMapping("/status")
-    @Operation(summary = "Verificar Status SEFAZ", description = "Testa a comunicação com a SEFAZ. Retorna 107 se estiver tudo ok.")
+    @Operation(summary = "Verificar Status SEFAZ", description = "Testa a comunicação com a SEFAZ.")
     public ResponseEntity<String> verificarStatusSefaz() {
         try {
-            // CORREÇÃO: Adicionado o parâmetro DocumentoEnum.NFE (Modelo 55)
-            TRetConsStatServ retorno = Nfe.statusServico(configuracoesNfe, DocumentoEnum.NFE);
-
-            return ResponseEntity.ok(
-                    "Ambiente: " + configuracoesNfe.getAmbiente() +
-                            " | Status: " + retorno.getCStat() +
-                            " - " + retorno.getXMotivo()
-            );
-
+            // A lógica deve ficar no Service, que tem acesso ao Certificado no Banco
+            String status = nfeService.consultarStatusSefaz();
+            return ResponseEntity.ok(status);
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro ao consultar SEFAZ: " + e.getMessage());

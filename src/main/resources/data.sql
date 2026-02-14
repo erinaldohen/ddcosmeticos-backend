@@ -1,26 +1,47 @@
--- Arquivo: src/main/resources/data.sql
+-- --- CARGA TABELA IBPT (Cosméticos e Perfumaria) ---
+-- Valores aproximados vigentes (Exemplo 2024/2025)
 
--- Usamos MERGE INTO para que o H2 atualize se existir ou insira se não existir (evita duplicidade)
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('11111111000111', true, 'financas@teste.com', 'Fornecedor Financeiro', 'Razao Financeira LTDA', '1166666666', 'JURIDICA');
+-- 33030010: Perfumes
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33030010', 'Perfumes', 13.45, 23.15, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
 
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('22222222000122', true, 'cartao@teste.com', 'Fornecedor Cartao', 'Razao Cartão LTDA', '1155555555', 'JURIDICA');
+-- 33030020: Águas de Colônia
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33030020', 'Aguas de colonia', 13.45, 23.15, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
 
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('99999999000199', true, 'preco@teste.com', 'Fornecedor Preço', 'Razao Preço LTDA', '1188888888', 'JURIDICA');
+-- 33041000: Batons / Maquiagem Lábios
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33041000', 'Maquiagem labios', 14.15, 25.40, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
 
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('12345678900', true, 'fisica@teste.com', 'Fornecedor PF', 'Nome Sobrenome', '1177777777', 'FISICA');
+-- 33042010: Sombra, Delineador
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33042010', 'Sombra/Delineador', 14.15, 25.40, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
 
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('12345678000199', true, 'juridica@teste.com', 'Fornecedor PJ', 'Razao PJ LTDA', '1177777777', 'JURIDICA');
+-- 33043000: Esmaltes
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33043000', 'Esmaltes', 14.15, 25.40, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
 
-MERGE INTO fornecedor (cnpj_cpf, ativo, email, nome_fantasia, razao_social, telefone, tipo_pessoa)
-    KEY(cnpj_cpf)
-    VALUES ('00000000000100', true, 'estoque@teste.com', 'Fornecedor Estoque', 'Razao Estoque', '1144444444', 'JURIDICA');
+-- 33049910: Cremes, Loções
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33049910', 'Cremes/Locoes', 14.15, 25.40, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
+
+-- 33051000: Xampus
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33051000', 'Xampus', 12.00, 20.50, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
+
+-- 33059000: Condicionador/Máscara
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33059000', 'Condicionador', 12.00, 20.50, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;
+
+-- 33072010: Desodorantes
+INSERT INTO tb_ibpt (codigo, descricao, nacional, importado, estadual, municipal, versao)
+VALUES ('33072010', 'Desodorantes', 13.00, 21.00, 18.00, 0.00, '24.1.A')
+ON CONFLICT (codigo) DO NOTHING;

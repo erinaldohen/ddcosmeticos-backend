@@ -146,7 +146,6 @@ public class ConfiguracaoLoja {
 
         // CAMPO NOVO (Adicionado apenas AQUI)
         @Lob
-        @Column(columnDefinition = "LONGBLOB") // Para MySQL. O H2 aceita também.
         private byte[] arquivoCertificado;
 
         @Convert(converter = CryptoConverter.class)

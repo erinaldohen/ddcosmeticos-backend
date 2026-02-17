@@ -26,7 +26,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // =========================================================================
 
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
-    List<Venda> findByStatusNfce(StatusFiscal statusNfce);
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 
     @Query("SELECT DISTINCT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto WHERE v.idVenda = :id")
@@ -135,6 +134,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         ORDER BY CAST(v.dataVenda AS LocalDate) ASC
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-
+    // Busca vendas por status (usado pelo robô de contingência)
+    List<Venda> findByStatusNfce(StatusFiscal statusNfce);
 
 }

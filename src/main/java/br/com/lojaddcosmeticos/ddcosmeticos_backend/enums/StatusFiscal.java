@@ -1,10 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
 public enum StatusFiscal {
-    ORCAMENTO,
     PENDENTE,
-    EM_ESPERA,
+    EM_PROCESSAMENTO,
     AUTORIZADA,
+    REJEITADA,
     CANCELADA,
-    ERRO_EMISSAO
+    CONTINGENCIA, // <--- NOVO: Nota emitida offline, aguardando envio
+    ERRO_CONTINGENCIA,
+    ORCAMENTO,
+    EM_ESPERA,
+    ERRO_EMISSAO,
 }

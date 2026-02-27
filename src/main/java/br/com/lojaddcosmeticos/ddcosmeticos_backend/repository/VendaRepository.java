@@ -34,7 +34,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT v FROM Venda v LEFT JOIN FETCH v.itens i LEFT JOIN FETCH i.produto LEFT JOIN FETCH v.pagamentos WHERE v.idVenda = :id")
     Optional<Venda> findByIdCompleto(@Param("id") Long id);
 
-    @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    // CORREÇÃO: Comparação de Enum usando a estrutura correta.
+    @Query("SELECT v FROM Venda v WHERE v.usuario.id = :usuarioId AND v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     List<Venda> buscarVendasDoUsuarioNoPeriodo(@Param("usuarioId") Long usuarioId, @Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     @Modifying
@@ -45,25 +46,34 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // 2. DASHBOARD / KPI
     // =========================================================================
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     BigDecimal somarFaturamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     BigDecimal somarFaturamentoTotal(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')")
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     Long contarVendas(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA') ORDER BY v.dataVenda ASC")
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA) ORDER BY v.dataVenda ASC")
     List<Venda> buscarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     List<Venda> findTop5ByOrderByDataVendaDesc();
 
-    @Query("SELECT v FROM Venda v WHERE (v.statusNfce IS NULL OR v.statusNfce != :statusIgnorado) ORDER BY v.dataVenda DESC LIMIT 5")
-    List<Venda> findTop5Recentes(@Param("statusIgnorado") StatusFiscal statusIgnorado);
+    // CORREÇÃO: Removido o LIMIT 5 (que é SQL Nativo) da query JPQL.
+    // Usamos o padrão findTop5... do Spring Data ou nativeQuery=true se quisermos manter a sintaxe.
+    // Alterei para usar a convenção de nomenclatura do Spring Data, que é mais segura.
+    List<Venda> findTop5ByStatusNfceIsNullOrderByDataVendaDesc();
+    List<Venda> findTop5ByStatusNfceNotOrderByDataVendaDesc(StatusFiscal statusIgnorado);
+
+    // Substitui a query que falhava por causa do LIMIT
+    default List<Venda> findTop5Recentes(StatusFiscal statusIgnorado) {
+        if(statusIgnorado == null) return findTop5ByOrderByDataVendaDesc();
+        return findTop5ByStatusNfceNotOrderByDataVendaDesc(statusIgnorado);
+    }
 
     // =========================================================================
     // 3. RELATÓRIOS (COM CASTS EXPLÍCITOS PARA EVITAR ERRO DE CONSTRUTOR)
@@ -79,7 +89,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         FROM Venda v 
         JOIN v.pagamentos p
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
+        AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
         GROUP BY p.formaPagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
@@ -96,7 +106,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         JOIN i.produto p 
         JOIN i.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
+        AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
         GROUP BY p.descricao
         ORDER BY CAST(SUM(i.precoUnitario * i.quantidade) AS BigDecimal) DESC
     """)
@@ -114,7 +124,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         JOIN i.produto p 
         JOIN i.venda v
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
+        AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
         GROUP BY p.marca 
         ORDER BY CAST(SUM(i.precoUnitario * i.quantidade) AS BigDecimal) DESC
     """)
@@ -129,12 +139,15 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
         )
         FROM Venda v 
         WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce != 'CANCELADA')
+        AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
         GROUP BY CAST(v.dataVenda AS LocalDate)
         ORDER BY CAST(v.dataVenda AS LocalDate) ASC
     """)
     List<VendaDiariaDTO> agruparVendasPorDia(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
     // Busca vendas por status (usado pelo robô de contingência)
     List<Venda> findByStatusNfce(StatusFiscal statusNfce);
 
+    // Busca vendas por múltiplos status (usado pelo scheduler)
+    List<Venda> findByStatusNfceIn(List<StatusFiscal> statusNfce);
 }

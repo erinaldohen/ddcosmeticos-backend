@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ItemCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.PedidoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusPedido;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
@@ -32,7 +33,7 @@ public class PedidoCompraService {
         pedido.setFornecedorNome(dto.getFornecedorNome());
         pedido.setUfOrigem(dto.getUfOrigem());
         pedido.setUfDestino(dto.getUfDestino());
-        pedido.setStatus(PedidoCompra.StatusPedido.EM_COTACAO);
+        pedido.setStatus(StatusPedido.EM_COTACAO);
 
         BigDecimal totalProdutos = BigDecimal.ZERO;
         BigDecimal totalImpostos = BigDecimal.ZERO;
@@ -81,11 +82,11 @@ public class PedidoCompraService {
         PedidoCompra pedido = pedidoRepository.findById(idPedido)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido não encontrado"));
 
-        if (pedido.getStatus() == PedidoCompra.StatusPedido.CANCELADO) {
+        if (pedido.getStatus() == StatusPedido.CANCELADO) {
             throw new IllegalStateException("Não é possível receber um pedido cancelado.");
         }
 
-        if (pedido.getStatus() == PedidoCompra.StatusPedido.CONCLUIDO) {
+        if (pedido.getStatus() == StatusPedido.CONCLUIDO) {
             throw new IllegalStateException("Este pedido já foi recebido anteriormente.");
         }
 
@@ -116,7 +117,7 @@ public class PedidoCompraService {
                 "NF: " + numeroNotaFiscal // Observação
         );
 
-        pedido.setStatus(PedidoCompra.StatusPedido.CONCLUIDO);
+        pedido.setStatus(StatusPedido.CONCLUIDO);
         pedidoRepository.save(pedido);
     }
 }

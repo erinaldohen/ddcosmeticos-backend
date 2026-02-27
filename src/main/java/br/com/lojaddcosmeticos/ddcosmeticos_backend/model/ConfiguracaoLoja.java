@@ -3,21 +3,29 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
 
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
 @Table(name = "tb_configuracao")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de Ouro do JPA
+@ToString(onlyExplicitlyIncluded = true)
 public class ConfiguracaoLoja {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @ToString.Include
     private Long id;
 
     @Embedded
@@ -75,23 +83,50 @@ public class ConfiguracaoLoja {
     // ==================================================================================
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DadosLoja {
+        @Column(length = 150)
         private String razaoSocial;
+
+        @Column(length = 150)
         private String nomeFantasia;
+
+        @Column(length = 18)
         private String cnpj;
+
+        @Column(length = 50)
         private String ie;
+
+        @Column(length = 50)
         private String im;
+
+        @Column(length = 20)
         private String cnae;
+
+        @Column(length = 150)
         private String email;
+
+        @Column(length = 20)
         private String telefone;
+
+        @Column(length = 20)
         private String whatsapp;
+
+        @Column(length = 150)
         private String site;
+
+        @Column(length = 100)
         private String instagram;
+
+        @Column(length = 255)
         private String slogan;
+
+        @Column(length = 20)
         private String corDestaque;
+
         private Boolean isMatriz;
 
         @Column(columnDefinition = "TIME")
@@ -102,64 +137,110 @@ public class ConfiguracaoLoja {
 
         private Integer toleranciaMinutos;
         private Boolean bloqueioForaHorario;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal taxaEntregaPadrao;
+
         private Integer tempoEntregaMin;
+
+        @Column(columnDefinition = "TEXT")
         private String logoUrl;
     }
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class EnderecoLoja {
+        @Column(length = 10)
         private String cep;
+
+        @Column(length = 255)
         private String logradouro;
+
+        @Column(length = 20)
         private String numero;
+
+        @Column(length = 100)
         private String complemento;
+
+        @Column(length = 100)
         private String bairro;
+
+        @Column(length = 100)
         private String cidade;
+
+        @Column(length = 2)
         private String uf;
     }
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DadosFiscal {
+        @Column(length = 20)
         private String ambiente; // "HOMOLOGACAO" ou "PRODUCAO"
+
+        @Column(length = 20)
         private String regime;   // 1=Simples, 3=Normal
 
         // --- Configurações NFC-e (Homologação) ---
+        @Column(length = 100)
         private String tokenHomologacao;
+
+        @Column(length = 50)
         private String cscIdHomologacao;
+
         private Integer serieHomologacao;
         private Integer nfeHomologacao;
 
         // --- Configurações NFC-e (Produção) ---
+        @Column(length = 100)
         private String tokenProducao;
+
+        @Column(length = 50)
         private String cscIdProducao;
+
         private Integer serieProducao;
         private Integer nfeProducao;
 
         // --- Certificado Digital ---
-        private String caminhoCertificado; // Mantido para compatibilidade, mas o foco agora é o arquivo abaixo
+        @Column(length = 255)
+        private String caminhoCertificado;
 
-        // CAMPO NOVO (Adicionado apenas AQUI)
-        @Lob
+        // DBA FIX: Removido @Lob. O PostgreSQL mapeará byte[] nativamente para bytea (Binary Array)
+        // Isso melhora a performance e evita erros de OID no Postgres.
         private byte[] arquivoCertificado;
 
         @Convert(converter = CryptoConverter.class)
+        @Column(length = 500) // Maior porque é criptografado
         private String senhaCert;
 
         // --- Compliance & Regras ---
+        @Column(length = 50)
         private String csrtId;
+
         @Convert(converter = CryptoConverter.class)
+        @Column(length = 500) // Maior porque é criptografado
         private String csrtHash;
+
+        @Column(length = 255)
         private String ibptToken;
+
+        @Column(length = 100)
         private String naturezaPadrao;
+
+        @Column(length = 150)
         private String emailContabil;
+
         private Boolean enviarXmlAutomatico;
+
+        @Column(precision = 10, scale = 4) // Escala de 4 para alíquotas é mais segura
         private BigDecimal aliquotaInterna;
+
         private Boolean modoContingencia;
         private Boolean priorizarMonofasico;
 
@@ -168,29 +249,49 @@ public class ConfiguracaoLoja {
     }
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DadosFinanceiro {
+        // DBA: Todas as moedas e percentuais blindados com precisão
+        @Column(precision = 15, scale = 2)
         private BigDecimal comissaoProdutos;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal comissaoServicos;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal alertaSangria;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal fundoTrocoPadrao;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal metaDiaria;
 
         // Taxas
         @Column(precision = 10, scale = 2)
         private BigDecimal taxaDebito;
+
+        @Column(precision = 10, scale = 2)
         private BigDecimal taxaCredito;
 
         // Descontos
+        @Column(precision = 15, scale = 2)
         private BigDecimal descCaixa;
+
+        @Column(precision = 15, scale = 2)
         private BigDecimal descGerente;
+
         private Boolean descExtraPix;
         private Boolean bloquearAbaixoCusto;
 
         // Pix
+        @Column(length = 50)
         private String pixTipo;
+
+        @Column(length = 255)
         private String pixChave;
 
         // Formas Aceitas
@@ -201,37 +302,54 @@ public class ConfiguracaoLoja {
         private Boolean aceitaCrediario;
 
         // Crediário
+        @Column(precision = 10, scale = 2)
         private BigDecimal jurosMensal;
+
+        @Column(precision = 10, scale = 2)
         private BigDecimal multaAtraso;
+
         private Integer diasCarencia;
 
         private Boolean fechamentoCego;
     }
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DadosVendas {
+        @Column(length = 50)
         private String comportamentoCpf;
+
         private Boolean bloquearEstoque;
+
+        @Column(length = 50)
         private String layoutCupom;
+
         private Boolean imprimirVendedor;
         private Boolean imprimirTicketTroca;
         private Boolean autoEnterScanner;
         private Boolean fidelidadeAtiva;
+
+        @Column(precision = 10, scale = 2)
         private BigDecimal pontosPorReal;
+
         private Boolean usarBalanca;
         private Boolean agruparItens;
     }
 
     @Embeddable
-    @Data
+    @Getter
+    @Setter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DadosSistema {
         private Boolean impressaoAuto;
+
+        @Column(length = 20)
         private String larguraPapel;
+
         private Boolean backupAuto;
 
         @Column(columnDefinition = "TIME")
@@ -239,10 +357,16 @@ public class ConfiguracaoLoja {
 
         @Column(length = 500)
         private String rodape;
+
+        @Column(length = 50)
         private String tema;
+
         private Boolean backupNuvem;
         private Boolean senhaGerenteCancelamento;
+
+        @Column(length = 100)
         private String nomeTerminal;
+
         private Boolean imprimirLogoCupom;
     }
 }

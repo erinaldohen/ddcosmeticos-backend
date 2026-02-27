@@ -22,8 +22,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findByNcm(String ncm);
 
     // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE) ---
+    // CORREÇÃO APLICADA: CAST(:termo AS text) impede que o Postgres interprete o parâmetro como bytea.
     @Query("SELECT p FROM Produto p WHERE p.ativo = true " +
-            "AND (:termo IS NULL OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%')) " +
+            "AND (:termo IS NULL OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%')) " +
             "AND (:marca IS NULL OR p.marca = :marca) " +
             "AND (:categoria IS NULL OR p.categoria = :categoria) " +
             "AND (:statusEstoque IS NULL " +
@@ -44,19 +45,21 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     // --- MÉTODOS LEGADOS ---
 
-    // CORREÇÃO CRÍTICA: @Query explícita para evitar erro de criação de bean
-    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) OR p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
+    // CORREÇÃO APLICADA: CAST(:termo AS text)
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%'))")
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(@Param("termo") String termo, Pageable pageable);
 
-    // Sobrecarga (usada em testes ou métodos síncronos antigos)
+    // Sobrecarga (Spring Data resolve esta automaticamente pela assinatura do método)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
     // --- OUTROS MÉTODOS DE NEGÓCIO ---
+
+    // CORREÇÃO APLICADA: CAST(:termo AS text)
     @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (" +
-            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
-            "(LOWER(p.marca) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
-            "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', :termo, '%'))) OR " +
-            "(p.codigoBarras LIKE CONCAT('%', :termo, '%')))")
+            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
+            "(LOWER(p.marca) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
+            "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
+            "(p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%')))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
@@ -86,13 +89,15 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     """)
     List<Produto> findSugestaoCompraPorFornecedor(@Param("fornecedorId") Long fornecedorId);
 
-    @Query(value = "SELECT p.ncm FROM Produto p WHERE p.descricao LIKE %:palavraChave% AND p.ncm <> '00000000' GROUP BY p.ncm ORDER BY COUNT(p.id) DESC LIMIT 1", nativeQuery = true)
+    // --- QUERIES NATIVAS AJUSTADAS PARA POSTGRESQL ---
+
+    @Query(value = "SELECT ncm FROM produto WHERE descricao ILIKE CONCAT('%', :palavraChave, '%') AND ncm <> '00000000' GROUP BY ncm ORDER BY COUNT(id) DESC LIMIT 1", nativeQuery = true)
     String findNcmMaisUsadoPorPalavra(@Param("palavraChave") String palavraChave);
 
     @Query(value = """
         SELECT ncm 
         FROM produto 
-        WHERE UPPER(descricao) LIKE UPPER(CONCAT('%', :palavra, '%')) 
+        WHERE descricao ILIKE CONCAT('%', :palavra, '%') 
           AND ncm IS NOT NULL 
           AND ncm != '' 
           AND ncm != '00000000'
@@ -102,25 +107,21 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     """, nativeQuery = true)
     String findNcmInteligente(@Param("palavra") String palavra);
 
-    // [ADICIONE ESTE MÉTODO SE NÃO TIVER]
     Page<Produto> findByFornecedorId(Long fornecedorId, Pageable pageable);
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
-    // Em vez de SQL Nativo, use JPQL (que usa o nome da Classe, não da Tabela)
     @Query("SELECT p FROM Produto p WHERE p.codigoBarras = :ean")
     Optional<Produto> findByEanIrrestrito(@Param("ean") String ean);
 
-    @Query(value = "SELECT MAX(CAST(codigo_barras AS BIGINT)) FROM produtos WHERE codigo_barras ~ '^[0-9]+$'", nativeQuery = true)
+    @Query(value = "SELECT MAX(CAST(codigo_barras AS BIGINT)) FROM produto WHERE codigo_barras ~ '^[0-9]+$'", nativeQuery = true)
     Long findMaxCodigoBarras();
 
     @Query("SELECT MAX(p.id) FROM Produto p")
     Long findMaxId();
 
-    // Adicione esta linha:
     List<Produto> findAllByAtivoTrue();
 
-    // Se você tiver queries de lixeira, mantenha-as aqui...
     @Query("SELECT p FROM Produto p WHERE p.ativo = false")
     List<Produto> findAllLixeira();
 
@@ -128,11 +129,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
     void reativarProduto(Long id);
 
-    // Contagem Rápida de Vencidos
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.validade < CURRENT_DATE AND p.ativo = true")
     long countVencidos();
 
-    // Contagem Baixo Estoque (Assumindo estoqueMinimo configurado)
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= p.estoqueMinimo AND p.ativo = true")
     long countBaixoEstoque();
 }

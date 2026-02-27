@@ -2,59 +2,100 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate; // Importante para a validade
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-@Data
 @Entity
+@Getter
+@Setter
+@NoArgsConstructor
 @Audited
 @Table(name = "produto")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de ouro do JPA
+@ToString(onlyExplicitlyIncluded = true) // Proteção contra logs pesados
 public class Produto {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @ToString.Include
     private Long id;
 
     // --- DADOS BÁSICOS ---
+    // Mantido TEXT para descrições longas
+    @Column(columnDefinition = "TEXT")
     private String descricao;
 
-    @Column(name = "codigo_barras", unique = true)
+    // Usando apenas length, o dialeto PostgreSQL cuidará de mapear para VARCHAR
+    @Column(name = "codigo_barras", unique = true, length = 50)
+    @ToString.Include
     private String codigoBarras; // EAN / GTIN
 
-    @Column(unique = true)
+    @Column(unique = true, length = 50)
+    @ToString.Include
     private String sku; // NOVO: Código interno da loja (Stock Keeping Unit)
 
+    @Column(length = 100)
     private String marca;
+
+    @Column(length = 100)
     private String categoria;
+
+    @Column(length = 100)
     private String subcategoria;
+
+    @Column(length = 10)
     private String unidade; // UN, KG, LT
+
+    @Column(columnDefinition = "TEXT") // Imagens em Base64 ou URLs longas
     private String urlImagem;
 
     // --- CONTROLE DE VALIDADE & LOTE (NOVO) ---
+    @Column(length = 100)
     private String lote; // Rastreabilidade
+
     private LocalDate validade; // Essencial para o relatório de vencidos
 
     // --- DADOS FISCAIS ---
+    @Column(length = 20)
     private String ncm;
+
+    @Column(length = 20)
     private String cest;
+
+    @Column(length = 10)
     private String cfop;
+
+    @Column(length = 10)
     private String cst;
+
+    @Column(length = 50)
     private String origem;
 
     private Boolean isMonofasico;
     private Boolean isImpostoSeletivo;
 
     @Enumerated(EnumType.STRING)
+    @Column(length = 50)
     private TipoTributacaoReforma classificacaoReforma;
 
     // --- DADOS FINANCEIROS ---
+    @Column(precision = 15, scale = 4) // Ajustado para precisão financeira no Postgres
     private BigDecimal precoVenda;
+
+    @Column(precision = 15, scale = 4)
     private BigDecimal precoCusto;
+
+    @Column(precision = 15, scale = 4)
     private BigDecimal precoMedioPonderado;
 
     // --- ESTOQUE ---
@@ -69,7 +110,8 @@ public class Produto {
     @Column(precision = 10, scale = 4)
     private BigDecimal vendaMediaDiaria;
 
-    @ManyToOne
+    // DBA: Alterado para LAZY para evitar N+1 queries.
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
 

@@ -35,19 +35,19 @@ public class SecurityConfig {
     private SecurityFilter securityFilter;
 
     @Autowired
-    private UserDetailsService userDetailsService; // Necessário para configurar o Provider
+    private UserDetailsService userDetailsService;
 
     // --- CONFIGURAÇÃO DO PROVIDER DE AUTENTICAÇÃO ---
-    // Essencial para permitir a distinção entre Erro 401 (Senha) e 404 (Usuário)
     @Bean
     public AuthenticationProvider authenticationProvider() {
         DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
         authProvider.setUserDetailsService(userDetailsService);
         authProvider.setPasswordEncoder(passwordEncoder());
 
-        // FALSE = Lança UsernameNotFoundException (gerando erro 404 no Handler)
-        // TRUE (Padrão) = Lança BadCredentialsException (gerando erro 401)
-        authProvider.setHideUserNotFoundExceptions(false);
+        // CORREÇÃO DE SEGURANÇA APLICADA:
+        // TRUE = Impede Enumeração de Utilizadores. Um atacante não consegue descobrir
+        // se o e-mail existe no sistema porque lançará sempre um erro genérico de credenciais.
+        authProvider.setHideUserNotFoundExceptions(true);
 
         return authProvider;
     }
@@ -84,26 +84,27 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/caixa/**", "/api/v1/caixas/**").authenticated()
 
                         // 3. RESTRITO A ADMIN (Escrita e Gestão)
-                        .requestMatchers("/api/v1/configuracoes/**").hasRole("ADMIN")
+                        // CORREÇÃO APLICADA: Substituído hasRole por hasAuthority para evitar o prefixo duplo "ROLE_ROLE_ADMIN"
+                        .requestMatchers("/api/v1/configuracoes/**").hasAuthority("ROLE_ADMIN")
 
                         // Produtos (Escrita)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PATCH, "/api/v1/produtos/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
 
-                        // Áreas Sensíveis
-                        .requestMatchers("/api/v1/dashboard/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/fiscal/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/auditoria/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/fornecedores/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/usuarios/**").hasRole("ADMIN")
+                        // Áreas Sensíveis (Dashboard resolvido)
+                        .requestMatchers("/api/v1/dashboard/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/v1/fiscal/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/v1/auditoria/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/v1/fornecedores/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/v1/usuarios/**").hasAuthority("ROLE_ADMIN")
 
                         // 4. RESTO (Bloqueio padrão)
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
-                .authenticationProvider(authenticationProvider()) // Registra o provider customizado
+                .authenticationProvider(authenticationProvider())
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -123,7 +124,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        configuration.setAllowedOriginPatterns(List.of("*"));
+        // CORREÇÃO DE SEGURANÇA APLICADA:
+        // Como 'allowCredentials' está ativo (necessário para cookies/sessões seguras),
+        // o Spring Security não permite origens curinga (*). O porto exato do React foi configurado.
+        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"));
         configuration.setExposedHeaders(List.of("Authorization"));

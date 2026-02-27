@@ -23,6 +23,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -150,17 +151,19 @@ public class VendaService {
         // 10. Atualiza Financeiro (Caixa)
         atualizarFinanceiro(caixa, venda, pagamentos);
 
-        // 11. Emissão NFC-e
+        // 11. Emissão NFC-e Assíncrona
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
-            try {
-                nfceService.emitirNfce(venda);
-            } catch (Exception e) {
-                // Loga o erro, mas NÃO relança a exceção.
-                // Como a transação da NFC-e é REQUIRES_NEW, o rollback dela não afeta a venda.
-                log.error("Erro ao emitir NFC-e: {}", e.getMessage());
-            }
+            // Despacha a emissão para uma thread secundária (Fire and Forget)
+            CompletableFuture.runAsync(() -> {
+                try {
+                    nfceService.emitirNfce(venda);
+                } catch (Exception e) {
+                    // O erro é registado, mas o cliente já foi despachado no PDV.
+                    // O NfceScheduler vai tentar reprocessar esta nota no próximo minuto.
+                    log.error("Erro na emissão assíncrona de NFC-e para venda {}: {}", venda.getIdVenda(), e.getMessage());
+                }
+            });
         }
-
         return converterParaDTO(venda);
     }
 
@@ -190,9 +193,15 @@ public class VendaService {
             venda.setFormaDePagamento(FormaDePagamento.DINHEIRO);
         }
 
+        // CORREÇÃO CRÍTICA (Furo de Caixa): Cálculo de Desconto na Suspensão
         BigDecimal totalItens = processarItensParaOrcamento(venda, dto.itens());
-        venda.setValorTotal(totalItens);
-        venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
+        BigDecimal descontoAplicado = dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO;
+
+        venda.setDescontoTotal(descontoAplicado);
+
+        // Agora o Valor Total da venda subtrai o desconto e impede valores negativos
+        venda.setValorTotal(totalItens.subtract(descontoAplicado).max(BigDecimal.ZERO));
+
         venda.setObservacao(dto.observacao());
 
         return vendaRepository.save(venda);
@@ -259,12 +268,15 @@ public class VendaService {
         atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
         caixaRepository.save(caixa);
 
-        try {
-            // CORREÇÃO: Removido parâmetro 'false'
-            nfceService.emitirNfce(venda);
-        } catch (Exception e) {
-            log.error("Erro NFCe venda {}: {}", venda.getIdVenda(), e.getMessage());
-        }
+        // Emissão Assíncrona na Efetivação
+        CompletableFuture.runAsync(() -> {
+            try {
+                nfceService.emitirNfce(venda);
+            } catch (Exception e) {
+                log.error("Erro NFCe assíncrona na venda retomada {}: {}", venda.getIdVenda(), e.getMessage());
+            }
+        });
+
         return vendaRepository.save(venda);
     }
 

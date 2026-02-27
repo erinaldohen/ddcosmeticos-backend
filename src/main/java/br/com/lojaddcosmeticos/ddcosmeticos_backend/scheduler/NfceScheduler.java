@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -19,16 +20,26 @@ public class NfceScheduler {
     private final VendaRepository vendaRepository;
     private final NfceService nfceService;
 
-    // Roda a cada 5 minutos (300000 ms) para não sobrecarregar
-    @Scheduled(fixedDelay = 300000)
-    public void verificarNotasPendentes() {
-        List<Venda> notasEmContingencia = vendaRepository.findByStatusNfce(StatusFiscal.CONTINGENCIA);
+    // Roda a cada 1 minuto (60000 ms) para atuar como Fila de Recuperação (DLQ)
+    @Scheduled(fixedDelay = 60000)
+    public void processarNotasPendentesEContingencia() {
+        List<Venda> notasParaProcessar = vendaRepository.findByStatusNfceIn(
+                Arrays.asList(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
+        );
 
-        if (!notasEmContingencia.isEmpty()) {
-            log.info("🔄 SCHEDULER: Encontradas {} notas em contingência. Tentando transmitir...", notasEmContingencia.size());
+        if (!notasParaProcessar.isEmpty()) {
+            log.info("🔄 SCHEDULER: Encontradas {} notas pendentes/contingência. A iniciar transmissão de recuperação...", notasParaProcessar.size());
 
-            for (Venda venda : notasEmContingencia) {
-                nfceService.transmitirNotaContingencia(venda);
+            for (Venda venda : notasParaProcessar) {
+                try {
+                    if (venda.getStatusNfce() == StatusFiscal.CONTINGENCIA) {
+                        nfceService.transmitirNotaContingencia(venda);
+                    } else {
+                        nfceService.emitirNfce(venda); // Tenta emitir a pendente que ficou presa
+                    }
+                } catch (Exception e) {
+                    log.error("❌ Erro no Scheduler ao processar nota da venda {}: {}", venda.getIdVenda(), e.getMessage());
+                }
             }
         }
     }

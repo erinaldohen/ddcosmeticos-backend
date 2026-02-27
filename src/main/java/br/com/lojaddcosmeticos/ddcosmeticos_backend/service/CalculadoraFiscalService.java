@@ -23,6 +23,16 @@ public class CalculadoraFiscalService {
     @Autowired
     private RegraTributariaRepository regraRepository;
 
+    // --- CONSTANTES FINANCEIRAS OTIMIZADAS PARA PERFORMANCE ---
+    private static final BigDecimal CEM = new BigDecimal("100");
+    private static final BigDecimal ALIQ_IBS_PADRAO = new BigDecimal("17.5");
+    private static final BigDecimal ALIQ_CBS_PADRAO = new BigDecimal("9.0");
+    private static final BigDecimal ALIQ_TOTAL_PADRAO = new BigDecimal("0.265");
+    private static final BigDecimal FATOR_REDUCAO_60 = new BigDecimal("0.4");
+    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // Média 20.5%
+    private static final Set<String> ESTADOS_7_PORCENTO = Set.of("SP", "MG", "RJ", "RS", "SC", "PR");
+    private static final Pattern DIACRITICS_PATTERN = Pattern.compile("\\p{InCombiningDiacriticalMarks}+");
+
     // ==================================================================================
     // MÓDULO 1: INTELIGÊNCIA DE CADASTRO (DESCRIÇÃO -> NCM/CEST)
     // ==================================================================================
@@ -65,23 +75,12 @@ public class CalculadoraFiscalService {
         ValidacaoFiscalDTO.Response dados = processarInteligencia(p.getDescricao(), p.getNcm());
         boolean alterou = false;
 
-        // Atualiza NCM se a IA achou algo melhor
         if (!Objects.equals(p.getNcm(), dados.ncm())) { p.setNcm(dados.ncm()); alterou = true; }
-        // Atualiza CEST
         if (!Objects.equals(p.getCest(), dados.cest())) { p.setCest(dados.cest()); alterou = true; }
-        // Atualiza CST (04 Monofásico / 00 Tributado)
-        if (!Objects.equals(p.getCst(), dados.cst())) { p.setCest(dados.cst()); alterou = true; }
-        // Atualiza flag Monofásico
+        if (!Objects.equals(p.getCst(), dados.cst())) { p.setCst(dados.cst()); alterou = true; } // Correção de setCest para setCst
         if (p.isMonofasico() != dados.monofasico()) { p.setIsMonofasico(dados.monofasico()); alterou = true; }
 
-        // --- CORREÇÃO IMPORTANTE: Atualiza a Reforma Tributária baseado no retorno da Regra ---
-        // Antes estava apenas setando PADRAO se fosse nulo. Agora recalcula sempre que mudar o NCM.
         RegraFiscalResultado regrasCalculadas = calcularRegras(p.getNcm());
-
-        // LOG DE DEBUG
-        if (p.getNcm().startsWith("3401")) {
-            System.out.println("Produto: " + p.getDescricao() + " | NCM: " + p.getNcm() + " | Nova Classificação: " + regrasCalculadas.classificacaoReforma());
-        }
 
         if (p.getClassificacaoReforma() != regrasCalculadas.classificacaoReforma()) {
             p.setClassificacaoReforma(regrasCalculadas.classificacaoReforma());
@@ -130,41 +129,24 @@ public class CalculadoraFiscalService {
 
     private RegraFiscalResultado calcularRegras(String ncm) {
         if (ncm == null) ncm = "";
-        String ncmLimpo = ncm.replace(".", "").trim();
+        String ncmLimpo = ncm.replaceAll("\\D", ""); // Mais seguro que replace(".", "")
 
-        // 1. Lógica do Monofásico (PIS/COFINS Atual)
-        // Cosméticos (Cap 33), Sabões (3401)
         boolean isMonofasico = ncmLimpo.startsWith("3303") || ncmLimpo.startsWith("3304") ||
                 ncmLimpo.startsWith("3305") || ncmLimpo.startsWith("3307") ||
-                ncmLimpo.startsWith("3401"); // Sabonetes
+                ncmLimpo.startsWith("3401");
 
-        String cst = isMonofasico ? "04" : "00"; // 04 = Monofásico, 00 = Tributado
+        String cst = isMonofasico ? "04" : "00";
 
-        // 2. Lógica da Reforma Tributária (IBS/CBS - LC 214)
         TipoTributacaoReforma classificacao = TipoTributacaoReforma.PADRAO;
         boolean impostoSeletivo = false;
 
-        // --- LISTA DE ALÍQUOTA REDUZIDA (60%) ---
-        // Itens de Higiene Pessoal, Limpeza e Cuidados Básicos de Saúde
-        if (
-            // Cap 30: Medicamentos e Farmacêuticos
-                ncmLimpo.startsWith("3003") || ncmLimpo.startsWith("3004") ||
-                        // Cap 33: Óleos, Perfumaria e Cosméticos
-                        ncmLimpo.startsWith("3303") || // Perfumes
-                        ncmLimpo.startsWith("3304") || // Beleza/Maquiagem/Cremes
-                        ncmLimpo.startsWith("3305") || // Capilares (Shampoo/Condicionador)
-                        ncmLimpo.startsWith("3306") || // Bucal (Pasta/Fio)
-                        ncmLimpo.startsWith("3307") || // Barbear/Desodorantes
-                        // Cap 34: Sabonetes e Agentes Orgânicos
-                        ncmLimpo.startsWith("3401") || // Sabonetes (EM BARRA OU LIQUIDO)
-                        // Cap 96: Diversos
-                        ncmLimpo.startsWith("9603") || // Escovas de dentes
-                        ncmLimpo.startsWith("9619")    // Absorventes e Fraldas
-        ) {
+        if (ncmLimpo.startsWith("3003") || ncmLimpo.startsWith("3004") ||
+                ncmLimpo.startsWith("3303") || ncmLimpo.startsWith("3304") ||
+                ncmLimpo.startsWith("3305") || ncmLimpo.startsWith("3306") ||
+                ncmLimpo.startsWith("3307") || ncmLimpo.startsWith("3401") ||
+                ncmLimpo.startsWith("9603") || ncmLimpo.startsWith("9619")) {
             classificacao = TipoTributacaoReforma.REDUZIDA_60;
-        }
-        // Exceção: Cesta Básica Nacional (Se houver produtos alimentícios ou muito básicos)
-        else if (ncmLimpo.startsWith("0401") || ncmLimpo.startsWith("1006")) {
+        } else if (ncmLimpo.startsWith("0401") || ncmLimpo.startsWith("1006")) {
             classificacao = TipoTributacaoReforma.CESTA_BASICA;
         }
 
@@ -182,24 +164,24 @@ public class CalculadoraFiscalService {
             BigDecimal qtd = (item.getQuantidade() != null) ? new BigDecimal(item.getQuantidade().toString()) : BigDecimal.ZERO;
             BigDecimal subtotal = item.getPrecoUnitario().multiply(qtd);
 
-            // Alíquotas Padrão Estimadas (26.5% Total)
-            BigDecimal aliqIbs = new BigDecimal("17.5"); // Estado/Município
-            BigDecimal aliqCbs = new BigDecimal("9.0");  // União
+            BigDecimal aliqIbs = ALIQ_IBS_PADRAO;
+            BigDecimal aliqCbs = ALIQ_CBS_PADRAO;
             BigDecimal aliqIs = BigDecimal.ZERO;
 
-            // Aplica Redutor de 60% se for Higiene/Saúde
-            if (p.getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
-                // Paga apenas 40% da alíquota cheia
-                aliqIbs = aliqIbs.multiply(new BigDecimal("0.4"));
-                aliqCbs = aliqCbs.multiply(new BigDecimal("0.4"));
-            } else if (p.getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA) {
+            TipoTributacaoReforma classificacao = p.getClassificacaoReforma() != null ? p.getClassificacaoReforma() : TipoTributacaoReforma.PADRAO;
+
+            if (classificacao == TipoTributacaoReforma.REDUZIDA_60) {
+                aliqIbs = aliqIbs.multiply(FATOR_REDUCAO_60);
+                aliqCbs = aliqCbs.multiply(FATOR_REDUCAO_60);
+            } else if (classificacao == TipoTributacaoReforma.CESTA_BASICA) {
                 aliqIbs = BigDecimal.ZERO;
                 aliqCbs = BigDecimal.ZERO;
             }
 
-            somaIbs = somaIbs.add(subtotal.multiply(aliqIbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
-            somaCbs = somaCbs.add(subtotal.multiply(aliqCbs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
-            somaIs = somaIs.add(subtotal.multiply(aliqIs).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN));
+            // Otimizado: Dividir por CEM com arredondamento seguro
+            somaIbs = somaIbs.add(subtotal.multiply(aliqIbs).divide(CEM, 2, RoundingMode.HALF_EVEN));
+            somaCbs = somaCbs.add(subtotal.multiply(aliqCbs).divide(CEM, 2, RoundingMode.HALF_EVEN));
+            somaIs = somaIs.add(subtotal.multiply(aliqIs).divide(CEM, 2, RoundingMode.HALF_EVEN));
             totalVenda = totalVenda.add(subtotal);
         }
 
@@ -224,9 +206,9 @@ public class CalculadoraFiscalService {
         BigDecimal valorIBS = valorVenda.multiply(aliqIbs);
         BigDecimal valorCBS = valorVenda.multiply(aliqCbs);
 
-        simulacao.put("IBS_VALOR", valorIBS.setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("CBS_VALOR", valorCBS.setScale(2, RoundingMode.HALF_UP));
-        simulacao.put("TOTAL_NOVO", valorIBS.add(valorCBS).setScale(2, RoundingMode.HALF_UP));
+        simulacao.put("IBS_VALOR", valorIBS.setScale(2, RoundingMode.HALF_EVEN));
+        simulacao.put("CBS_VALOR", valorCBS.setScale(2, RoundingMode.HALF_EVEN));
+        simulacao.put("TOTAL_NOVO", valorIBS.add(valorCBS).setScale(2, RoundingMode.HALF_EVEN));
 
         return simulacao;
     }
@@ -243,10 +225,12 @@ public class CalculadoraFiscalService {
             BigDecimal subtotal = item.getPrecoUnitario().multiply(new BigDecimal(item.getQuantidade().toString()));
             totalVenda = totalVenda.add(subtotal);
 
-            BigDecimal aliqTotal = new BigDecimal("0.265");
-            if (item.getProduto().getClassificacaoReforma() == TipoTributacaoReforma.REDUZIDA_60) {
-                aliqTotal = aliqTotal.multiply(new BigDecimal("0.4"));
-            } else if (item.getProduto().getClassificacaoReforma() == TipoTributacaoReforma.CESTA_BASICA) {
+            BigDecimal aliqTotal = ALIQ_TOTAL_PADRAO;
+            TipoTributacaoReforma classificacao = item.getProduto().getClassificacaoReforma() != null ? item.getProduto().getClassificacaoReforma() : TipoTributacaoReforma.PADRAO;
+
+            if (classificacao == TipoTributacaoReforma.REDUZIDA_60) {
+                aliqTotal = aliqTotal.multiply(FATOR_REDUCAO_60);
+            } else if (classificacao == TipoTributacaoReforma.CESTA_BASICA) {
                 aliqTotal = BigDecimal.ZERO;
             }
             totalImposto = totalImposto.add(subtotal.multiply(aliqTotal));
@@ -254,7 +238,7 @@ public class CalculadoraFiscalService {
 
         BigDecimal liquido = totalVenda.subtract(totalImposto);
         BigDecimal aliqEfetiva = (totalVenda.compareTo(BigDecimal.ZERO) > 0)
-                ? totalImposto.divide(totalVenda, 4, RoundingMode.HALF_UP)
+                ? totalImposto.divide(totalVenda, 4, RoundingMode.HALF_EVEN)
                 : BigDecimal.ZERO;
 
         return new SplitPaymentDTO(totalVenda, liquido, totalImposto, aliqEfetiva, "Simulação Split Payment 2026");
@@ -264,9 +248,6 @@ public class CalculadoraFiscalService {
     // MÓDULO 4: CÁLCULOS DE COMPRA (ICMS-ST / MVA)
     // ==================================================================================
 
-    private static final BigDecimal ALIQ_INTERNA_DESTINO = new BigDecimal("0.205"); // Média 20.5%
-    private static final Set<String> ESTADOS_7_PORCENTO = Set.of("SP", "MG", "RJ", "RS", "SC", "PR");
-
     public BigDecimal calcularImposto(BigDecimal valorProduto, BigDecimal mvaPercentual, String ufOrigem, String ufDestino) {
         if (ufOrigem == null || ufDestino == null || ufOrigem.equalsIgnoreCase(ufDestino)) {
             return BigDecimal.ZERO;
@@ -274,9 +255,8 @@ public class CalculadoraFiscalService {
 
         BigDecimal aliqInterestadual = obterAliquotaInterestadual(ufOrigem, ufDestino);
 
-        // Cálculo do ICMS ST
         BigDecimal mvaDecimal = (mvaPercentual != null ? mvaPercentual : BigDecimal.ZERO)
-                .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
+                .divide(CEM, 4, RoundingMode.HALF_EVEN);
 
         BigDecimal baseCalculoSt = valorProduto.multiply(BigDecimal.ONE.add(mvaDecimal));
         BigDecimal debitoDestino = baseCalculoSt.multiply(ALIQ_INTERNA_DESTINO);
@@ -306,7 +286,7 @@ public class CalculadoraFiscalService {
     private String limparString(String s) {
         if (s == null) return "";
         String nfd = Normalizer.normalize(s, Normalizer.Form.NFD);
-        return Pattern.compile("\\p{InCombiningDiacriticalMarks}+").matcher(nfd).replaceAll("").toUpperCase().trim();
+        return DIACRITICS_PATTERN.matcher(nfd).replaceAll("").toUpperCase().trim();
     }
 
     public void aplicarRegras(ProdutoExternoDTO dto) {

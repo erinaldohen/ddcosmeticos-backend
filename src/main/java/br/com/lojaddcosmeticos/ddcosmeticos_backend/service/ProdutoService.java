@@ -132,8 +132,8 @@ public class ProdutoService {
         Map<String, Integer> mapa = new HashMap<>();
         for (int i = 0; i < headers.length; i++) {
             String h = normalizarTexto(headers[i]);
+
             if (h.contains("EAN") || h.contains("BARRAS") || h.contains("GTIN") || h.equals("CODIGO")) mapa.put("ean", i);
-            else if ((h.contains("DESC") || h.contains("NOME")) && !h.contains("CATEGORIA")) mapa.put("desc", i);
             else if (h.contains("CUSTO") || h.contains("COMPRA")) mapa.put("custo", i);
             else if (h.contains("VENDA") || h.contains("PRECO")) mapa.put("venda", i);
             else if (h.contains("MIN") || h.contains("ALERTA")) mapa.put("min", i);
@@ -149,6 +149,14 @@ public class ProdutoService {
             else if (h.contains("MARCA")) mapa.put("marca", i);
             else if (h.contains("UNIDADE")) mapa.put("unidade", i);
             else if (h.contains("ATIVO")) mapa.put("ativo", i);
+
+                // CORREÇÃO DA DESCRIÇÃO: O !mapa.containsKey("desc") "tranca" a coluna na primeira vez que a encontra,
+                // impedindo que colunas irrelevantes no fim do CSV roubem a posição da descrição.
+            else if (!mapa.containsKey("desc") &&
+                    (h.contains("DESC") || h.contains("NOME") || h.equals("PRODUTO") || h.equals("NOMEDOPRODUTO") || h.contains("ARTIGO") || h.contains("ITEM"))
+                    && !h.contains("CATEGORIA") && !h.contains("SUBCATEGORIA")) {
+                mapa.put("desc", i);
+            }
         }
         return mapa;
     }
@@ -176,15 +184,24 @@ public class ProdutoService {
             }
         }
 
+        // CORREÇÃO DA DESCRIÇÃO: Remove espaços em branco enganosos que causavam o falso vazio
         if (mapa.containsKey("desc")) {
-            String desc = getVal(dados, mapa.get("desc")).toUpperCase();
-            if (!desc.isEmpty()) p.setDescricao(truncar(desc, 250));
+            String desc = getVal(dados, mapa.get("desc"));
+            if (desc != null && !desc.trim().isEmpty()) {
+                p.setDescricao(truncar(desc.trim().toUpperCase(), 250));
+            }
+        }
+
+        // Plano B: Só acionado se realmente a coluna da descrição não existir no CSV ou estiver totalmente vazia
+        if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) {
+            p.setDescricao("PRODUTO " + ean);
         }
         if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) p.setDescricao("PRODUTO " + ean);
 
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
 
+        // LÓGICA DE ESTOQUE ORIGINAL QUE FUNCIONAVA PERFEITAMENTE RESTAURADA AQUI
         int qtdArquivo = 0;
         if (mapa.containsKey("qtd")) {
             qtdArquivo = lerDecimal(getVal(dados, mapa.get("qtd"))).intValue();
@@ -310,7 +327,17 @@ public class ProdutoService {
     }
 
     private ProdutoListagemDTO toDTO(Produto p) {
-        return new ProdutoListagemDTO(p.getId(), p.getDescricao(), p.getPrecoVenda(), p.getUrlImagem(), p.getQuantidadeEmEstoque(), p.isAtivo(), p.getCodigoBarras(), p.getMarca(), p.getNcm());
+        return new ProdutoListagemDTO(
+                p.getId(),
+                p.getDescricao(),
+                p.getPrecoVenda(),
+                p.getUrlImagem(),
+                p.getQuantidadeEmEstoque(),
+                p.isAtivo(),
+                p.getCodigoBarras(),
+                p.getMarca(),
+                p.getNcm()
+        );
     }
 
     @Transactional(readOnly = true)
@@ -354,9 +381,9 @@ public class ProdutoService {
     private void atualizarDados(Produto p, ProdutoDTO d) {
         p.setDescricao(d.descricao());
         p.setCodigoBarras(d.codigoBarras());
-        p.setSku(d.sku());           // NOVO: Atualiza SKU
-        p.setLote(d.lote());         // NOVO: Atualiza Lote
-        p.setValidade(d.validade()); // NOVO: Atualiza Validade
+        p.setSku(d.sku());
+        p.setLote(d.lote());
+        p.setValidade(d.validade());
         p.setMarca(d.marca());
         p.setCategoria(d.categoria());
         p.setSubcategoria(d.subcategoria());
@@ -521,31 +548,33 @@ public class ProdutoService {
             Optional<ProdutoExternoDTO> dadosExternos = cosmosService.consultarEan(ean);
             if (dadosExternos.isPresent()) {
                 ProdutoExternoDTO ext = dadosExternos.get();
-                // ATENÇÃO: Campos novos (SKU, Lote, Validade) iniciados como null para Record
                 return new ProdutoDTO(
-                        null,
-                        ext.getNome(),
-                        ext.getEan(),
-                        null, // SKU
-                        ext.getMarca(),
-                        ext.getCategoria(),
-                        null, // Subcategoria
-                        "UN",
-                        null, // Lote
-                        null, // Validade
-                        ext.getNcm(),
-                        ext.getCest(),
-                        "102",
-                        "0",
-                        ext.getMonofasico(),
-                        TipoTributacaoReforma.PADRAO,
-                        false,
-                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0),
-                        BigDecimal.ZERO,
-                        5,
-                        0,
-                        ext.getUrlImagem(),
-                        true
+                        null, // id
+                        ext.getNome(), // descricao
+                        ext.getEan(), // codigoBarras
+                        null, // sku
+                        ext.getMarca(), // marca
+                        ext.getCategoria(), // categoria
+                        null, // subcategoria
+                        "UN", // unidade
+                        null, // lote
+                        null, // validade
+                        ext.getNcm(), // ncm
+                        ext.getCest(), // cest
+                        "102", // cst
+                        "0", // origem
+                        ext.getMonofasico(), // monofasico
+                        TipoTributacaoReforma.PADRAO, // classificacaoReforma
+                        false, // impostoSeletivo
+                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0), // precoVenda
+                        BigDecimal.ZERO, // precoCusto
+                        0, // quantidadeEmEstoque
+                        0, // NOVO: estoqueFiscal
+                        0, // NOVO: estoqueNaoFiscal
+                        5, // estoqueMinimo
+                        0, // diasParaReposicao
+                        ext.getUrlImagem(), // urlImagem
+                        true // ativo
                 );
             }
         } catch (Exception e) {
@@ -559,8 +588,6 @@ public class ProdutoService {
         if (maxId == null) maxId = 0L;
         return String.format("2%012d", maxId + 1);
     }
-
-    // --- MÉTODOS PARA O INVENTÁRIO ---
 
     public List<Produto> listarTodosAtivos() {
         return produtoRepository.findAllByAtivoTrue();

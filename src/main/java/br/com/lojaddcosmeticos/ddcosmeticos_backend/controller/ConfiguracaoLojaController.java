@@ -7,12 +7,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/configuracoes")
@@ -46,20 +48,30 @@ public class ConfiguracaoLojaController {
         return ResponseEntity.ok(logoUrl);
     }
 
-    // 4. Upload Certificado
+    // 4. Upload Certificado (CORRIGIDO PARA RETORNAR A VALIDADE)
     @PostMapping("/certificado")
-    public ResponseEntity<Void> uploadCertificado(@RequestParam("file") MultipartFile file, @RequestParam("senha") String senha) {
-        if (file.isEmpty()) return ResponseEntity.badRequest().build();
-        service.salvarCertificado(file, senha);
-        return ResponseEntity.ok().build();
+    public ResponseEntity<?> uploadCertificado(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("senha") String senha) {
+
+        if (file.isEmpty() || senha == null || senha.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Arquivo ou senha ausentes."));
+        }
+
+        try {
+            // Repassa para o service e captura as datas de validade
+            Map<String, Object> resposta = service.salvarCertificado(file, senha);
+            return ResponseEntity.ok(resposta);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("message", "Erro ao validar certificado PFX: " + e.getMessage()));
+        }
     }
 
     // 5. Manutenção: Otimizar Banco
     @PostMapping("/manutencao/otimizar")
     public ResponseEntity<Void> otimizarBanco() {
-        // Em H2, a otimização real (Compact) requer restart ou shutdown.
-        // Vamos apenas simular o sucesso para feedback visual no front,
-        // ou você pode chamar System.gc() se quiser liberar memória da JVM.
         System.gc();
         return ResponseEntity.ok().build();
     }
@@ -68,10 +80,7 @@ public class ConfiguracaoLojaController {
     @GetMapping("/manutencao/backup")
     public ResponseEntity<Resource> baixarBackup() {
         try {
-            // 1. Gera o arquivo físico
             Path arquivoPath = backupService.gerarBackupImediato();
-
-            // 2. Transforma em Recurso para Download
             Resource resource = new UrlResource(arquivoPath.toUri());
 
             if (resource.exists()) {

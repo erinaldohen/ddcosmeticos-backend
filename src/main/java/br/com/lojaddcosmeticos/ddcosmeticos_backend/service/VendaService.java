@@ -8,7 +8,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
@@ -79,7 +78,7 @@ public class VendaService {
             venda.setClienteDocumento(dto.clienteDocumento());
         }
 
-        venda.setDescontoTotal(dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO);
+        venda.setDescontoTotal(nvl(dto.descontoTotal()));
         RegraTributaria regra = buscarRegraVigente();
 
         // 5. Processamento dos Itens
@@ -93,8 +92,8 @@ public class VendaService {
             item.setVenda(venda);
             item.setProduto(produto);
             item.setQuantidade(itemDto.quantidade());
-            item.setPrecoUnitario(itemDto.precoUnitario());
-            item.setDesconto(itemDto.desconto() != null ? itemDto.desconto() : BigDecimal.ZERO);
+            item.setPrecoUnitario(nvl(itemDto.precoUnitario())); // Null Safety
+            item.setDesconto(nvl(itemDto.desconto())); // Null Safety
 
             item.setCustoUnitarioHistorico(nvl(produto.getPrecoMedioPonderado()));
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
@@ -105,17 +104,23 @@ public class VendaService {
 
         venda.setItens(itens);
 
-        // 6. Cálculos de Totais
+        // 6. Cálculos de Totais com Null Safety (Correção do Erro 500)
         BigDecimal subtotalItens = itens.stream()
-                .map(i -> (i.getPrecoUnitario().multiply(i.getQuantidade())).subtract(i.getDesconto()))
+                .map(i -> {
+                    BigDecimal preco = nvl(i.getPrecoUnitario());
+                    BigDecimal qtd = new BigDecimal(String.valueOf(i.getQuantidade()));
+                    BigDecimal desconto = nvl(i.getDesconto());
+
+                    return preco.multiply(qtd).subtract(desconto);
+                })
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal valorFinal = subtotalItens.subtract(venda.getDescontoTotal()).max(BigDecimal.ZERO);
+        BigDecimal valorFinal = subtotalItens.subtract(nvl(venda.getDescontoTotal())).max(BigDecimal.ZERO);
         venda.setValorTotal(valorFinal);
 
         // 7. Validação Financeira
         BigDecimal totalPago = dto.pagamentos().stream()
-                .map(PagamentoRequestDTO::valor)
+                .map(p -> nvl(p.valor()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (totalPago.compareTo(valorFinal) < 0 && totalPago.subtract(valorFinal).abs().compareTo(new BigDecimal("0.05")) > 0) {
@@ -127,7 +132,7 @@ public class VendaService {
             PagamentoVenda pg = new PagamentoVenda();
             pg.setVenda(venda);
             pg.setFormaPagamento(pgDto.formaPagamento());
-            pg.setValor(pgDto.valor());
+            pg.setValor(nvl(pgDto.valor()));
             pg.setParcelas(pgDto.parcelas() != null ? pgDto.parcelas() : 1);
             return pg;
         }).collect(Collectors.toList());
@@ -141,7 +146,8 @@ public class VendaService {
         venda.setStatusNfce(StatusFiscal.PENDENTE);
 
         BigDecimal totalDescontosConcedidos = venda.getDescontoTotal()
-                .add(itens.stream().map(ItemVenda::getDesconto).reduce(BigDecimal.ZERO, BigDecimal::add));
+                .add(itens.stream().map(i -> nvl(i.getDesconto())).reduce(BigDecimal.ZERO, BigDecimal::add));
+
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
         aplicarDadosFiscais(venda, itens);
 
@@ -153,13 +159,10 @@ public class VendaService {
 
         // 11. Emissão NFC-e Assíncrona
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
-            // Despacha a emissão para uma thread secundária (Fire and Forget)
             CompletableFuture.runAsync(() -> {
                 try {
                     nfceService.emitirNfce(venda);
                 } catch (Exception e) {
-                    // O erro é registado, mas o cliente já foi despachado no PDV.
-                    // O NfceScheduler vai tentar reprocessar esta nota no próximo minuto.
                     log.error("Erro na emissão assíncrona de NFC-e para venda {}: {}", venda.getIdVenda(), e.getMessage());
                 }
             });
@@ -193,15 +196,11 @@ public class VendaService {
             venda.setFormaDePagamento(FormaDePagamento.DINHEIRO);
         }
 
-        // CORREÇÃO CRÍTICA (Furo de Caixa): Cálculo de Desconto na Suspensão
         BigDecimal totalItens = processarItensParaOrcamento(venda, dto.itens());
-        BigDecimal descontoAplicado = dto.descontoTotal() != null ? dto.descontoTotal() : BigDecimal.ZERO;
+        BigDecimal descontoAplicado = nvl(dto.descontoTotal());
 
         venda.setDescontoTotal(descontoAplicado);
-
-        // Agora o Valor Total da venda subtrai o desconto e impede valores negativos
         venda.setValorTotal(totalItens.subtract(descontoAplicado).max(BigDecimal.ZERO));
-
         venda.setObservacao(dto.observacao());
 
         return vendaRepository.save(venda);
@@ -261,14 +260,13 @@ public class VendaService {
                 venda.getIdVenda(),
                 venda.getValorTotal(),
                 venda.getFormaDePagamento().name(),
-                venda.getQuantidadeParcelas(), // Método deve existir na Venda
+                venda.getQuantidadeParcelas(),
                 buscarIdClientePorDocumento(venda.getClienteDocumento())
         );
 
         atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
         caixaRepository.save(caixa);
 
-        // Emissão Assíncrona na Efetivação
         CompletableFuture.runAsync(() -> {
             try {
                 nfceService.emitirNfce(venda);
@@ -302,7 +300,7 @@ public class VendaService {
     public Venda buscarVendaComItens(Long id) {
         Venda venda = vendaRepository.findByIdComItens(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
-        Hibernate.initialize(venda.getPagamentos()); // Carrega pagamentos lazy
+        Hibernate.initialize(venda.getPagamentos());
         return venda;
     }
 
@@ -383,12 +381,12 @@ public class VendaService {
         for (ItemVendaDTO dto : dtos) {
             Produto p = produtoRepository.findById(dto.produtoId()).orElseThrow();
             ItemVenda i = new ItemVenda();
-            i.setVenda(venda); i.setProduto(p); i.setQuantidade(dto.quantidade()); i.setPrecoUnitario(dto.precoUnitario());
-            i.setDesconto(dto.desconto() != null ? dto.desconto() : BigDecimal.ZERO);
+            i.setVenda(venda); i.setProduto(p); i.setQuantidade(dto.quantidade()); i.setPrecoUnitario(nvl(dto.precoUnitario()));
+            i.setDesconto(nvl(dto.desconto()));
 
             if (venda.getItens() == null) venda.setItens(new ArrayList<>());
             venda.getItens().add(i);
-            total = total.add(i.getPrecoUnitario().multiply(i.getQuantidade()).subtract(i.getDesconto()));
+            total = total.add(i.getPrecoUnitario().multiply(new BigDecimal(String.valueOf(i.getQuantidade()))).subtract(i.getDesconto()));
         }
         return total;
     }
@@ -422,10 +420,10 @@ public class VendaService {
     private void aplicarDadosFiscais(Venda venda, List<ItemVenda> itens) {
         try {
             ResumoFiscalCarrinhoDTO fiscal = calculadoraFiscalService.calcularTotaisCarrinho(itens);
-            venda.setValorIbs(fiscal.totalIbs());
-            venda.setValorCbs(fiscal.totalCbs());
-            venda.setValorIs(fiscal.totalIs());
-            venda.setValorLiquido(fiscal.totalLiquido().subtract(nvl(venda.getDescontoTotal())));
+            venda.setValorIbs(nvl(fiscal.totalIbs()));
+            venda.setValorCbs(nvl(fiscal.totalCbs()));
+            venda.setValorIs(nvl(fiscal.totalIs()));
+            venda.setValorLiquido(nvl(fiscal.totalLiquido()).subtract(nvl(venda.getDescontoTotal())));
         } catch (Exception e) {
             venda.setValorIbs(BigDecimal.ZERO);
             venda.setValorCbs(BigDecimal.ZERO);
@@ -444,6 +442,7 @@ public class VendaService {
                 .orElseThrow(() -> new ValidationException("O seu caixa está FECHADO. Abra o caixa para operar."));
     }
 
+    // === Função Principal Anti-NullPointerException ===
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
     private BigDecimal nvl(BigDecimal val, BigDecimal padrao) { return val == null ? padrao : val; }
 

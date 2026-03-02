@@ -13,6 +13,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.security.KeyStore;
+import java.security.cert.X509Certificate;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -24,7 +34,6 @@ public class ConfiguracaoLojaService {
     private final Path fileStorageLocation;
 
     public ConfiguracaoLojaService() {
-        // Cria a pasta "uploads" na raiz do projeto se não existir
         this.fileStorageLocation = Paths.get("uploads").toAbsolutePath().normalize();
         try {
             Files.createDirectories(this.fileStorageLocation);
@@ -33,26 +42,26 @@ public class ConfiguracaoLojaService {
         }
     }
 
-    // --- MÉTODOS DE BUSCA ---
-
-    @Transactional(readOnly = true)
+    @Transactional
     public ConfiguracaoLoja buscarConfiguracao() {
-        return repository.findFirstByOrderByIdAsc()
+        return repository.findAll().stream()
+                .findFirst()
+                .map(config -> {
+                    config.preencherNulos();
+                    return config;
+                })
                 .orElseGet(this::criarConfiguracaoPadrao);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ConfiguracaoDTO buscarConfiguracaoDTO() {
-        ConfiguracaoLoja config = buscarConfiguracao();
-        return converterParaDTO(config);
+        return converterParaDTO(buscarConfiguracao());
     }
-
-    // --- MÉTODOS DE SALVAMENTO (JSON) ---
 
     @Transactional
     public ConfiguracaoDTO salvar(ConfiguracaoDTO dto) {
-        ConfiguracaoLoja config = buscarConfiguracao(); // Recupera a existente
-        atualizarEntidade(config, dto); // Aplica as mudanças do DTO na Entidade
+        ConfiguracaoLoja config = buscarConfiguracao();
+        atualizarEntidade(config, dto);
         ConfiguracaoLoja salva = repository.save(config);
         return converterParaDTO(salva);
     }
@@ -60,34 +69,54 @@ public class ConfiguracaoLojaService {
     // --- MÉTODOS DE ARQUIVOS (UPLOAD) ---
 
     @Transactional
-    public void salvarCertificado(MultipartFile file, String senha) {
-        ConfiguracaoLoja config = buscarConfiguracao();
-        config.preencherNulos(); // Garante estrutura
+    public Map<String, Object> salvarCertificado(MultipartFile file, String senha) throws Exception {
 
+        // 1. Abre o certificado usando a senha enviada pelo React
+        KeyStore ks = KeyStore.getInstance("PKCS12");
+        ks.load(file.getInputStream(), senha.toCharArray());
+
+        // 2. Pega o primeiro certificado disponível no arquivo
+        Enumeration<String> aliases = ks.aliases();
+        if (!aliases.hasMoreElements()) {
+            throw new RuntimeException("Nenhum certificado encontrado dentro do arquivo PFX.");
+        }
+
+        String alias = aliases.nextElement();
+        X509Certificate certificate = (X509Certificate) ks.getCertificate(alias);
+
+        // 3. Extrai a data de vencimento e calcula os dias restantes
+        Date dataExpiracao = certificate.getNotAfter();
+        LocalDate dataValidadeLocal = dataExpiracao.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        long diasRestantes = ChronoUnit.DAYS.between(LocalDate.now(), dataValidadeLocal);
+
+        // 4. Salva o arquivo no disco do servidor
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
         salvarArquivoEmDisco(file, fileName);
 
+        // 5. Salva os caminhos no banco de dados da loja
+        ConfiguracaoLoja config = buscarConfiguracao();
         config.getFiscal().setCaminhoCertificado(fileName);
-        config.getFiscal().setSenhaCert(senha);
-
+        config.getFiscal().setSenhaCert(senha); // O Java guarda a senha para assinar os XMLs da NFC-e depois
         repository.save(config);
+
+        // 6. Retorna o Map para o Controller devolver pro React
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        Map<String, Object> response = new HashMap<>();
+        response.put("validade", dataValidadeLocal.format(formatter));
+        response.put("diasRestantes", diasRestantes);
+
+        return response;
     }
 
     @Transactional
     public String salvarLogo(MultipartFile file) {
         ConfiguracaoLoja config = buscarConfiguracao();
-        config.preencherNulos();
-
         String extension = getFileExtension(file.getOriginalFilename());
         String fileName = "logo_" + UUID.randomUUID() + extension;
-
         salvarArquivoEmDisco(file, fileName);
-
         String fileUrl = "/uploads/" + fileName;
         config.getLoja().setLogoUrl(fileUrl);
-
         repository.save(config);
-
         return fileUrl;
     }
 
@@ -105,35 +134,24 @@ public class ConfiguracaoLojaService {
     }
 
     // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) ---
-
     private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
         c.preencherNulos();
 
-        // 1. LOJA (Preservando Logo se não vier no DTO)
         String logoAtual = c.getLoja().getLogoUrl();
         c.setLoja(new ConfiguracaoLoja.DadosLoja(
                 d.loja().razaoSocial(), d.loja().nomeFantasia(), d.loja().cnpj(), d.loja().ie(), d.loja().im(), d.loja().cnae(),
                 d.loja().email(), d.loja().telefone(), d.loja().whatsapp(), d.loja().site(), d.loja().instagram(), d.loja().slogan(),
                 d.loja().corDestaque(), d.loja().isMatriz(), d.loja().horarioAbre(), d.loja().horarioFecha(),
                 d.loja().toleranciaMinutos(), d.loja().bloqueioForaHorario(), d.loja().taxaEntregaPadrao(), d.loja().tempoEntregaMin(),
-                d.loja().logoUrl() // Tenta pegar do DTO
+                d.loja().logoUrl() != null && !d.loja().logoUrl().isEmpty() ? d.loja().logoUrl() : logoAtual
         ));
-        // Se o DTO veio com logo vazia, restaura a antiga
-        if (d.loja().logoUrl() == null || d.loja().logoUrl().isEmpty()) {
-            c.getLoja().setLogoUrl(logoAtual);
-        }
 
-        // 2. ENDERECO
         c.setEndereco(new ConfiguracaoLoja.EnderecoLoja(
                 d.endereco().cep(), d.endereco().logradouro(), d.endereco().numero(), d.endereco().complemento(),
                 d.endereco().bairro(), d.endereco().cidade(), d.endereco().uf()
         ));
 
-        // 3. FISCAL (Preservando Certificado)
-        String certAtual = c.getFiscal().getCaminhoCertificado();
-        String senhaAtual = c.getFiscal().getSenhaCert();
-
-        ConfiguracaoLoja.DadosFiscal f = new ConfiguracaoLoja.DadosFiscal();
+        ConfiguracaoLoja.DadosFiscal f = c.getFiscal();
         f.setAmbiente(d.fiscal().ambiente());
         f.setRegime(d.fiscal().regime());
 
@@ -150,9 +168,8 @@ public class ConfiguracaoLojaService {
             f.setNfeProducao(d.fiscal().producao().nfe());
         }
 
-        // Restaura certificado se não vier no DTO
-        f.setCaminhoCertificado(d.fiscal().caminhoCertificado() != null ? d.fiscal().caminhoCertificado() : certAtual);
-        f.setSenhaCert(d.fiscal().senhaCert() != null ? d.fiscal().senhaCert() : senhaAtual);
+        // A SENHA É TRATADA SEPARADAMENTE NO UPLOAD, MAS SE VIER AQUI, MANTÉM A PROTEÇÃO
+        if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) f.setSenhaCert(d.fiscal().senhaCert());
 
         f.setCsrtId(d.fiscal().csrtId());
         f.setCsrtHash(d.fiscal().csrtHash());
@@ -164,10 +181,8 @@ public class ConfiguracaoLojaService {
         f.setModoContingencia(d.fiscal().modoContingencia());
         f.setPriorizarMonofasico(d.fiscal().priorizarMonofasico());
         f.setObsPadraoCupom(d.fiscal().obsPadraoCupom());
-        c.setFiscal(f);
 
-        // 4. FINANCEIRO
-        ConfiguracaoLoja.DadosFinanceiro fin = new ConfiguracaoLoja.DadosFinanceiro();
+        ConfiguracaoLoja.DadosFinanceiro fin = c.getFinanceiro();
         fin.setComissaoProdutos(d.financeiro().comissaoProdutos());
         fin.setComissaoServicos(d.financeiro().comissaoServicos());
         fin.setAlertaSangria(d.financeiro().alertaSangria());
@@ -187,22 +202,19 @@ public class ConfiguracaoLojaService {
         fin.setFechamentoCego(d.financeiro().fechamentoCego());
 
         if (d.financeiro().pagamentos() != null) {
-            fin.setAceitaDinheiro(Boolean.TRUE.equals(d.financeiro().pagamentos().dinheiro()));
+            fin.setAceitaDinheiro(d.financeiro().pagamentos().dinheiro());
             fin.setAceitaPix(d.financeiro().pagamentos().pix());
             fin.setAceitaCredito(d.financeiro().pagamentos().credito());
             fin.setAceitaDebito(d.financeiro().pagamentos().debito());
             fin.setAceitaCrediario(d.financeiro().pagamentos().crediario());
         }
-        c.setFinanceiro(fin);
 
-        // 5. VENDAS
         c.setVendas(new ConfiguracaoLoja.DadosVendas(
                 d.vendas().comportamentoCpf(), d.vendas().bloquearEstoque(), d.vendas().layoutCupom(),
                 d.vendas().imprimirVendedor(), d.vendas().imprimirTicketTroca(), d.vendas().autoEnterScanner(),
                 d.vendas().fidelidadeAtiva(), d.vendas().pontosPorReal(), d.vendas().usarBalanca(), d.vendas().agruparItens()
         ));
 
-        // 6. SISTEMA
         c.setSistema(new ConfiguracaoLoja.DadosSistema(
                 d.sistema().impressaoAuto(), d.sistema().larguraPapel(), d.sistema().backupAuto(), d.sistema().backupHora(),
                 d.sistema().rodape(), d.sistema().tema(), d.sistema().backupNuvem(), d.sistema().senhaGerenteCancelamento(),
@@ -211,8 +223,6 @@ public class ConfiguracaoLojaService {
     }
 
     private ConfiguracaoDTO converterParaDTO(ConfiguracaoLoja c) {
-        c.preencherNulos();
-
         return new ConfiguracaoDTO(
                 c.getId(),
                 new ConfiguracaoDTO.LojaDTO(
@@ -231,7 +241,7 @@ public class ConfiguracaoLojaService {
                         c.getFiscal().getAmbiente(), c.getFiscal().getRegime(),
                         new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(), c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao()),
                         new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(), c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao()),
-                        c.getFiscal().getCaminhoCertificado(), c.getFiscal().getSenhaCert(),
+                        c.getFiscal().getCaminhoCertificado(), "", // SEGURANÇA: NUNCA DEVOLVE A SENHA PARA O REACT
                         c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
                         c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
                         c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),
@@ -254,7 +264,8 @@ public class ConfiguracaoLojaService {
                 new ConfiguracaoDTO.VendasDTO(
                         c.getVendas().getComportamentoCpf(), c.getVendas().getBloquearEstoque(), c.getVendas().getLayoutCupom(),
                         c.getVendas().getImprimirVendedor(), c.getVendas().getImprimirTicketTroca(), c.getVendas().getAutoEnterScanner(),
-                        c.getVendas().getFidelidadeAtiva(), c.getVendas().getPontosPorReal(), c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens()
+                        c.getVendas().getFidelidadeAtiva(), c.getVendas().getPontosPorReal(),
+                        c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens()
                 ),
                 new ConfiguracaoDTO.SistemaDTO(
                         c.getSistema().getImpressaoAuto(), c.getSistema().getLarguraPapel(), c.getSistema().getBackupAuto(),

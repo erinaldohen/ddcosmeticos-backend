@@ -14,22 +14,21 @@ public record ProdutoDTO(
         Long id,
 
         @NotBlank(message = "A descrição é obrigatória")
-        @Size(max = 150, message = "A descrição não pode exceder 150 caracteres")
         String descricao,
 
         String codigoBarras,
-        String sku, // NOVO: Código interno
+        String sku, // Código interno
 
         String marca,
         String categoria,
         String subcategoria,
         String unidade,
 
-        // INVENTÁRIO & RASTREABILIDADE (NOVOS)
-        String lote, // NOVO
+        // INVENTÁRIO & RASTREABILIDADE
+        String lote,
 
         @JsonFormat(pattern = "yyyy-MM-dd")
-        LocalDate validade, // NOVO
+        LocalDate validade,
 
         // FISCAL
         String ncm,
@@ -52,28 +51,27 @@ public record ProdutoDTO(
         BigDecimal precoCusto,
 
         // ESTOQUE
+        Integer quantidadeEmEstoque, // Saldo total
+        Integer estoqueFiscal,       // NOVO: Com Nota
+        Integer estoqueNaoFiscal,    // NOVO: Sem Nota
         Integer estoqueMinimo,
         Integer diasParaReposicao,
 
         String urlImagem,
         boolean ativo
 ) {
-    /**
-     * Construtor compacto para conversão de Entidade para DTO.
-     * Atualizado para incluir SKU, Lote e Validade.
-     */
     public ProdutoDTO(Produto p) {
         this(
                 p.getId(),
                 p.getDescricao(),
                 p.getCodigoBarras(),
-                p.getSku(),       // Mapeando SKU
+                p.getSku(),
                 p.getMarca(),
                 p.getCategoria(),
                 p.getSubcategoria(),
                 p.getUnidade(),
-                p.getLote(),      // Mapeando Lote
-                p.getValidade(),  // Mapeando Validade
+                p.getLote(),
+                p.getValidade(),
                 p.getNcm(),
                 p.getCest(),
                 p.getCst(),
@@ -83,6 +81,9 @@ public record ProdutoDTO(
                 p.isImpostoSeletivo(),
                 p.getPrecoVenda(),
                 p.getPrecoCusto(),
+                p.getQuantidadeEmEstoque(),
+                p.getEstoqueFiscal(),       // Mapeando do Banco
+                p.getEstoqueNaoFiscal(),    // Mapeando do Banco
                 p.getEstoqueMinimo(),
                 p.getDiasParaReposicao(),
                 p.getUrlImagem(),

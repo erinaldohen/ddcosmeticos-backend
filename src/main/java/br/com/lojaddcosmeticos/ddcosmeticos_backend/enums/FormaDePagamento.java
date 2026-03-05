@@ -1,27 +1,17 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
-/**
- * Define as modalidades de pagamento aceitas no PDV.
- */
 public enum FormaDePagamento {
-
-    // ==================================================================================
-    // SESSÃO 1: PAGAMENTOS IMEDIATOS (BAIXA AUTOMÁTICA)
-    // ==================================================================================
     DINHEIRO,
     PIX,
+
+    // Mantemos as versões curtas (comuns em sistemas legados)
+    CREDITO,
     DEBITO,
 
-    // ==================================================================================
-    // SESSÃO 2: PAGAMENTOS A PRAZO (GERAM CONTA A RECEBER)
-    // ==================================================================================
+    // Adicionamos as versões explícitas (Melhor para relatórios fiscais)
+    CARTAO_CREDITO,
+    CARTAO_DEBITO,
 
-    CREDITO,    // Cartão de Crédito (Garantia do Banco/Operadora)
-    BOLETO,     // Boleto Bancário
-
-    /**
-     * "Fiado" ou Carnê da Loja.
-     * O risco é da loja e depende do limite de crédito do cliente.
-     */
-    CREDIARIO
+    CREDIARIO,
+    BOLETO
 }

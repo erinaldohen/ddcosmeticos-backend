@@ -57,6 +57,11 @@ public class Venda {
 
     private BigDecimal descontoTotal;
 
+    // --- CAMPO NOVO ADICIONADO ---
+    // Essencial para calcular o valor líquido em dinheiro no caixa
+    private BigDecimal troco;
+    // -----------------------------
+
     @Column(length = 100)
     private String clienteNome;
 

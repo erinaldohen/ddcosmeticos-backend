@@ -22,7 +22,6 @@ import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -42,10 +41,9 @@ public class CaixaController {
     @GetMapping("/status")
     public ResponseEntity<?> verificarStatusCaixa() {
         try {
-            // CORREÇÃO: Usa o método existente no Service que retorna DTO
             CaixaDiarioDTO caixa = caixaService.buscarStatusAtual();
 
-            if (caixa != null && "ABERTO".equals(caixa.status())) { // Acessa campo do record sem get
+            if (caixa != null && "ABERTO".equals(caixa.status())) {
                 return ResponseEntity.ok(Map.of(
                         "status", "ABERTO",
                         "aberto", true,
@@ -69,14 +67,13 @@ public class CaixaController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CaixaDiario> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
         BigDecimal saldoInicial = payload.get("saldoInicial");
-        // O método abrirCaixa retorna a Entidade CaixaDiario
         return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
     }
 
-    @PostMapping("/{id}/fechar")
+    // CORREÇÃO AQUI: Removido /{id} da URL e do argumento. O Service descobre qual fechar.
+    @PostMapping("/fechar")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<CaixaDiario> fecharCaixa(@PathVariable Long id, @RequestBody FechamentoCaixaDTO dto) {
-        // CORREÇÃO: Acessa o campo correto do Record (sem get e com o nome exato)
+    public ResponseEntity<CaixaDiario> fecharCaixa(@RequestBody FechamentoCaixaDTO dto) {
         return ResponseEntity.ok(caixaService.fecharCaixa(dto.saldoFinalDinheiroEmEspecie()));
     }
 

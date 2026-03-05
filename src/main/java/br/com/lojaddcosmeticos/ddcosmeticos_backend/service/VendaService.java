@@ -92,8 +92,8 @@ public class VendaService {
             item.setVenda(venda);
             item.setProduto(produto);
             item.setQuantidade(itemDto.quantidade());
-            item.setPrecoUnitario(nvl(itemDto.precoUnitario())); // Null Safety
-            item.setDesconto(nvl(itemDto.desconto())); // Null Safety
+            item.setPrecoUnitario(nvl(itemDto.precoUnitario()));
+            item.setDesconto(nvl(itemDto.desconto()));
 
             item.setCustoUnitarioHistorico(nvl(produto.getPrecoMedioPonderado()));
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
@@ -104,13 +104,12 @@ public class VendaService {
 
         venda.setItens(itens);
 
-        // 6. Cálculos de Totais com Null Safety (Correção do Erro 500)
+        // 6. Cálculos de Totais
         BigDecimal subtotalItens = itens.stream()
                 .map(i -> {
                     BigDecimal preco = nvl(i.getPrecoUnitario());
                     BigDecimal qtd = new BigDecimal(String.valueOf(i.getQuantidade()));
                     BigDecimal desconto = nvl(i.getDesconto());
-
                     return preco.multiply(qtd).subtract(desconto);
                 })
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -126,6 +125,10 @@ public class VendaService {
         if (totalPago.compareTo(valorFinal) < 0 && totalPago.subtract(valorFinal).abs().compareTo(new BigDecimal("0.05")) > 0) {
             throw new ValidationException("O valor pago (R$ " + totalPago + ") é menor que o total da venda (R$ " + valorFinal + ").");
         }
+
+        // --- CORREÇÃO 1: CÁLCULO DE TROCO ---
+        BigDecimal trocoCalculado = totalPago.subtract(valorFinal).max(BigDecimal.ZERO);
+        venda.setTroco(trocoCalculado);
 
         // 8. Processamento dos Pagamentos
         List<PagamentoVenda> pagamentos = dto.pagamentos().stream().map(pgDto -> {
@@ -154,7 +157,7 @@ public class VendaService {
         // 9. Persistência
         vendaRepository.save(venda);
 
-        // 10. Atualiza Financeiro (Caixa)
+        // 10. Atualiza Financeiro (Caixa) - LÓGICA CORRIGIDA PARA SPLIT
         atualizarFinanceiro(caixa, venda, pagamentos);
 
         // 11. Emissão NFC-e Assíncrona
@@ -171,7 +174,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 2. GESTÃO DE ESTADOS (SUSPENDER, EFETIVAR, CANCELAR)
+    // 2. GESTÃO DE ESTADOS
     // =========================================================================
 
     @Transactional
@@ -264,7 +267,8 @@ public class VendaService {
                 buscarIdClientePorDocumento(venda.getClienteDocumento())
         );
 
-        atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
+        // Atualiza o caixa na efetivação também!
+        atualizarFinanceiro(caixa, venda, venda.getPagamentos());
         caixaRepository.save(caixa);
 
         CompletableFuture.runAsync(() -> {
@@ -305,27 +309,60 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 4. ATUALIZAÇÃO FINANCEIRA
+    // 4. ATUALIZAÇÃO FINANCEIRA (CORREÇÃO DE SPLIT E TROCO)
     // =========================================================================
 
     private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoVenda> pagamentos) {
-        if (pagamentos == null || pagamentos.isEmpty()) {
-            atualizarSaldoCaixaUnico(caixa, venda.getValorTotal(), venda.getFormaDePagamento());
-            return;
-        }
-        for (PagamentoVenda pag : pagamentos) {
-            atualizarSaldoCaixaUnico(caixa, pag.getValor(), pag.getFormaPagamento());
+        if (pagamentos == null || pagamentos.isEmpty()) return;
+
+        // O troco deve ser abatido apenas do montante em DINHEIRO.
+        // Ex: Conta R$ 90. Pagou R$ 50 Pix e R$ 50 Dinheiro. Troco R$ 10.
+        // Pix entra R$ 50. Dinheiro entra R$ 40 (50 - 10).
+        BigDecimal trocoRestante = nvl(venda.getTroco());
+
+        for (PagamentoVenda pg : pagamentos) {
+            BigDecimal valorReal = nvl(pg.getValor());
+
+            if (pg.getFormaPagamento() == FormaDePagamento.DINHEIRO && trocoRestante.compareTo(BigDecimal.ZERO) > 0) {
+                if (valorReal.compareTo(trocoRestante) >= 0) {
+                    valorReal = valorReal.subtract(trocoRestante);
+                    trocoRestante = BigDecimal.ZERO;
+                } else {
+                    // Caso raro: pagou com duas notas picadas e o troco é maior que uma delas
+                    trocoRestante = trocoRestante.subtract(valorReal);
+                    valorReal = BigDecimal.ZERO;
+                }
+            }
+
+            atualizarSaldoCaixaUnico(caixa, valorReal, pg.getFormaPagamento());
         }
         caixaRepository.save(caixa);
     }
 
     private void atualizarSaldoCaixaUnico(CaixaDiario caixa, BigDecimal valor, FormaDePagamento forma) {
-        if (forma == FormaDePagamento.DINHEIRO) {
-            caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(valor));
-        } else if (forma == FormaDePagamento.PIX) {
-            caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(valor));
-        } else if (forma == FormaDePagamento.CREDITO || forma == FormaDePagamento.DEBITO) {
-            caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor));
+        if (valor.compareTo(BigDecimal.ZERO) <= 0) return; // Não soma valores zerados
+
+        switch (forma) {
+            case DINHEIRO:
+                caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(valor));
+                break;
+            case PIX:
+                caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(valor));
+                break;
+            case CREDITO:
+            case CARTAO_CREDITO: // Suporte a variações do Enum
+                caixa.setTotalVendasCredito(nvl(caixa.getTotalVendasCredito()).add(valor));
+                caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor)); // Soma no totalizador
+                break;
+            case DEBITO:
+            case CARTAO_DEBITO:
+                caixa.setTotalVendasDebito(nvl(caixa.getTotalVendasDebito()).add(valor));
+                caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor)); // Soma no totalizador
+                break;
+            default:
+                // Log para auditoria se aparecer forma nova
+                log.warn("Forma de pagamento não mapeada no caixa: {}", forma);
+                break;
         }
     }
 
@@ -442,7 +479,6 @@ public class VendaService {
                 .orElseThrow(() -> new ValidationException("O seu caixa está FECHADO. Abra o caixa para operar."));
     }
 
-    // === Função Principal Anti-NullPointerException ===
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
     private BigDecimal nvl(BigDecimal val, BigDecimal padrao) { return val == null ? padrao : val; }
 

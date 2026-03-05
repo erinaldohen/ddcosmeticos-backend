@@ -1,17 +1,14 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -32,7 +29,6 @@ public class CaixaService {
 
     private final CaixaDiarioRepository caixaRepository;
     private final UsuarioRepository usuarioRepository;
-    private final VendaRepository vendaRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
 
     // ==================================================================================
@@ -64,12 +60,14 @@ public class CaixaService {
             if (caixa != null) {
                 movimentacao.setCaixa(caixa);
 
-                // Atualiza o saldo atual (snapshop do momento)
+                // As movimentações manuais sempre atualizam os totalizadores de Entrada/Saída
                 BigDecimal valor = movimentacao.getValor();
                 if (movimentacao.getTipo() == TipoMovimentacaoCaixa.ENTRADA || movimentacao.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO) {
                     caixa.setSaldoAtual(caixa.getSaldoAtual().add(valor));
+                    caixa.setTotalEntradas(caixa.getTotalEntradas().add(valor));
                 } else {
                     caixa.setSaldoAtual(caixa.getSaldoAtual().subtract(valor));
+                    caixa.setTotalSaidas(caixa.getTotalSaidas().add(valor));
                 }
                 caixaRepository.save(caixa);
             }
@@ -91,6 +89,10 @@ public class CaixaService {
         return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
 
+    // ----------------------------------------------------------------------------------
+    // CORREÇÃO CRÍTICA AQUI: O CaixaService não deve recalcular usando Lista de Vendas.
+    // Ele deve apenas devolver os acumuladores que o VendaService já preencheu lindamente.
+    // ----------------------------------------------------------------------------------
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
@@ -98,31 +100,25 @@ public class CaixaService {
         if (caixaOpt.isEmpty()) return null;
 
         CaixaDiario caixa = caixaOpt.get();
-        LocalDateTime agora = LocalDateTime.now();
 
-        // Recalcula totais em tempo real baseados nas vendas
-        List<Venda> vendasHoje = vendaRepository.buscarVendasDoUsuarioNoPeriodo(
-                operador.getId(), caixa.getDataAbertura(), agora
-        );
-
-        BigDecimal dinheiro = somarPorForma(vendasHoje, FormaDePagamento.DINHEIRO);
-        BigDecimal pix = somarPorForma(vendasHoje, FormaDePagamento.PIX);
-
-        // Separação solicitada
-        BigDecimal credito = somarPorForma(vendasHoje, FormaDePagamento.CREDITO);
-        BigDecimal debito = somarPorForma(vendasHoje, FormaDePagamento.DEBITO);
+        // O saldo atual em gaveta = Saldo Inicial + Entradas(Suprimentos) + Vendas em Dinheiro - Saídas(Sangrias)
+        // OBS: Pagamentos digitais não afetam a gaveta, apenas os relatórios fiscais.
+        BigDecimal saldoGaveta = caixa.getSaldoInicial()
+                .add(caixa.getTotalEntradas())
+                .add(caixa.getTotalVendasDinheiro())
+                .subtract(caixa.getTotalSaidas());
 
         return new CaixaDiarioDTO(
                 caixa.getId(),
                 "ABERTO",
                 caixa.getSaldoInicial(),
-                caixa.getSaldoAtual(),
+                saldoGaveta, // Passamos o saldo físico calculado na hora
                 caixa.getTotalEntradas(),
                 caixa.getTotalSaidas(),
-                dinheiro,
-                pix,
-                credito, // Passa separado
-                debito   // Passa separado
+                caixa.getTotalVendasDinheiro(), // Lê direto do BD
+                caixa.getTotalVendasPix(),      // Lê direto do BD
+                caixa.getTotalVendasCredito(),  // Lê direto do BD
+                caixa.getTotalVendasDebito()    // Lê direto do BD
         );
     }
 
@@ -138,12 +134,14 @@ public class CaixaService {
         caixa.setUsuarioAbertura(operador);
         caixa.setDataAbertura(LocalDateTime.now());
         caixa.setSaldoInicial(fundoTroco != null ? fundoTroco : BigDecimal.ZERO);
-        caixa.setSaldoAtual(caixa.getSaldoInicial()); // Saldo atual começa igual ao inicial
+        caixa.setSaldoAtual(caixa.getSaldoInicial());
         caixa.setStatus(StatusCaixa.ABERTO);
 
         // Inicializa acumuladores
         caixa.setTotalVendasDinheiro(BigDecimal.ZERO);
         caixa.setTotalVendasPix(BigDecimal.ZERO);
+        caixa.setTotalVendasCredito(BigDecimal.ZERO);
+        caixa.setTotalVendasDebito(BigDecimal.ZERO);
         caixa.setTotalVendasCartao(BigDecimal.ZERO);
         caixa.setTotalEntradas(BigDecimal.ZERO);
         caixa.setTotalSaidas(BigDecimal.ZERO);
@@ -161,51 +159,17 @@ public class CaixaService {
 
         LocalDateTime agora = LocalDateTime.now();
 
-        // 1. Calcula Vendas
-        List<Venda> vendas = vendaRepository.buscarVendasDoUsuarioNoPeriodo(operador.getId(), caixa.getDataAbertura(), agora);
-
-        BigDecimal totalDinheiro = somarPorForma(vendas, FormaDePagamento.DINHEIRO);
-        BigDecimal totalPix = somarPorForma(vendas, FormaDePagamento.PIX);
-        BigDecimal totalCartao = somarPorForma(vendas, FormaDePagamento.CREDITO)
-                .add(somarPorForma(vendas, FormaDePagamento.DEBITO));
-
-        // 2. Calcula Movimentações (Sangrias e Suprimentos)
-        BigDecimal sangrias = BigDecimal.ZERO;
-        BigDecimal suprimentos = BigDecimal.ZERO;
-
-        List<MovimentacaoCaixa> movs = caixa.getMovimentacoes();
-        if (movs != null && !movs.isEmpty()) {
-            sangrias = movs.stream()
-                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SANGRIA || m.getTipo() == TipoMovimentacaoCaixa.SAIDA)
-                    .map(MovimentacaoCaixa::getValor)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            suprimentos = movs.stream()
-                    .filter(m -> m.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO || m.getTipo() == TipoMovimentacaoCaixa.ENTRADA)
-                    .map(MovimentacaoCaixa::getValor)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-        }
-
-        // 3. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
-        // Nota: Vendas Pix/Cartão não somam na gaveta física
+        // 1. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
+        // Mais uma vez, não precisamos percorrer a lista de Venda.
         BigDecimal saldoEsperado = caixa.getSaldoInicial()
-                .add(totalDinheiro)
-                .add(suprimentos)
-                .subtract(sangrias);
+                .add(caixa.getTotalVendasDinheiro())
+                .add(caixa.getTotalEntradas())
+                .subtract(caixa.getTotalSaidas());
 
-        // 4. Preenche dados finais
+        // 2. Preenche dados finais
         caixa.setValorCalculadoSistema(saldoEsperado);
         caixa.setValorFechamento(saldoInformado);
-
-        // Atualiza saldo atual final
         caixa.setSaldoAtual(saldoEsperado);
-
-        caixa.setTotalVendasDinheiro(totalDinheiro);
-        caixa.setTotalVendasPix(totalPix);
-        caixa.setTotalVendasCartao(totalCartao);
-        caixa.setTotalEntradas(suprimentos);
-        caixa.setTotalSaidas(sangrias);
-
         caixa.setDataFechamento(agora);
         caixa.setStatus(StatusCaixa.FECHADO);
 
@@ -230,11 +194,8 @@ public class CaixaService {
         mov.setMotivo("SANGRIA: " + observacao);
         mov.setDataHora(LocalDateTime.now());
 
-        // Atualiza saldo
-        caixa.setSaldoAtual(caixa.getSaldoAtual().subtract(valor));
-
-        movimentacaoRepository.save(mov);
-        caixaRepository.save(caixa);
+        // Chama o método auxiliar que centraliza o recálculo do saldo
+        salvarMovimentacao(mov);
     }
 
     @Transactional
@@ -249,21 +210,10 @@ public class CaixaService {
         mov.setMotivo("SUPRIMENTO: " + observacao);
         mov.setDataHora(LocalDateTime.now());
 
-        // Atualiza saldo
-        caixa.setSaldoAtual(caixa.getSaldoAtual().add(valor));
-
-        movimentacaoRepository.save(mov);
-        caixaRepository.save(caixa);
+        salvarMovimentacao(mov);
     }
 
     // --- UTILS ---
-    private BigDecimal somarPorForma(List<Venda> vendas, FormaDePagamento forma) {
-        if (vendas == null || vendas.isEmpty()) return BigDecimal.ZERO;
-        return vendas.stream()
-                .filter(v -> v.getFormaDePagamento() == forma)
-                .map(Venda::getValorTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
 
     private Usuario getUsuarioLogado() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

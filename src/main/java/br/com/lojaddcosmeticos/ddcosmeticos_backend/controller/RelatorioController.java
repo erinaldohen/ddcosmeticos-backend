@@ -5,10 +5,12 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioMensalServi
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -17,20 +19,34 @@ import java.time.LocalDate;
 @RequestMapping("/api/v1/relatorios")
 @Tag(name = "Relatórios", description = "Análises gerenciais da DD Cosméticos")
 @CrossOrigin("*")
+@RequiredArgsConstructor // Substitui os @Autowired nas variáveis (Melhor prática do Spring)
 public class RelatorioController {
 
-    @Autowired
-    private RelatorioService relatorioService;
-    @Autowired
-    private RelatorioMensalService relatorioMensalService;
+    private final RelatorioService relatorioService;
+    private final RelatorioMensalService relatorioMensalService;
 
     @PostMapping("/enviar-mensal")
     @Operation(summary = "Forçar envio do relatório mensal por e-mail")
     @PreAuthorize("hasRole('ADMIN')") // Apenas admin pode disparar
-    public ResponseEntity<String> enviarRelatorioMensal(@RequestParam String email) {
-        // Chama o serviço assíncrono (não trava a requisição)
-        relatorioMensalService.processarRelatorioMensal(email);
-        return ResponseEntity.ok("Solicitação de relatório recebida. Verifique o e-mail em instantes.");
+    public ResponseEntity<String> enviarRelatorioMensal(@RequestParam(required = false) String email) {
+
+        String emailDestino = email;
+
+        // Se o frontend chamar a API sem o parâmetro "?email=...",
+        // o sistema pega o e-mail do Administrador que está logado no momento.
+        if (emailDestino == null || emailDestino.isBlank()) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated() && !auth.getName().equals("anonymousUser")) {
+                emailDestino = auth.getName(); // Pega o email/login do Token JWT
+            } else {
+                return ResponseEntity.badRequest().body("Erro: E-mail de destino não informado e usuário não identificado.");
+            }
+        }
+
+        // Chama o serviço assíncrono (não trava a requisição e a tela do usuário)
+        relatorioMensalService.processarRelatorioMensal(emailDestino);
+
+        return ResponseEntity.ok("Solicitação de relatório recebida. O PDF será enviado para " + emailDestino + " em instantes.");
     }
 
     @GetMapping("/vendas")

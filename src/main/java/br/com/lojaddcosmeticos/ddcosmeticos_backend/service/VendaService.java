@@ -371,8 +371,29 @@ public class VendaService {
     // =========================================================================
 
     private VendaResponseDTO converterParaDTO(Venda venda) {
+        // CORREÇÃO: Mapeamento explícito para forçar o envio do Nome e do EAN para o Frontend
         List<ItemVendaResponseDTO> itensDto = venda.getItens() != null
-                ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
+                ? venda.getItens().stream().map(i -> {
+            // Prevenção de NullPointer caso o produto tenha sido deletado do banco
+            String nome = (i.getProduto() != null && i.getProduto().getDescricao() != null)
+                    ? i.getProduto().getDescricao()
+                    : (i.getProduto() != null ? i.getProduto().getDescricao() : "Produto Excluído/Desconhecido");
+
+            String ean = (i.getProduto() != null && i.getProduto().getCodigoBarras() != null)
+                    ? i.getProduto().getCodigoBarras()
+                    : "Sem EAN";
+
+            Long pId = i.getProduto() != null ? i.getProduto().getId() : null; // ou getIdProduto() dependendo da sua entidade
+
+            return new ItemVendaResponseDTO(
+                    pId,
+                    nome,
+                    ean,
+                    i.getQuantidade(),
+                    i.getPrecoUnitario(),
+                    i.getDesconto()
+            );
+        }).collect(Collectors.toList())
                 : new ArrayList<>();
 
         List<PagamentoResponseDTO> pagamentosDto = new ArrayList<>();
@@ -393,14 +414,15 @@ public class VendaService {
                 venda.getDescontoTotal(),
                 venda.getClienteNome(),
                 venda.getFormaDePagamento(),
-                itensDto,
+                itensDto, // Agora a lista vai recheada com os nomes!
                 pagamentosDto,
                 venda.getValorIbs(),
                 venda.getValorCbs(),
                 venda.getValorIs(),
                 venda.getValorLiquido(),
                 venda.getStatusNfce(),
-                venda.getChaveAcessoNfce()
+                venda.getChaveAcessoNfce(),
+                venda.getObservacao()
         );
     }
 

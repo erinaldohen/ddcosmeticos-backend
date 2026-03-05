@@ -41,7 +41,7 @@ public class RelatorioMensalService {
     private String remetente;
 
     /**
-     * Gera o PDF e envia por e-mail de forma assíncrona.
+     * Gera o PDF e envia por e-mail de forma assíncrona (em background).
      */
     @Async
     public void processarRelatorioMensal(String emailDestino) {
@@ -50,13 +50,14 @@ public class RelatorioMensalService {
             LocalDateTime inicio = mesAnterior.withDayOfMonth(1).atStartOfDay();
             LocalDateTime fim = mesAnterior.withDayOfMonth(mesAnterior.lengthOfMonth()).atTime(LocalTime.MAX);
 
-            // 1. Busca Dados (Usando java.util.List explicitamente para evitar conflito com iText)
+            // 1. Busca Dados
             BigDecimal faturamento = vendaRepository.somarFaturamentoTotal(inicio, fim);
             java.util.List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(inicio, fim);
             BigDecimal quebras = caixaRepository.somarQuebrasDeCaixa(inicio, fim);
 
-            if (faturamento == null) faturamento = BigDecimal.ZERO;
-            if (quebras == null) quebras = BigDecimal.ZERO;
+            // Null Safety
+            faturamento = faturamento != null ? faturamento : BigDecimal.ZERO;
+            quebras = quebras != null ? quebras : BigDecimal.ZERO;
 
             // 2. Gera PDF
             byte[] pdfBytes = gerarPdf(mesAnterior, faturamento, quebras, porPagamento);
@@ -64,88 +65,90 @@ public class RelatorioMensalService {
             // 3. Envia E-mail
             enviarEmail(emailDestino, mesAnterior, pdfBytes);
 
-            log.info("Relatório mensal enviado para {}", emailDestino);
+            log.info("Relatório mensal gerado e enviado com sucesso para {}", emailDestino);
 
         } catch (Exception e) {
-            log.error("Erro ao gerar relatório mensal", e);
+            log.error("Erro crítico ao gerar/enviar o relatório mensal para o email: {}", emailDestino, e);
         }
     }
 
     private byte[] gerarPdf(LocalDate dataRef, BigDecimal faturamento, BigDecimal quebras, java.util.List<VendaPorPagamentoDTO> pagamentos) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Document document = new Document(PageSize.A4);
-
-        try {
+        // Uso do try-with-resources garante que a memória do stream será liberada
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4);
             PdfWriter.getInstance(document, out);
             document.open();
 
-            // Fontes
-            Font tituloFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18, Color.DARK_GRAY);
-            Font textoFont = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.BLACK);
-            Font subTituloFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, Color.BLACK);
-            Font headerFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE);
+            try {
+                // Fontes
+                Font tituloFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18, Color.DARK_GRAY);
+                Font textoFont = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.BLACK);
+                Font subTituloFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, Color.BLACK);
+                Font headerFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE);
 
-            NumberFormat nf = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
+                NumberFormat nf = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
 
-            // Cabeçalho
-            Paragraph titulo = new Paragraph("Relatório Gerencial DDCosméticos", tituloFont);
-            titulo.setAlignment(Element.ALIGN_CENTER);
-            document.add(titulo);
+                // Cabeçalho
+                Paragraph titulo = new Paragraph("Relatório Gerencial DDCosméticos", tituloFont);
+                titulo.setAlignment(Element.ALIGN_CENTER);
+                document.add(titulo);
 
-            document.add(new Paragraph("Referência: " + dataRef.format(DateTimeFormatter.ofPattern("MMMM/yyyy", new Locale("pt", "BR"))).toUpperCase(), textoFont));
-            document.add(new Paragraph("Gerado em: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")), textoFont));
-            document.add(Chunk.NEWLINE);
+                document.add(new Paragraph("Referência: " + dataRef.format(DateTimeFormatter.ofPattern("MMMM/yyyy", new Locale("pt", "BR"))).toUpperCase(), textoFont));
+                document.add(new Paragraph("Gerado em: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")), textoFont));
+                document.add(Chunk.NEWLINE);
 
-            // === Tabela de Resumo ===
-            PdfPTable table = new PdfPTable(2);
-            table.setWidthPercentage(100);
-            table.setSpacingBefore(10f);
+                // === Tabela de Resumo ===
+                PdfPTable table = new PdfPTable(2);
+                table.setWidthPercentage(100);
+                table.setSpacingBefore(10f);
 
-            adicionarLinhaTabela(table, "Faturamento Total", nf.format(faturamento), new Color(220, 255, 220));
+                adicionarLinhaTabela(table, "Faturamento Total", nf.format(faturamento), new Color(220, 255, 220));
+                adicionarLinhaTabela(table, "Lucro Bruto Estimado (40%)", nf.format(faturamento.multiply(new BigDecimal("0.4"))), new Color(240, 240, 255));
 
-            // Estimativa de Lucro (Exemplo: 40%)
-            adicionarLinhaTabela(table, "Lucro Bruto Estimado (40%)", nf.format(faturamento.multiply(new BigDecimal("0.4"))), new Color(240, 240, 255));
+                Color corQuebra = quebras.compareTo(BigDecimal.ZERO) < 0 ? new Color(255, 220, 220) : Color.WHITE;
+                adicionarLinhaTabela(table, "Quebras de Caixa (Diferença)", nf.format(quebras), corQuebra);
 
-            // Quebras
-            Color corQuebra = quebras.compareTo(BigDecimal.ZERO) < 0 ? new Color(255, 220, 220) : Color.WHITE;
-            adicionarLinhaTabela(table, "Quebras de Caixa", nf.format(quebras), corQuebra);
+                document.add(table);
+                document.add(Chunk.NEWLINE);
 
-            document.add(table);
-            document.add(Chunk.NEWLINE);
+                // === Detalhamento por Pagamento ===
+                document.add(new Paragraph("Detalhamento por Método de Pagamento:", subTituloFont));
 
-            // === Detalhamento por Pagamento ===
-            document.add(new Paragraph("Detalhamento por Método:", subTituloFont));
+                PdfPTable tablePag = new PdfPTable(new float[]{3, 1, 2});
+                tablePag.setWidthPercentage(100);
+                tablePag.setSpacingBefore(10f);
 
-            // Alterado para 3 colunas: Método | Qtd | Valor
-            PdfPTable tablePag = new PdfPTable(new float[]{3, 1, 2});
-            tablePag.setWidthPercentage(100);
-            tablePag.setSpacingBefore(5f);
+                adicionarCelulaHeader(tablePag, "Método", headerFont);
+                adicionarCelulaHeader(tablePag, "Qtd. Transações", headerFont);
+                adicionarCelulaHeader(tablePag, "Valor Total", headerFont);
 
-            // Cabeçalho da Tabela
-            adicionarCelulaHeader(tablePag, "Método", headerFont);
-            adicionarCelulaHeader(tablePag, "Qtd", headerFont);
-            adicionarCelulaHeader(tablePag, "Valor Total", headerFont);
+                if (pagamentos != null) {
+                    for (VendaPorPagamentoDTO dto : pagamentos) {
+                        // Null Safety para evitar quebra do PDF se a query retornar algo nulo
+                        String forma = dto.formaPagamento() != null ? dto.formaPagamento().name() : "N/A";
+                        String qtd = dto.quantidade() != null ? dto.quantidade().toString() : "0";
+                        BigDecimal valorTotal = dto.valorTotal() != null ? dto.valorTotal() : BigDecimal.ZERO;
 
-            for (VendaPorPagamentoDTO dto : pagamentos) {
-                // Acesso via Record (.formaPagamento(), .quantidade(), .valorTotal())
-                String forma = dto.formaPagamento() != null ? dto.formaPagamento().name() : "N/A";
-                String qtd = dto.quantidade() != null ? dto.quantidade().toString() : "0";
-                String valor = nf.format(dto.valorTotal());
+                        adicionarCelula(tablePag, forma, Element.ALIGN_LEFT);
+                        adicionarCelula(tablePag, qtd, Element.ALIGN_CENTER);
+                        adicionarCelula(tablePag, nf.format(valorTotal), Element.ALIGN_RIGHT);
+                    }
+                }
+                document.add(tablePag);
 
-                adicionarCelula(tablePag, forma, Element.ALIGN_LEFT);
-                adicionarCelula(tablePag, qtd, Element.ALIGN_CENTER);
-                adicionarCelula(tablePag, valor, Element.ALIGN_RIGHT);
+            } finally {
+                // Garante que o documento será fechado mesmo se der erro na formatação
+                if (document.isOpen()) {
+                    document.close();
+                }
             }
-            document.add(tablePag);
+            return out.toByteArray();
 
-            document.close();
         } catch (Exception e) {
-            throw new RuntimeException("Erro ao criar PDF", e);
+            throw new RuntimeException("Falha na geração do PDF", e);
         }
-        return out.toByteArray();
     }
 
-    // Auxiliar para Tabela de Resumo (2 colunas)
     private void adicionarLinhaTabela(PdfPTable table, String label, String valor, Color bg) {
         PdfPCell c1 = new PdfPCell(new Phrase(label));
         c1.setBackgroundColor(bg);
@@ -159,16 +162,14 @@ public class RelatorioMensalService {
         table.addCell(c2);
     }
 
-    // Auxiliar para Cabeçalho da Tabela de Pagamentos
     private void adicionarCelulaHeader(PdfPTable table, String texto, Font font) {
         PdfPCell cell = new PdfPCell(new Phrase(texto, font));
-        cell.setBackgroundColor(Color.GRAY);
+        cell.setBackgroundColor(Color.DARK_GRAY); // Escurecido para melhor leitura
         cell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        cell.setPadding(6);
+        cell.setPadding(8); // Aumentado para respirar
         table.addCell(cell);
     }
 
-    // Auxiliar para Linhas da Tabela de Pagamentos
     private void adicionarCelula(PdfPTable table, String texto, int alinhamento) {
         PdfPCell cell = new PdfPCell(new Phrase(texto));
         cell.setHorizontalAlignment(alinhamento);
@@ -182,19 +183,20 @@ public class RelatorioMensalService {
 
         helper.setFrom(remetente);
         helper.setTo(destinatario);
-        helper.setSubject("Relatório Mensal - " + dataRef.format(DateTimeFormatter.ofPattern("MM/yyyy")));
+        helper.setSubject("Relatório Mensal Financeiro - " + dataRef.format(DateTimeFormatter.ofPattern("MM/yyyy")));
 
         String corpo = String.format("""
-            Olá,
+            Olá Administrador,
             
-            O fechamento do mês de %s foi processado.
-            Segue em anexo o relatório detalhado de faturamento e quebras.
+            O fechamento do mês de %s foi processado com sucesso.
+            Segue em anexo o relatório gerencial contendo o faturamento, lucro bruto e auditoria de caixas (quebras).
             
-            Sistema DDCosméticos
+            Atenciosamente,
+            Sistema Automatizado DDCosméticos
             """, dataRef.format(DateTimeFormatter.ofPattern("MMMM/yyyy", new Locale("pt", "BR"))));
 
         helper.setText(corpo);
-        helper.addAttachment("Resumo_" + dataRef.toString() + ".pdf", new ByteArrayResource(anexo));
+        helper.addAttachment("DDCosmeticos_Fechamento_" + dataRef.toString() + ".pdf", new ByteArrayResource(anexo));
 
         mailSender.send(message);
     }

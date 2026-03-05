@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/dashboard")
@@ -25,11 +26,14 @@ public class DashboardController {
 
     private final DashboardService dashboardService;
 
-    // 1. ENDPOINT PRINCIPAL
+    // =========================================================================
+    // 1. ENDPOINT PRINCIPAL (ATUALIZADO PARA O NOVO MOTOR GERENCIAL)
+    // =========================================================================
     @GetMapping
     @Operation(summary = "Carregar Dashboard")
-    public ResponseEntity<DashboardDTO> getDashboardCompleto() {
-        return ResponseEntity.ok(dashboardService.carregarDashboard());
+    public ResponseEntity<Map<String, Object>> getDashboardCompleto() {
+        // Agora o Controller chama o método correto que contém a IA, Mix de Pagamentos e Lucro Bruto!
+        return ResponseEntity.ok(dashboardService.obterDadosDoDashboard());
     }
 
     // 2. Resumo Operacional

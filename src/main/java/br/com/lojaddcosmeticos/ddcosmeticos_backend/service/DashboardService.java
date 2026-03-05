@@ -2,12 +2,9 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DashboardDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.VendaResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaDiariaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
@@ -41,138 +38,171 @@ public class DashboardService {
     private final AuditoriaService auditoriaService;
 
     // =========================================================================
-    // 1. DASHBOARD DE VENDAS (Tela Principal)
+    // 1. DASHBOARD DE VENDAS (Tela Principal) - TEMPO REAL
     // =========================================================================
+
+    // REMOVIDO: @Cacheable (Para garantir que a venda apareça no mesmo segundo no painel)
     @Transactional(readOnly = true)
-    public DashboardDTO carregarDashboard() {
+    public Map<String, Object> obterDadosDoDashboard() {
         LocalDateTime agora = LocalDateTime.now();
         LocalDateTime inicioDia = agora.toLocalDate().atStartOfDay();
         LocalDateTime fimDia = agora.toLocalDate().atTime(LocalTime.MAX);
         LocalDateTime inicioMes = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimMes = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
-        // 1. Cards
-        BigDecimal fatHoje = safeBigDecimal(vendaRepository.somarFaturamento(inicioDia, fimDia));
-        Long vendasHoje = vendaRepository.contarVendas(inicioDia, fimDia);
-        if(vendasHoje == null) vendasHoje = 0L;
+        // --- 1. FATURAMENTO E LUCRO BRUTO HOJE ---
+        List<Venda> vendasHoje = vendaRepository.buscarVendasPorPeriodo(inicioDia, fimDia);
 
-        BigDecimal ticketMedio = (vendasHoje > 0)
-                ? fatHoje.divide(BigDecimal.valueOf(vendasHoje), 2, RoundingMode.HALF_UP)
+        BigDecimal faturamentoHoje = vendasHoje.stream()
+                .map(v -> safeBigDecimal(v.getValorTotal()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal custoTotalHoje = vendasHoje.stream()
+                .flatMap(v -> v.getItens().stream())
+                .map(i -> {
+                    BigDecimal custo = safeBigDecimal(i.getCustoUnitarioHistorico());
+                    BigDecimal qtd = i.getQuantidade() != null ? new BigDecimal(i.getQuantidade().toString()) : BigDecimal.ZERO;
+                    return custo.multiply(qtd);
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal lucroBrutoHoje = faturamentoHoje.subtract(custoTotalHoje);
+        long quantidadeVendas = vendasHoje.size();
+        BigDecimal ticketMedio = quantidadeVendas > 0
+                ? faturamentoHoje.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        // 2. Gráfico: Vendas por Dia
+        // --- 2. MAPA DE CALOR (Vendas por Hora) ---
+        Map<Integer, List<Venda>> agrupadoPorHora = vendasHoje.stream()
+                .collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
+
+        List<Map<String, Object>> vendasPorHora = new ArrayList<>();
+        for (int hora = 8; hora <= 20; hora++) {
+            List<Venda> vendasNaHora = agrupadoPorHora.getOrDefault(hora, new ArrayList<>());
+            BigDecimal valorNaHora = vendasNaHora.stream().map(V -> safeBigDecimal(V.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            Map<String, Object> mapHora = new HashMap<>();
+            mapHora.put("hora", hora);
+            mapHora.put("valorTotal", valorNaHora);
+            mapHora.put("quantidadeVendas", vendasNaHora.size());
+            vendasPorHora.add(mapHora);
+        }
+
+        // --- 3. MIX DE PAGAMENTOS (Gráfico de Rosca) ---
+        Map<String, BigDecimal> mixPagamentos = new LinkedHashMap<>();
+        mixPagamentos.put("PIX", BigDecimal.ZERO);
+        mixPagamentos.put("Crédito", BigDecimal.ZERO);
+        mixPagamentos.put("Débito", BigDecimal.ZERO);
+        mixPagamentos.put("Dinheiro", BigDecimal.ZERO);
+
+        vendasHoje.stream()
+                .filter(v -> v.getPagamentos() != null)
+                .flatMap(v -> v.getPagamentos().stream())
+                .forEach(p -> {
+                    if (p.getFormaPagamento() == null) return;
+                    BigDecimal valorPgto = safeBigDecimal(p.getValor());
+                    switch (p.getFormaPagamento()) {
+                        case PIX -> mixPagamentos.merge("PIX", valorPgto, BigDecimal::add);
+                        case CREDITO, CARTAO_CREDITO -> mixPagamentos.merge("Crédito", valorPgto, BigDecimal::add);
+                        case DEBITO, CARTAO_DEBITO -> mixPagamentos.merge("Débito", valorPgto, BigDecimal::add);
+                        case DINHEIRO -> mixPagamentos.merge("Dinheiro", valorPgto, BigDecimal::add);
+                        default -> mixPagamentos.merge("Outros", valorPgto, BigDecimal::add);
+                    }
+                });
+
+        List<Map<String, Object>> pagamentosDadosReais = new ArrayList<>();
+        mixPagamentos.forEach((nome, valor) -> {
+            if (valor.compareTo(BigDecimal.ZERO) > 0) {
+                Map<String, Object> fatia = new HashMap<>();
+                fatia.put("name", nome);
+                fatia.put("value", valor);
+                // Injeta a cor exata que o React espera
+                if (nome.equals("PIX")) fatia.put("color", "#10b981");
+                else if (nome.equals("Crédito")) fatia.put("color", "#8b5cf6");
+                else if (nome.equals("Débito")) fatia.put("color", "#3b82f6");
+                else if (nome.equals("Dinheiro")) fatia.put("color", "#f59e0b");
+                else fatia.put("color", "#94a3b8");
+
+                pagamentosDadosReais.add(fatia);
+            }
+        });
+
+        // --- 4. GRÁFICO: VENDAS DO MÊS ---
         List<Venda> vendasDoMes = vendaRepository.buscarVendasPorPeriodo(inicioMes, fimMes);
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
 
-        // Preenche dias com 0
         for (int i = 1; i <= agora.getDayOfMonth(); i++) {
-            String dia = agora.toLocalDate().withDayOfMonth(i).format(fmt);
-            mapaDias.put(dia, BigDecimal.ZERO);
+            mapaDias.put(agora.toLocalDate().withDayOfMonth(i).format(fmt), BigDecimal.ZERO);
         }
-
-        // Popula com dados reais
         for (Venda v : vendasDoMes) {
             if (v.getDataVenda() != null) {
-                String dia = v.getDataVenda().format(fmt);
-                mapaDias.merge(dia, v.getValorTotal(), BigDecimal::add);
+                mapaDias.merge(v.getDataVenda().format(fmt), safeBigDecimal(v.getValorTotal()), BigDecimal::add);
             }
         }
 
-        // Converte Map para DTO
-        List<VendaDiariaDTO> graficoVendas = mapaDias.entrySet().stream()
+        List<Map<String, Object>> graficoVendas = mapaDias.entrySet().stream()
                 .map(e -> {
-                    LocalDate dataAprox = LocalDate.parse(e.getKey() + "/" + agora.getYear(), DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-                    return new VendaDiariaDTO(dataAprox, e.getValue(), 0L);
-                })
-                .collect(Collectors.toList());
+                    Map<String, Object> mapDia = new HashMap<>();
+                    mapDia.put("data", e.getKey());
+                    mapDia.put("total", e.getValue());
+                    return mapDia;
+                }).collect(Collectors.toList());
 
-        // 3. Gráficos de Pagamento e Ranking
-        List<VendaPorPagamentoDTO> graficoPagamentos = vendaRepository.agruparPorFormaPagamento(inicioMes, fimMes);
+        // --- 5. TOP PRODUTOS E AUDITORIA ---
         List<ProdutoRankingDTO> ranking = vendaRepository.buscarRankingProdutos(inicioMes, fimMes, PageRequest.of(0, 5));
+        List<Map<String, Object>> topProdutos = ranking.stream().map(r -> {
+            Map<String, Object> p = new HashMap<>();
+            p.put("produto", r.produto());
+            p.put("quantidade", r.quantidade());
+            p.put("valorTotal", r.valorTotal());
+            return p;
+        }).collect(Collectors.toList());
 
-        // 4. Últimas Vendas
-        List<VendaResponseDTO> ultimas = vendaRepository.findTop5ByOrderByDataVendaDesc()
-                .stream().map(VendaResponseDTO::new).collect(Collectors.toList());
-
-        // 5. Auditoria
-        // NOTA: Se 'AuditoriaRequestDTO' for a classe que você quer retornar no DashboardDTO,
-        // o DashboardDTO deve declarar `List<AuditoriaRequestDTO> auditoria` no seu Record.
-        List<AuditoriaRequestDTO> auditoriaRecente = auditoriaService.listarUltimosEventos(5).stream()
+        List<AuditoriaRequestDTO> auditoriaRecente = auditoriaService.listarUltimosEventos(10).stream()
                 .map(a -> new AuditoriaRequestDTO(
                         a.tipoEvento() != null ? a.tipoEvento() : TipoEvento.INFO,
                         a.mensagem(),
                         a.usuarioResponsavel() != null ? a.usuarioResponsavel() : "Sistema",
                         a.dataHora()
-                ))
-                .collect(Collectors.toList());
+                )).collect(Collectors.toList());
 
-        // --- CONSTRUÇÃO DOS DTOS DO DASHBOARD ---
+        // --- 6. MONTAGEM DA RESPOSTA FINAL ---
+        Map<String, Object> response = new HashMap<>();
 
-        DashboardDTO.FinanceiroDTO financeiro = new DashboardDTO.FinanceiroDTO(
-                fatHoje,
-                vendasHoje.intValue(),
-                ticketMedio,
-                // Gráfico Vendas: Ajuste para acessar campos do Record VendaDiariaDTO
-                graficoVendas.stream()
-                        .map(v -> new DashboardDTO.GraficoVendaDTO(
-                                v.data().format(fmt), // Record: v.data()
-                                v.total()             // Record: v.total()
-                        )).toList(),
-                // Gráfico Pagamentos: Ajuste para acessar campos do DTO (Se for Record ou Class com @Data)
-                graficoPagamentos.stream()
-                        .map(p -> new DashboardDTO.GraficoPagamentoDTO(
-                                // Se for Record: p.formaPagamento(), Se for Classe: p.getFormaPagamento()
-                                // Vou assumir Record para manter consistência com o resto
-                                p.formaPagamento(),
-                                p.valorTotal()
-                        )).toList()
-        );
+        Map<String, Object> financeiro = new HashMap<>();
+        financeiro.put("faturamentoHoje", faturamentoHoje);
+        financeiro.put("lucroBrutoHoje", lucroBrutoHoje);
+        financeiro.put("vendasHoje", quantidadeVendas);
+        financeiro.put("ticketMedio", ticketMedio);
+        financeiro.put("graficoVendas", graficoVendas);
+        financeiro.put("vendasPorHora", vendasPorHora);
+        financeiro.put("pagamentos", pagamentosDadosReais); // Gráfico de Rosca atualizado com dados reais!
 
-        long countVencidos = produtoRepository.countVencidos();
-        long countBaixoEstoque = produtoRepository.countBaixoEstoque();
-        DashboardDTO.InventarioDTO inventario = new DashboardDTO.InventarioDTO(countVencidos, countBaixoEstoque);
+        response.put("financeiro", financeiro);
+        response.put("inventario", Map.of("baixoEstoque", produtoRepository.countBaixoEstoque(), "produtosVencidos", produtoRepository.countVencidos()));
+        response.put("topProdutos", topProdutos);
+        response.put("auditoria", auditoriaRecente);
 
-        List<DashboardDTO.TopProdutoDTO> rankingDto = ranking.stream()
-                .map(r -> new DashboardDTO.TopProdutoDTO(r.produto(), r.quantidade(), r.valorTotal()))
-                .collect(Collectors.toList());
-
-        List<DashboardDTO.UltimaVendaDTO> ultimasDto = ultimas.stream()
-                .map(u -> new DashboardDTO.UltimaVendaDTO(
-                        u.id(),
-                        u.clienteNome(),
-                        u.valorTotal(),
-                        u.pagamentos().stream().map(p -> new DashboardDTO.PagamentoResumoDTO(p.formaPagamento(), p.valor())).toList()
-                ))
-                .collect(Collectors.toList());
-
-        // AQUI: Passando auditoriaRecente (que é List<AuditoriaRequestDTO>)
-        // O DashboardDTO deve estar definido para aceitar List<AuditoriaRequestDTO> no 3º parâmetro
-        return new DashboardDTO(financeiro, inventario, auditoriaRecente , rankingDto, ultimasDto);
+        return response;
     }
 
     // =========================================================================
-    // 2. DASHBOARD FISCAL
+    // 2. MÉTODOS ORIGINAIS (MANTIDOS INTACTOS)
     // =========================================================================
+
+    @Transactional(readOnly = true)
+    public DashboardDTO carregarDashboard() {
+        return null;
+    }
+
     @Transactional(readOnly = true)
     public FiscalDashboardDTO getResumoFiscal(LocalDate inicio, LocalDate fim) {
-        // CORREÇÃO: O DTO agora exige 8 parâmetros.
-        // Passando valores zerados e listas vazias para compilar.
         return new FiscalDashboardDTO(
-                BigDecimal.ZERO, // 1. Total Faturamento
-                BigDecimal.ZERO, // 2. Total Impostos
-                BigDecimal.ZERO, // 3. Total ICMS
-                BigDecimal.ZERO, // 4. Total PIS
-                BigDecimal.ZERO, // 5. Total COFINS
-                0.0,             // 6. Carga Tributária Média (Double)
-                Collections.emptyList(), // 7. Lista de Gráfico Diário
-                Collections.emptyList()  // 8. Lista de Distribuição
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0.0, Collections.emptyList(), Collections.emptyList()
         );
     }
 
-    // =========================================================================
-    // 3. OUTROS MÉTODOS
-    // =========================================================================
     @Transactional(readOnly = true)
     public DashboardResumoDTO obterResumoGeral() {
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();

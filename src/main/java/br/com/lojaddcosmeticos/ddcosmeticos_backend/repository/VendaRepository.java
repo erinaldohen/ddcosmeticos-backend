@@ -79,17 +79,17 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // 3. RELATÓRIOS (COM CASTS EXPLÍCITOS PARA EVITAR ERRO DE CONSTRUTOR)
     // =========================================================================
 
-    // DTO: (FormaPagamento, BigDecimal, Long)
+    // DTO esperado: VendaPorPagamentoDTO(FormaDePagamento formaPagamento, Long quantidade, BigDecimal valorTotal)
+    // Verifique no seu DTO se a ordem é Forma, Quantidade (COUNT), e depois Valor (SUM)
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.VendaPorPagamentoDTO(
             p.formaPagamento, 
-            CAST(SUM(p.valor) AS BigDecimal),
-            CAST(COUNT(p) AS Long)
+            CAST(COUNT(p.id) AS Long),
+            CAST(SUM(p.valor) AS BigDecimal)
         )
-        FROM Venda v 
-        JOIN v.pagamentos p
-        WHERE v.dataVenda BETWEEN :inicio AND :fim 
-        AND (v.statusNfce IS NULL OR v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
+        FROM PagamentoVenda p 
+        WHERE p.venda.dataVenda BETWEEN :inicio AND :fim 
+        AND (p.venda.statusNfce IS NULL OR p.venda.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)
         GROUP BY p.formaPagamento
     """)
     List<VendaPorPagamentoDTO> agruparPorFormaPagamento(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);

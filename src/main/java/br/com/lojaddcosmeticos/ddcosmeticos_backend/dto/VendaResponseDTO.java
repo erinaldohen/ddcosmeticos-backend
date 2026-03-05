@@ -21,9 +21,10 @@ public record VendaResponseDTO(
         BigDecimal valorIbs,
         BigDecimal valorCbs,
         BigDecimal valorIs,
-        BigDecimal valorTotalImpostos,
+        BigDecimal valorLiquido, // <-- Ajustado para bater com o VendaService
         StatusFiscal status,
-        String observacao
+        String chaveAcessoNfce,  // <-- Ajustado para bater com o VendaService
+        String observacao        // Adicionado como extra útil
 ) {
     // Construtor auxiliar que aceita a Entidade Venda
     public VendaResponseDTO(Venda venda) {
@@ -34,22 +35,21 @@ public record VendaResponseDTO(
                 venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO,
                 venda.getClienteNome(),
                 venda.getFormaDePagamento(),
-                // Mapeia os itens usando o construtor do ItemVendaResponseDTO
+
                 venda.getItens() != null
                         ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
                         : List.of(),
-                // Mapeia os pagamentos usando o construtor do PagamentoResponseDTO
+
                 venda.getPagamentos() != null
                         ? venda.getPagamentos().stream().map(PagamentoResponseDTO::new).collect(Collectors.toList())
                         : List.of(),
+
                 venda.getValorIbs() != null ? venda.getValorIbs() : BigDecimal.ZERO,
                 venda.getValorCbs() != null ? venda.getValorCbs() : BigDecimal.ZERO,
                 venda.getValorIs() != null ? venda.getValorIs() : BigDecimal.ZERO,
-                // Soma total de impostos
-                (venda.getValorIbs() != null ? venda.getValorIbs() : BigDecimal.ZERO)
-                        .add(venda.getValorCbs() != null ? venda.getValorCbs() : BigDecimal.ZERO)
-                        .add(venda.getValorIs() != null ? venda.getValorIs() : BigDecimal.ZERO),
+                venda.getValorLiquido() != null ? venda.getValorLiquido() : BigDecimal.ZERO,
                 venda.getStatusNfce(),
+                venda.getChaveAcessoNfce(),
                 venda.getObservacao()
         );
     }

@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -40,7 +41,9 @@ public class ProdutoService {
         return produtoRepository.findAll(pageable).map(ProdutoDTO::new);
     }
 
-    // --- IMPORTAÇÃO CSV ---
+    // =========================================================================
+    // IMPORTAÇÃO INTELIGENTE (CSV, XLS, XLSX)
+    // =========================================================================
     public Map<String, Object> importarProdutos(MultipartFile file) {
         Map<String, Object> response = new HashMap<>();
 
@@ -51,56 +54,100 @@ public class ProdutoService {
         }
 
         try {
-            byte[] bytes = file.getBytes();
-            return processarCsvBruto(bytes);
+            String originalFilename = file.getOriginalFilename();
+            if (originalFilename != null && (originalFilename.toLowerCase().endsWith(".xlsx") || originalFilename.toLowerCase().endsWith(".xls"))) {
+                return processarExcelBruto(file);
+            } else {
+                return processarCsvBruto(file.getBytes());
+            }
         } catch (Exception e) {
-            log.error("Erro interno: ", e);
+            log.error("Erro interno na importação: ", e);
             response.put("sucesso", false);
             response.put("mensagem", "Erro interno: " + e.getMessage());
             return response;
         }
     }
 
-    private Map<String, Object> processarCsvBruto(byte[] bytes) {
+    // --- PROCESSAMENTO NATIVO DE EXCEL (XLS E XLSX) ---
+    private Map<String, Object> processarExcelBruto(MultipartFile file) {
         List<Produto> lote = new ArrayList<>();
         List<String> listaErros = new ArrayList<>();
         int salvos = 0;
-
         Map<String, Object> resultado = new HashMap<>();
 
-        try {
-            String conteudo = new String(bytes, StandardCharsets.UTF_8);
-            if (conteudo.startsWith("\uFEFF")) conteudo = conteudo.substring(1);
+        try (InputStream is = file.getInputStream();
+             Workbook workbook = WorkbookFactory.create(is)) {
 
-            String[] linhas = conteudo.split("\\r?\\n");
-
-            if (linhas.length < 2) {
+            Sheet sheet = workbook.getSheetAt(0); // Pega a primeira aba da planilha
+            if (sheet.getPhysicalNumberOfRows() < 2) {
                 resultado.put("sucesso", false);
-                resultado.put("mensagem", "Arquivo sem dados.");
+                resultado.put("mensagem", "Arquivo Excel sem dados (apenas cabeçalho ou vazio).");
                 return resultado;
             }
 
-            String headerLine = linhas[0];
-            String delimitador = headerLine.contains(";") ? ";" : ",";
-            String[] headers = headerLine.split(delimitador);
+            // Lê o cabeçalho (Linha 0)
+            Row headerRow = sheet.getRow(0);
+            int numCols = headerRow.getLastCellNum();
+            String[] headers = new String[numCols];
+
+            // O DataFormatter garante que lemos o que o usuário vê na tela do Excel
+            DataFormatter dataFormatter = new DataFormatter();
+
+            for (int i = 0; i < numCols; i++) {
+                Cell cell = headerRow.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                headers[i] = dataFormatter.formatCellValue(cell).trim();
+            }
 
             Map<String, Integer> mapa = criarMapaColunasInteligente(headers);
 
             if (!mapa.containsKey("ean")) {
                 resultado.put("sucesso", false);
-                resultado.put("mensagem", "ERRO CRÍTICO: Coluna 'EAN' não encontrada.");
+                resultado.put("mensagem", "ERRO CRÍTICO: Coluna 'Código de Barras' não encontrada na planilha.");
                 return resultado;
             }
 
-            for (int i = 1; i < linhas.length; i++) {
-                String linha = linhas[i].trim();
-                if (linha.isEmpty()) continue;
-                String[] dados = linha.split(delimitador, -1);
+            Map<String, Produto> produtosNoLote = new HashMap<>();
+
+            // Lê as linhas de dados (A partir da Linha 1)
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+
+                String[] dados = new String[numCols];
+                boolean rowIsEmpty = true;
+
+                for (int j = 0; j < numCols; j++) {
+                    Cell cell = row.getCell(j, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                    dados[j] = dataFormatter.formatCellValue(cell).trim();
+                    if (!dados[j].isEmpty()) rowIsEmpty = false;
+                }
+
+                if (rowIsEmpty) continue;
 
                 try {
-                    Produto p = criarProdutoDaLinha(dados, mapa);
-                    if (p != null) lote.add(p);
-                    else listaErros.add("Linha " + (i+1) + ": Ignorada (Sem EAN).");
+                    String eanBruto = getVal(dados, mapa.get("ean"));
+
+                    if (eanBruto.toUpperCase().contains("E+")) {
+                        listaErros.add("Linha " + (i+1) + ": EAN lido como notação científica (" + eanBruto + "). Formate a coluna no Excel como 'Texto' ou 'Número'.");
+                        continue;
+                    }
+
+                    String ean = eanBruto.replaceAll("[^0-9]", "");
+                    if (ean.isEmpty()) {
+                        listaErros.add("Linha " + (i+1) + ": Código de Barras vazio.");
+                        continue;
+                    }
+
+                    if (produtosNoLote.containsKey(ean)) {
+                        listaErros.add("Linha " + (i+1) + ": EAN " + ean + " duplicado no arquivo. Ignorando repetição.");
+                        continue;
+                    }
+
+                    Produto p = criarProdutoDaLinha(dados, mapa, ean);
+                    if (p != null) {
+                        produtosNoLote.put(ean, p);
+                        lote.add(p);
+                    }
                 } catch (Exception e) {
                     listaErros.add("Linha " + (i+1) + ": Erro (" + e.getMessage() + ")");
                 }
@@ -115,9 +162,104 @@ public class ProdutoService {
             resultado.put("qtdImportados", salvos);
             resultado.put("qtdErros", listaErros.size());
             resultado.put("listaErros", listaErros);
-            resultado.put("mensagem", listaErros.isEmpty() ?
-                    "Sucesso! " + salvos + " importados." :
-                    "Importados: " + salvos + ". Falhas: " + listaErros.size());
+
+            if (listaErros.isEmpty()) {
+                resultado.put("mensagem", "Sucesso! " + salvos + " produtos importados direto do Excel.");
+            } else if (salvos > 0) {
+                resultado.put("mensagem", salvos + " importados. Atenção: " + listaErros.size() + " falhas ignoradas (Veja o log).");
+            } else {
+                resultado.put("mensagem", "Nenhum produto importado. " + listaErros.size() + " falhas encontradas.");
+            }
+
+        } catch (Exception e) {
+            log.error("Erro ao processar Excel: ", e);
+            resultado.put("sucesso", false);
+            resultado.put("mensagem", "Erro crítico ao ler Excel: " + e.getMessage());
+        }
+        return resultado;
+    }
+
+    // --- PROCESSAMENTO CLÁSSICO DE CSV ---
+    private Map<String, Object> processarCsvBruto(byte[] bytes) {
+        List<Produto> lote = new ArrayList<>();
+        List<String> listaErros = new ArrayList<>();
+        int salvos = 0;
+        Map<String, Object> resultado = new HashMap<>();
+
+        try {
+            String conteudo = new String(bytes, StandardCharsets.UTF_8);
+            if (conteudo.startsWith("\uFEFF")) conteudo = conteudo.substring(1);
+            String[] linhas = conteudo.split("\\r?\\n");
+
+            if (linhas.length < 2) {
+                resultado.put("sucesso", false);
+                resultado.put("mensagem", "Arquivo CSV sem dados.");
+                return resultado;
+            }
+
+            String headerLine = linhas[0];
+            String delimitador = headerLine.contains(";") ? ";" : ",";
+            String[] headers = headerLine.split(delimitador);
+            Map<String, Integer> mapa = criarMapaColunasInteligente(headers);
+
+            if (!mapa.containsKey("ean")) {
+                resultado.put("sucesso", false);
+                resultado.put("mensagem", "ERRO CRÍTICO: Coluna 'EAN' não encontrada.");
+                return resultado;
+            }
+
+            Map<String, Produto> produtosNoLote = new HashMap<>();
+
+            for (int i = 1; i < linhas.length; i++) {
+                String linha = linhas[i].trim();
+                if (linha.isEmpty()) continue;
+                String[] dados = linha.split(delimitador, -1);
+
+                try {
+                    String eanBruto = getVal(dados, mapa.get("ean"));
+                    if (eanBruto.toUpperCase().contains("E+")) {
+                        listaErros.add("Linha " + (i+1) + ": EAN corrompido (" + eanBruto + ").");
+                        continue;
+                    }
+
+                    String ean = eanBruto.replaceAll("[^0-9]", "");
+                    if (ean.isEmpty()) {
+                        listaErros.add("Linha " + (i+1) + ": Código vazio.");
+                        continue;
+                    }
+
+                    if (produtosNoLote.containsKey(ean)) {
+                        listaErros.add("Linha " + (i+1) + ": EAN duplicado.");
+                        continue;
+                    }
+
+                    Produto p = criarProdutoDaLinha(dados, mapa, ean);
+                    if (p != null) {
+                        produtosNoLote.put(ean, p);
+                        lote.add(p);
+                    }
+                } catch (Exception e) {
+                    listaErros.add("Linha " + (i+1) + ": Erro (" + e.getMessage() + ")");
+                }
+            }
+
+            if (!lote.isEmpty()) {
+                produtoRepository.saveAll(lote);
+                salvos = lote.size();
+            }
+
+            resultado.put("sucesso", true);
+            resultado.put("qtdImportados", salvos);
+            resultado.put("qtdErros", listaErros.size());
+            resultado.put("listaErros", listaErros);
+
+            if (listaErros.isEmpty()) {
+                resultado.put("mensagem", "Sucesso! " + salvos + " importados.");
+            } else if (salvos > 0) {
+                resultado.put("mensagem", salvos + " importados. Atenção: " + listaErros.size() + " erros.");
+            } else {
+                resultado.put("mensagem", "Nenhum importado. " + listaErros.size() + " falhas.");
+            }
 
         } catch (Exception e) {
             log.error("Erro ao processar CSV: ", e);
@@ -127,6 +269,9 @@ public class ProdutoService {
         return resultado;
     }
 
+    // =========================================================================
+    // INTELIGÊNCIA COMPARTILHADA (CSV E EXCEL)
+    // =========================================================================
     private Map<String, Integer> criarMapaColunasInteligente(String[] headers) {
         Map<String, Integer> mapa = new HashMap<>();
         for (int i = 0; i < headers.length; i++) {
@@ -157,11 +302,7 @@ public class ProdutoService {
         return mapa;
     }
 
-    private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa) {
-        if (!mapa.containsKey("ean")) return null;
-        String ean = getVal(dados, mapa.get("ean")).replaceAll("[^0-9]", "");
-        if (ean.isEmpty()) return null;
-
+    private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa, String ean) {
         Produto p = produtoRepository.findByEanIrrestrito(ean)
                 .stream().findFirst()
                 .orElse(new Produto());
@@ -281,7 +422,9 @@ public class ProdutoService {
     private String truncar(String str, int max) { return (str == null || str.length() <= max) ? (str == null ? "" : str) : str.substring(0, max); }
     private String normalizarTexto(String str) { return str == null ? "" : Normalizer.normalize(str.replace("\uFEFF", "").toUpperCase(), Normalizer.Form.NFD).replaceAll("[\\p{InCombiningDiacriticalMarks}]", "").replaceAll("[^A-Z0-9]", ""); }
 
-    // --- MÉTODOS CRUD E FILTROS ---
+    // =========================================================================
+    // RESTANTE MANTIDO INTACTO (CRUD, SANEAMENTO, EXPORTAÇÃO)
+    // =========================================================================
 
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(
@@ -352,7 +495,6 @@ public class ProdutoService {
         return salvar(produto);
     }
 
-    // BLINDAGEM DE CADASTRO AQUI: Nunca deixa o custo ficar null.
     private void atualizarDados(Produto p, ProdutoDTO d) {
         p.setDescricao(d.descricao());
         p.setCodigoBarras(d.codigoBarras());
@@ -393,7 +535,6 @@ public class ProdutoService {
         produtoRepository.save(prod);
     }
 
-    // NOVO: Atualiza o custo direto nas rotinas de Entrada de Estoque
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public void definirPrecoCusto(Long id, BigDecimal custo) {
@@ -417,8 +558,6 @@ public class ProdutoService {
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public void reativarPorEan(String ean) { produtoRepository.findByEanIrrestrito(ean).ifPresent(p -> { p.setAtivo(true); produtoRepository.save(p); }); }
-
-    // --- FISCAL & INTELIGÊNCIA ---
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -446,7 +585,6 @@ public class ProdutoService {
         return resultado;
     }
 
-    // NOVO: Solução de BI para arrumar os Dashboards com custo zero
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public Map<String, Object> saneamentoCustos() {
@@ -454,10 +592,8 @@ public class ProdutoService {
         int alterados = 0;
 
         for (Produto p : todos) {
-            // Se o custo for Zero ou Nulo, mas ele tiver um preço de venda cadastrado
             if (p.getPrecoCusto() == null || p.getPrecoCusto().compareTo(BigDecimal.ZERO) == 0) {
                 if (p.getPrecoVenda() != null && p.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0) {
-                    // Estima o custo de aquisição como 50% do valor da prateleira
                     p.setPrecoCusto(p.getPrecoVenda().divide(new BigDecimal("2"), 2, RoundingMode.HALF_UP));
                     alterados++;
                 }
@@ -498,7 +634,6 @@ public class ProdutoService {
         return resultado;
     }
 
-    // --- EXPORTAÇÃO CSV ---
     public byte[] gerarRelatorioCsv() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         StringBuilder sb = new StringBuilder();
@@ -519,7 +654,6 @@ public class ProdutoService {
         return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
     }
 
-    // --- EXPORTAÇÃO EXCEL ---
     public byte[] gerarRelatorioExcel() {
         List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
         try (Workbook workbook = new XSSFWorkbook();

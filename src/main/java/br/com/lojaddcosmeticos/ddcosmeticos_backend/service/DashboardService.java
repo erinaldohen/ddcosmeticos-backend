@@ -7,13 +7,16 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboar
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PagamentoVenda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
@@ -50,23 +54,34 @@ public class DashboardService {
         LocalDateTime inicioMes = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimMes = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
-        // --- 1. FATURAMENTO, LUCRO BRUTO E PA HOJE ---
+        // --- 1. FATURAMENTO E LUCRO BRUTO (COM CUSTO CORRIGIDO) ---
         List<Venda> vendasHoje = vendaRepository.buscarVendasPorPeriodo(inicioDia, fimDia);
 
-        BigDecimal faturamentoHoje = vendasHoje.stream()
-                .map(v -> safeBigDecimal(v.getValorTotal()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal faturamentoHoje = BigDecimal.ZERO;
+        BigDecimal custoTotalHoje = BigDecimal.ZERO;
+        long itensVendidosHoje = 0L;
 
-        BigDecimal custoTotalHoje = vendasHoje.stream()
-                .flatMap(v -> v.getItens().stream())
-                .map(i -> safeBigDecimal(i.getCustoUnitarioHistorico()).multiply(
-                        i.getQuantidade() != null ? new BigDecimal(i.getQuantidade().toString()) : BigDecimal.ZERO))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Loop seguro e aprova de falhas para calcular o Custo Exato
+        for (Venda v : vendasHoje) {
+            faturamentoHoje = faturamentoHoje.add(safeBigDecimal(v.getValorTotal()));
 
-        long itensVendidosHoje = vendasHoje.stream()
-                .flatMap(v -> v.getItens().stream())
-                .mapToLong(i -> i.getQuantidade() != null ? i.getQuantidade().longValue() : 0L)
-                .sum();
+            if (v.getItens() != null) {
+                for (ItemVenda i : v.getItens()) {
+                    long qtd = i.getQuantidade() != null ? i.getQuantidade().longValue() : 0L;
+                    itensVendidosHoje += qtd;
+
+                    BigDecimal custoUnitario = safeBigDecimal(i.getCustoUnitarioHistorico());
+
+                    // Plano B: Se por algum erro a venda foi salva sem custo histórico, ele busca o custo do produto no banco
+                    if (custoUnitario.compareTo(BigDecimal.ZERO) == 0 && i.getProduto() != null) {
+                        custoUnitario = safeBigDecimal(i.getProduto().getPrecoCusto());
+                    }
+
+                    BigDecimal custoDesteItem = custoUnitario.multiply(new BigDecimal(qtd));
+                    custoTotalHoje = custoTotalHoje.add(custoDesteItem);
+                }
+            }
+        }
 
         BigDecimal lucroBrutoHoje = faturamentoHoje.subtract(custoTotalHoje);
         long quantidadeVendas = vendasHoje.size();
@@ -120,14 +135,12 @@ public class DashboardService {
         }).collect(Collectors.toList());
 
         // --- 5. INDICADORES TÁTICOS REAIS ---
-
-        // 5.1 Ruptura de Estoque (Produtos ativos zerados)
         long totalProdutosAtivos = produtoRepository.count();
         long produtosZerados = produtoRepository.countByQuantidadeEmEstoqueLessThanEqualAndAtivoTrue(0);
         double indiceRuptura = totalProdutosAtivos > 0 ? ((double) produtosZerados / totalProdutosAtivos) * 100 : 0.0;
 
-        // 5.2 Giro de Estoque (Dias estimados para limpar o estoque atual baseado nas vendas do mês)
-        long estoqueTotalItens = produtoRepository.calcularQuantidadeTotalEstoque(); // Criar no ProdutoRepository se não existir
+        Long estoqueQuery = produtoRepository.calcularQuantidadeTotalEstoque();
+        long estoqueTotalItens = estoqueQuery != null ? estoqueQuery : 0L;
         long itensVendidosMes = vendasDoMes.stream()
                 .flatMap(v -> v.getItens().stream())
                 .mapToLong(i -> i.getQuantidade() != null ? i.getQuantidade().longValue() : 0L).sum();
@@ -138,15 +151,12 @@ public class DashboardService {
             giroEstoqueDias = (int) (estoqueTotalItens / mediaVendaDiaria);
         }
 
-        // 5.3 Simples Nacional (Estimativa baseada no mês)
         BigDecimal faturamentoMes = vendasDoMes.stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        String faixaSimples = "4,00% (Anexo I)"; // Base Comercial DD Cosméticos
+        String faixaSimples = "4,00% (Anexo I)";
         if (faturamentoMes.compareTo(new BigDecimal("15000")) > 0) faixaSimples = "7,30% (Anexo I)";
         if (faturamentoMes.compareTo(new BigDecimal("30000")) > 0) faixaSimples = "9,50% (Anexo I)";
 
         // --- 6. PERFORMANCE VENDEDORES E ORIGEM ---
-
-        // Agrupamento seguro usando o seu getUsuario()
         Map<String, List<Venda>> vendasPorVendedor = vendasHoje.stream()
                 .filter(v -> v.getUsuario() != null &&
                         v.getUsuario().getNome() != null &&
@@ -166,15 +176,12 @@ public class DashboardService {
             performanceVendedores.add(mapVendedor);
         });
 
-        // Ordena do maior pro menor vendedor
         performanceVendedores.sort((v1, v2) -> ((BigDecimal) v2.get("vendas")).compareTo((BigDecimal) v1.get("vendas")));
 
-        // Origem do Cliente (Usando ArrayList para evitar conflitos de imutabilidade do Java)
         List<Map<String, Object>> origemCliente = new ArrayList<>();
-        origemCliente.add(Map.of("name", "Passante (Rua)", "value", faturamentoHoje.multiply(new BigDecimal("0.60")).intValue(), "color", "#ec4899"));
+        origemCliente.add(Map.of("name", "Passante", "value", faturamentoHoje.multiply(new BigDecimal("0.60")).intValue(), "color", "#ec4899"));
         origemCliente.add(Map.of("name", "Instagram", "value", faturamentoHoje.multiply(new BigDecimal("0.25")).intValue(), "color", "#8b5cf6"));
         origemCliente.add(Map.of("name", "Indicação", "value", faturamentoHoje.multiply(new BigDecimal("0.10")).intValue(), "color", "#3b82f6"));
-        origemCliente.add(Map.of("name", "Google Maps", "value", faturamentoHoje.multiply(new BigDecimal("0.05")).intValue(), "color", "#10b981"));
 
         // --- 7. MONTAGEM DA RESPOSTA FINAL ---
         Map<String, Object> response = new HashMap<>();
@@ -198,16 +205,12 @@ public class DashboardService {
         response.put("financeiro", financeiro);
         response.put("inventario", inventario);
         response.put("topProdutos", topProdutos);
-
-        // Aqui as variáveis são reconhecidas normalmente:
         response.put("performanceVendedores", performanceVendedores);
         response.put("origemCliente", origemCliente);
         response.put("metaDiaria", 1500);
 
         return response;
     }
-
-
 
     // =========================================================================
     // 2. MÉTODOS ORIGINAIS DE RESUMO (MANTIDOS INTACTOS)

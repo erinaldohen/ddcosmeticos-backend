@@ -6,6 +6,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +24,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/produtos")
+@Tag(name = "Produtos", description = "Gestão de Catálogo e Estoque")
 public class ProdutoController {
 
     @Autowired
@@ -43,9 +45,6 @@ public class ProdutoController {
             @RequestParam(defaultValue = "10") int size) {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("descricao"));
-
-        // Chama o método do service passando todos os filtros.
-        // Certifique-se que no ProdutoService existe este método com esta assinatura.
         return ResponseEntity.ok(produtoService.listarResumo(
                 termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, pageable
         ));
@@ -76,12 +75,10 @@ public class ProdutoController {
         return ResponseEntity.ok(produtoService.buscarPorEanOuExterno(ean));
     }
 
-    // Endpoint específico para o PDV (mais leve)
     @GetMapping("/pdv")
     public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
             @RequestParam(required = false) String termo,
             Pageable pageable) {
-        // Reutiliza a busca passando nulos nos outros filtros
         return ResponseEntity.ok(produtoService.listarResumo(
                 termo, null, null, null, false, false, false, pageable
         ));
@@ -100,10 +97,22 @@ public class ProdutoController {
     }
 
     @PatchMapping("/{id}/preco")
+    @Operation(summary = "Atualização rápida do Preço de Venda")
     public ResponseEntity<Void> atualizarPreco(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
         Number novoPreco = (Number) payload.get("novoPreco");
         if (novoPreco != null) {
             produtoService.definirPrecoVenda(id, new BigDecimal(novoPreco.toString()));
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    // NOVO: Endpoint para gestão rápida de compras
+    @PatchMapping("/{id}/custo")
+    @Operation(summary = "Atualização rápida do Custo de Aquisição")
+    public ResponseEntity<Void> atualizarCusto(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
+        Number novoCusto = (Number) payload.get("novoCusto");
+        if (novoCusto != null) {
+            produtoService.definirPrecoCusto(id, new BigDecimal(novoCusto.toString()));
         }
         return ResponseEntity.noContent().build();
     }
@@ -128,6 +137,13 @@ public class ProdutoController {
     @Operation(summary = "Recalcula tributos e SALVA no banco")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
         return ResponseEntity.ok(produtoService.saneamentoFiscal());
+    }
+
+    // NOVO: Arruma o banco de dados para o Dashboard funcionar
+    @PostMapping("/saneamento-custos")
+    @Operation(summary = "Preenche custos zerados com base no preço de venda (Markup 100%)")
+    public ResponseEntity<Map<String, Object>> realizarSaneamentoCustos() {
+        return ResponseEntity.ok(produtoService.saneamentoCustos());
     }
 
     @PostMapping("/corrigir-ncms-ia")
@@ -163,12 +179,10 @@ public class ProdutoController {
 
     // --- UTILITÁRIOS ---
 
-    // CORREÇÃO CRÍTICA: Removido o método duplicado e mantido apenas este
     @GetMapping("/proximo-sequencial")
     @Operation(summary = "Gera o próximo código de barras interno (começado com 2)")
     public ResponseEntity<String> obterProximoSequencial() {
         String proximoEan = produtoService.gerarProximoEanInterno();
         return ResponseEntity.ok(proximoEan);
     }
-
 }

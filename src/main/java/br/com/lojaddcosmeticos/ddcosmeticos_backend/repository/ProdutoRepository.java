@@ -134,4 +134,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= p.estoqueMinimo AND p.ativo = true")
     long countBaixoEstoque();
+    @Query("SELECT COALESCE(SUM(p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
+    Long calcularQuantidadeTotalEstoque();
 }

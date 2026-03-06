@@ -51,7 +51,7 @@ public class RelatorioMensalService {
             LocalDateTime fim = mesAnterior.withDayOfMonth(mesAnterior.lengthOfMonth()).atTime(LocalTime.MAX);
 
             // 1. Busca Dados
-            BigDecimal faturamento = vendaRepository.somarFaturamentoTotal(inicio, fim);
+            BigDecimal faturamento = vendaRepository.somarFaturamento(inicio, fim);
             java.util.List<VendaPorPagamentoDTO> porPagamento = vendaRepository.agruparPorFormaPagamento(inicio, fim);
             BigDecimal quebras = caixaRepository.somarQuebrasDeCaixa(inicio, fim);
 

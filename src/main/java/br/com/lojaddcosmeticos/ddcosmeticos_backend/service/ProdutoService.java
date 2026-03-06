@@ -21,6 +21,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.*;
@@ -33,8 +34,6 @@ public class ProdutoService {
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired private AuditoriaService auditoriaService;
     @Autowired private CosmosService cosmosService;
-
-    // --- MÉTODOS DE CACHE E LISTAGEM ---
 
     @Cacheable(value = "produtos")
     public Page<ProdutoDTO> listarTodos(Pageable pageable) {
@@ -55,7 +54,7 @@ public class ProdutoService {
             byte[] bytes = file.getBytes();
             return processarCsvBruto(bytes);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Erro interno: ", e);
             response.put("sucesso", false);
             response.put("mensagem", "Erro interno: " + e.getMessage());
             return response;
@@ -121,7 +120,7 @@ public class ProdutoService {
                     "Importados: " + salvos + ". Falhas: " + listaErros.size());
 
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Erro ao processar CSV: ", e);
             resultado.put("sucesso", false);
             resultado.put("mensagem", "Erro crítico: " + e.getMessage());
         }
@@ -149,9 +148,6 @@ public class ProdutoService {
             else if (h.contains("MARCA")) mapa.put("marca", i);
             else if (h.contains("UNIDADE")) mapa.put("unidade", i);
             else if (h.contains("ATIVO")) mapa.put("ativo", i);
-
-                // CORREÇÃO DA DESCRIÇÃO: O !mapa.containsKey("desc") "tranca" a coluna na primeira vez que a encontra,
-                // impedindo que colunas irrelevantes no fim do CSV roubem a posição da descrição.
             else if (!mapa.containsKey("desc") &&
                     (h.contains("DESC") || h.contains("NOME") || h.equals("PRODUTO") || h.equals("NOMEDOPRODUTO") || h.contains("ARTIGO") || h.contains("ITEM"))
                     && !h.contains("CATEGORIA") && !h.contains("SUBCATEGORIA")) {
@@ -172,7 +168,6 @@ public class ProdutoService {
 
         if (p.getId() == null) {
             p.setCodigoBarras(ean);
-            // Default SKU para o EAN se for novo
             p.setSku(ean);
             p.setAtivo(true);
             p.setOrigem("0"); p.setCst("102"); p.setNcm("00000000");
@@ -184,7 +179,6 @@ public class ProdutoService {
             }
         }
 
-        // CORREÇÃO DA DESCRIÇÃO: Remove espaços em branco enganosos que causavam o falso vazio
         if (mapa.containsKey("desc")) {
             String desc = getVal(dados, mapa.get("desc"));
             if (desc != null && !desc.trim().isEmpty()) {
@@ -192,16 +186,11 @@ public class ProdutoService {
             }
         }
 
-        // Plano B: Só acionado se realmente a coluna da descrição não existir no CSV ou estiver totalmente vazia
-        if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) {
-            p.setDescricao("PRODUTO " + ean);
-        }
         if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) p.setDescricao("PRODUTO " + ean);
 
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
 
-        // LÓGICA DE ESTOQUE ORIGINAL QUE FUNCIONAVA PERFEITAMENTE RESTAURADA AQUI
         int qtdArquivo = 0;
         if (mapa.containsKey("qtd")) {
             qtdArquivo = lerDecimal(getVal(dados, mapa.get("qtd"))).intValue();
@@ -296,14 +285,8 @@ public class ProdutoService {
 
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(
-            String termo,
-            String marca,
-            String categoria,
-            String statusEstoque,
-            Boolean semImagem,
-            Boolean semNcm,
-            Boolean precoZero,
-            Pageable pageable
+            String termo, String marca, String categoria, String statusEstoque,
+            Boolean semImagem, Boolean semNcm, Boolean precoZero, Pageable pageable
     ) {
         if (pageable == null) pageable = Pageable.unpaged();
 
@@ -328,15 +311,8 @@ public class ProdutoService {
 
     private ProdutoListagemDTO toDTO(Produto p) {
         return new ProdutoListagemDTO(
-                p.getId(),
-                p.getDescricao(),
-                p.getPrecoVenda(),
-                p.getUrlImagem(),
-                p.getQuantidadeEmEstoque(),
-                p.isAtivo(),
-                p.getCodigoBarras(),
-                p.getMarca(),
-                p.getNcm()
+                p.getId(), p.getDescricao(), p.getPrecoVenda(), p.getUrlImagem(),
+                p.getQuantidadeEmEstoque(), p.isAtivo(), p.getCodigoBarras(), p.getMarca(), p.getNcm()
         );
     }
 
@@ -344,9 +320,7 @@ public class ProdutoService {
     public Produto buscarPorId(Long id) { return produtoRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Não encontrado")); }
 
     @Transactional(readOnly = true)
-    public List<Produto> buscarLixeira() {
-        return produtoRepository.findAllLixeira();
-    }
+    public List<Produto> buscarLixeira() { return produtoRepository.findAllLixeira(); }
 
     @Transactional(readOnly = true)
     public List<Produto> listarBaixoEstoque() { return produtoRepository.findProdutosComBaixoEstoque(); }
@@ -378,6 +352,7 @@ public class ProdutoService {
         return salvar(produto);
     }
 
+    // BLINDAGEM DE CADASTRO AQUI: Nunca deixa o custo ficar null.
     private void atualizarDados(Produto p, ProdutoDTO d) {
         p.setDescricao(d.descricao());
         p.setCodigoBarras(d.codigoBarras());
@@ -395,8 +370,15 @@ public class ProdutoService {
         p.setIsMonofasico(d.monofasico() != null ? d.monofasico() : false);
         p.setClassificacaoReforma(d.classificacaoReforma());
         p.setIsImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
-        p.setPrecoVenda(d.precoVenda());
-        p.setPrecoCusto(d.precoCusto());
+
+        p.setPrecoVenda(d.precoVenda() != null ? d.precoVenda() : BigDecimal.ZERO);
+
+        if (d.precoCusto() != null) {
+            p.setPrecoCusto(d.precoCusto());
+        } else if (p.getPrecoCusto() == null) {
+            p.setPrecoCusto(BigDecimal.ZERO);
+        }
+
         p.setEstoqueMinimo(d.estoqueMinimo());
         p.setDiasParaReposicao(d.diasParaReposicao());
         p.setUrlImagem(d.urlImagem());
@@ -405,7 +387,20 @@ public class ProdutoService {
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
-    public void definirPrecoVenda(Long id, BigDecimal p) { Produto prod = buscarPorId(id); prod.setPrecoVenda(p); produtoRepository.save(prod); }
+    public void definirPrecoVenda(Long id, BigDecimal p) {
+        Produto prod = buscarPorId(id);
+        prod.setPrecoVenda(p);
+        produtoRepository.save(prod);
+    }
+
+    // NOVO: Atualiza o custo direto nas rotinas de Entrada de Estoque
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public void definirPrecoCusto(Long id, BigDecimal custo) {
+        Produto prod = buscarPorId(id);
+        prod.setPrecoCusto(custo);
+        produtoRepository.save(prod);
+    }
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -422,6 +417,8 @@ public class ProdutoService {
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public void reativarPorEan(String ean) { produtoRepository.findByEanIrrestrito(ean).ifPresent(p -> { p.setAtivo(true); produtoRepository.save(p); }); }
+
+    // --- FISCAL & INTELIGÊNCIA ---
 
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -446,6 +443,35 @@ public class ProdutoService {
         Map<String, Object> resultado = new HashMap<>();
         resultado.put("sucesso", true);
         resultado.put("totalAtualizado", alterados);
+        return resultado;
+    }
+
+    // NOVO: Solução de BI para arrumar os Dashboards com custo zero
+    @Transactional
+    @CacheEvict(value = "produtos", allEntries = true)
+    public Map<String, Object> saneamentoCustos() {
+        List<Produto> todos = produtoRepository.findAll();
+        int alterados = 0;
+
+        for (Produto p : todos) {
+            // Se o custo for Zero ou Nulo, mas ele tiver um preço de venda cadastrado
+            if (p.getPrecoCusto() == null || p.getPrecoCusto().compareTo(BigDecimal.ZERO) == 0) {
+                if (p.getPrecoVenda() != null && p.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0) {
+                    // Estima o custo de aquisição como 50% do valor da prateleira
+                    p.setPrecoCusto(p.getPrecoVenda().divide(new BigDecimal("2"), 2, RoundingMode.HALF_UP));
+                    alterados++;
+                }
+            }
+        }
+
+        if (alterados > 0) {
+            produtoRepository.saveAll(todos);
+        }
+
+        Map<String, Object> resultado = new HashMap<>();
+        resultado.put("sucesso", true);
+        resultado.put("totalAtualizado", alterados);
+        resultado.put("mensagem", "Custos zerados foram preenchidos com 50% do valor de venda.");
         return resultado;
     }
 
@@ -549,32 +575,8 @@ public class ProdutoService {
             if (dadosExternos.isPresent()) {
                 ProdutoExternoDTO ext = dadosExternos.get();
                 return new ProdutoDTO(
-                        null, // id
-                        ext.getNome(), // descricao
-                        ext.getEan(), // codigoBarras
-                        null, // sku
-                        ext.getMarca(), // marca
-                        ext.getCategoria(), // categoria
-                        null, // subcategoria
-                        "UN", // unidade
-                        null, // lote
-                        null, // validade
-                        ext.getNcm(), // ncm
-                        ext.getCest(), // cest
-                        "102", // cst
-                        "0", // origem
-                        ext.getMonofasico(), // monofasico
-                        TipoTributacaoReforma.PADRAO, // classificacaoReforma
-                        false, // impostoSeletivo
-                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0), // precoVenda
-                        BigDecimal.ZERO, // precoCusto
-                        0, // quantidadeEmEstoque
-                        0, // NOVO: estoqueFiscal
-                        0, // NOVO: estoqueNaoFiscal
-                        5, // estoqueMinimo
-                        0, // diasParaReposicao
-                        ext.getUrlImagem(), // urlImagem
-                        true // ativo
+                        null, ext.getNome(), ext.getEan(), null, ext.getMarca(), ext.getCategoria(), null, "UN", null, null, ext.getNcm(), ext.getCest(), "102", "0", ext.getMonofasico(), TipoTributacaoReforma.PADRAO, false,
+                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0), BigDecimal.ZERO, 0, 0, 0, 5, 0, ext.getUrlImagem(), true
                 );
             }
         } catch (Exception e) {
@@ -611,14 +613,8 @@ public class ProdutoService {
                 else if (produto.getQuantidadeEmEstoque() < produto.getEstoqueMinimo() / 2) urgencia = "ALTA";
 
                 SugestaoCompraDTO dto = new SugestaoCompraDTO(
-                        produto.getCodigoBarras(),
-                        produto.getDescricao(),
-                        produto.getMarca(),
-                        produto.getQuantidadeEmEstoque(),
-                        produto.getEstoqueMinimo(),
-                        sugestaoCompra,
-                        urgencia,
-                        custoEstimado
+                        produto.getCodigoBarras(), produto.getDescricao(), produto.getMarca(),
+                        produto.getQuantidadeEmEstoque(), produto.getEstoqueMinimo(), sugestaoCompra, urgencia, custoEstimado
                 );
                 sugestoes.add(dto);
             }

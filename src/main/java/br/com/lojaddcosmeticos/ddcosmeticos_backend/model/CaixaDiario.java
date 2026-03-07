@@ -91,41 +91,51 @@ public class CaixaDiario {
     @Column(columnDefinition = "TEXT")
     private String observacoes;
 
-    // --- EVENTOS DE CICLO DE VIDA ---
+    // --- EVENTOS DE CICLO DE VIDA (JPA HOOKS) ---
 
     @PrePersist
     public void prePersist() {
         if (this.dataAbertura == null) this.dataAbertura = LocalDateTime.now();
         if (this.status == null) this.status = StatusCaixa.ABERTO;
-        this.garantirValoresNaoNulos();
-        if (this.saldoAtual == null || this.saldoAtual.compareTo(BigDecimal.ZERO) == 0) {
+        this.garantirEstadoConsistente();
+
+        // Se o saldoAtual não foi preenchido, herda o saldo inicial
+        if (this.saldoAtual == null) {
             this.saldoAtual = this.saldoInicial;
         }
     }
 
     @PreUpdate
     public void preUpdate() {
-        this.garantirValoresNaoNulos();
+        this.garantirEstadoConsistente();
+    }
+
+    @PostLoad
+    public void postLoad() {
+        this.garantirEstadoConsistente();
     }
 
     /**
-     * Previne NullPointerException na hora da matemática de fechamento.
+     * Centraliza as regras de segurança matemática para evitar NullPointerException.
+     * Atualiza automaticamente os totais dependentes antes de interagir com o banco.
      */
-    private void garantirValoresNaoNulos() {
+    private void garantirEstadoConsistente() {
         if (this.saldoInicial == null) this.saldoInicial = BigDecimal.ZERO;
         if (this.totalVendasDinheiro == null) this.totalVendasDinheiro = BigDecimal.ZERO;
         if (this.totalVendasPix == null) this.totalVendasPix = BigDecimal.ZERO;
         if (this.totalVendasCredito == null) this.totalVendasCredito = BigDecimal.ZERO;
         if (this.totalVendasDebito == null) this.totalVendasDebito = BigDecimal.ZERO;
-        if (this.totalVendasCartao == null) this.totalVendasCartao = BigDecimal.ZERO;
         if (this.totalEntradas == null) this.totalEntradas = BigDecimal.ZERO;
         if (this.totalSaidas == null) this.totalSaidas = BigDecimal.ZERO;
+
+        // Auto-calcula o totalizador de cartões sempre que a entidade for manipulada
+        this.atualizarTotalCartoes();
     }
 
-    /**
-     * Método auxiliar chamado pelo VendaService para facilitar a consolidação.
-     */
     public void atualizarTotalCartoes() {
-        this.totalVendasCartao = this.totalVendasCredito.add(this.totalVendasDebito);
+        // Usa nvl interno (fallback para ZERO caso seja nulo) para evitar erro no .add()
+        BigDecimal cred = this.totalVendasCredito != null ? this.totalVendasCredito : BigDecimal.ZERO;
+        BigDecimal deb = this.totalVendasDebito != null ? this.totalVendasDebito : BigDecimal.ZERO;
+        this.totalVendasCartao = cred.add(deb);
     }
 }

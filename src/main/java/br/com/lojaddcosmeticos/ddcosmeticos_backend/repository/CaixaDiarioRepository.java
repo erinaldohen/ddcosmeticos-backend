@@ -21,7 +21,7 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
     // Usado para verificar se um usuário específico tem caixa aberto
     Optional<CaixaDiario> findFirstByUsuarioAberturaAndStatus(Usuario usuario, StatusCaixa status);
 
-    // --- MÉTODOS CRITICOS PARA CONTAS A PAGAR/RECEBER (Adicionados) ---
+    // --- MÉTODOS CRITICOS PARA CONTAS A PAGAR/RECEBER ---
 
     // Busca o caixa aberto da loja (independente de usuário) para lançar vendas/pagamentos
     Optional<CaixaDiario> findByStatus(StatusCaixa status);
@@ -42,4 +42,18 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
             "WHERE c.dataAbertura BETWEEN :inicio AND :fim " +
             "AND c.status = 'FECHADO'")
     BigDecimal somarQuebrasDeCaixa(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    // ==================================================================================
+    //  MÉTODOS ADICIONADOS PARA RESOLVER O ERRO 500 (LAZY LOADING) NO HISTÓRICO WEB
+    // ==================================================================================
+
+    // Busca todos os caixas paginados, trazendo os dados do Usuário numa única ida ao banco
+    @Query(value = "SELECT c FROM CaixaDiario c LEFT JOIN FETCH c.usuarioAbertura",
+            countQuery = "SELECT count(c) FROM CaixaDiario c")
+    Page<CaixaDiario> findAllComUsuario(Pageable pageable);
+
+    // Busca os caixas paginados por data, trazendo os dados do Usuário numa única ida ao banco
+    @Query(value = "SELECT c FROM CaixaDiario c LEFT JOIN FETCH c.usuarioAbertura WHERE c.dataAbertura BETWEEN :inicio AND :fim",
+            countQuery = "SELECT count(c) FROM CaixaDiario c WHERE c.dataAbertura BETWEEN :inicio AND :fim")
+    Page<CaixaDiario> findByDataAberturaBetweenComUsuario(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
 }

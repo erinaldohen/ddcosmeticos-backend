@@ -43,7 +43,7 @@ public class CaixaController {
 
     @PostMapping("/fechar")
     public ResponseEntity<ConfirmacaoFechamentoDTO> fecharCaixa(
-            @Valid @RequestBody FechamentoCaixaRequestDTO request) { // <-- O @RequestBody é obrigatório aqui
+            @Valid @RequestBody FechamentoCaixaRequestDTO request) {
         return ResponseEntity.ok(caixaService.fecharCaixa(request.valorFisicoInformado()));
     }
 
@@ -103,20 +103,14 @@ public class CaixaController {
 
     // --- HISTÓRICO E RELATÓRIOS ---
 
+    // VERSÃO ÚNICA E CORRETA: Retorna o DTO, blindando contra o erro 500 do LazyLoading
     @GetMapping
-    public ResponseEntity<Page<CaixaDiario>> listarTodos(
+    public ResponseEntity<Page<CaixaDiarioDTO>> listarTodos(
             Pageable pageable,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
     ) {
-        if (inicio != null && fim != null) {
-            return ResponseEntity.ok(caixaRepository.findByDataAberturaBetween(
-                    inicio.atStartOfDay(),
-                    fim.atTime(23, 59, 59),
-                    pageable
-            ));
-        }
-        return ResponseEntity.ok(caixaRepository.findAll(pageable));
+        return ResponseEntity.ok(caixaService.listarHistoricoPaginado(inicio, fim, pageable));
     }
 
     @GetMapping("/{id}")

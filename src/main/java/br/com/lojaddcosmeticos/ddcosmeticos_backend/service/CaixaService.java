@@ -5,7 +5,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfirmacaoFechamentoDTO
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
@@ -14,6 +13,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixa
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -110,9 +111,14 @@ public class CaixaService {
                 .add(caixa.getTotalVendasDinheiro())
                 .subtract(caixa.getTotalSaidas());
 
+        String nomeOperador = caixa.getUsuarioAbertura() != null ? caixa.getUsuarioAbertura().getNome() : "Operador";
+
         return new CaixaDiarioDTO(
                 caixa.getId(),
                 "ABERTO",
+                caixa.getDataAbertura(),
+                null, // dataFechamento (Ainda está aberto)
+                nomeOperador,
                 caixa.getSaldoInicial(),
                 saldoGaveta,
                 caixa.getTotalEntradas(),
@@ -120,7 +126,10 @@ public class CaixaService {
                 caixa.getTotalVendasDinheiro(),
                 caixa.getTotalVendasPix(),
                 caixa.getTotalVendasCredito(),
-                caixa.getTotalVendasDebito()
+                caixa.getTotalVendasDebito(),
+                BigDecimal.ZERO, // saldoEsperadoSistema (ainda não fechou)
+                BigDecimal.ZERO, // valorFisicoInformado (ainda não fechou)
+                BigDecimal.ZERO  // diferencaCaixa (ainda não fechou)
         );
     }
 
@@ -258,5 +267,56 @@ public class CaixaService {
         String login = auth.getName();
         return usuarioRepository.findByMatriculaOrEmail(login, login)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
+    }
+
+    // =========================================================================
+    //  CORREÇÃO APLICADA AQUI: USO DOS NOVOS MÉTODOS "COM USUARIO"
+    // =========================================================================
+    @Transactional(readOnly = true)
+    public Page<CaixaDiarioDTO> listarHistoricoPaginado(LocalDate inicio, LocalDate fim, Pageable pageable) {
+        Page<CaixaDiario> paginaCaixas;
+
+        // Chama os métodos que já fazem o JOIN FETCH do Usuário para evitar LazyInitializationException
+        if (inicio != null && fim != null) {
+            paginaCaixas = caixaRepository.findByDataAberturaBetweenComUsuario(
+                    inicio.atStartOfDay(),
+                    fim.atTime(23, 59, 59),
+                    pageable
+            );
+        } else {
+            paginaCaixas = caixaRepository.findAllComUsuario(pageable);
+        }
+
+        // Converte cada entidade em um DTO seguro para JSON
+        return paginaCaixas.map(this::converterParaDTOCompleto);
+    }
+
+    private CaixaDiarioDTO converterParaDTOCompleto(CaixaDiario caixa) {
+        // Cálculo do saldo em gaveta para caixas abertos, ou uso do saldo salvo para caixas fechados
+        BigDecimal saldoGaveta = caixa.getSaldoAtual() != null ? caixa.getSaldoAtual() : BigDecimal.ZERO;
+
+        String nomeOperador = "Operador Não Identificado";
+        if (caixa.getUsuarioAbertura() != null) {
+            nomeOperador = caixa.getUsuarioAbertura().getNome();
+        }
+
+        return new CaixaDiarioDTO(
+                caixa.getId(),
+                caixa.getStatus().name(), // Pega o valor do Enum (ABERTO/FECHADO)
+                caixa.getDataAbertura(),
+                caixa.getDataFechamento(),
+                nomeOperador,
+                caixa.getSaldoInicial(),
+                saldoGaveta,
+                caixa.getTotalEntradas(),
+                caixa.getTotalSaidas(),
+                caixa.getTotalVendasDinheiro(),
+                caixa.getTotalVendasPix(),
+                caixa.getTotalVendasCredito(),
+                caixa.getTotalVendasDebito(),
+                caixa.getSaldoEsperadoSistema(),
+                caixa.getValorFisicoInformado(),
+                caixa.getDiferencaCaixa()
+        );
     }
 }

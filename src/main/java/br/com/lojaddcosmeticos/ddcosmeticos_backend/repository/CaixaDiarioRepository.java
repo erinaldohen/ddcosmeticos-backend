@@ -37,7 +37,9 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
     // Método para PDF (Lista todos no período)
     List<CaixaDiario> findByDataAberturaBetweenOrderByDataAberturaDesc(LocalDateTime inicio, LocalDateTime fim);
 
-    @Query("SELECT SUM(c.valorFechamento - c.valorCalculadoSistema) FROM CaixaDiario c " +
-            "WHERE c.dataAbertura BETWEEN :inicio AND :fim")
+    @Query("SELECT SUM(c.valorFisicoInformado - c.saldoEsperadoSistema) " +
+            "FROM CaixaDiario c " +
+            "WHERE c.dataAbertura BETWEEN :inicio AND :fim " +
+            "AND c.status = 'FECHADO'")
     BigDecimal somarQuebrasDeCaixa(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

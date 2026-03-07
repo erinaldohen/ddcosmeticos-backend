@@ -1,15 +1,18 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfirmacaoFechamentoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaRelatorioService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CaixaService;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -37,6 +40,12 @@ public class CaixaController {
     private final CaixaRelatorioService relatorioService;
 
     // --- OPERACIONAL ---
+
+    @PostMapping("/fechar")
+    public ResponseEntity<ConfirmacaoFechamentoDTO> fecharCaixa(
+            @Valid @RequestBody FechamentoCaixaRequestDTO request) { // <-- O @RequestBody é obrigatório aqui
+        return ResponseEntity.ok(caixaService.fecharCaixa(request.valorFisicoInformado()));
+    }
 
     @GetMapping("/status")
     public ResponseEntity<?> verificarStatusCaixa() {
@@ -68,13 +77,6 @@ public class CaixaController {
     public ResponseEntity<CaixaDiario> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
         BigDecimal saldoInicial = payload.get("saldoInicial");
         return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
-    }
-
-    // CORREÇÃO AQUI: Removido /{id} da URL e do argumento. O Service descobre qual fechar.
-    @PostMapping("/fechar")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<CaixaDiario> fecharCaixa(@RequestBody FechamentoCaixaDTO dto) {
-        return ResponseEntity.ok(caixaService.fecharCaixa(dto.saldoFinalDinheiroEmEspecie()));
     }
 
     // --- MOVIMENTAÇÕES ---

@@ -20,8 +20,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @Audited
 @Table(name = "produto")
-@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de ouro do JPA
-@ToString(onlyExplicitlyIncluded = true) // Proteção contra logs pesados
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@ToString(onlyExplicitlyIncluded = true)
 public class Produto {
 
     @Id
@@ -31,39 +31,37 @@ public class Produto {
     private Long id;
 
     // --- DADOS BÁSICOS ---
-    // Mantido TEXT para descrições longas
     @Column(columnDefinition = "TEXT")
+    @ToString.Include
     private String descricao;
 
-    // Usando apenas length, o dialeto PostgreSQL cuidará de mapear para VARCHAR
     @Column(name = "codigo_barras", unique = true, length = 50)
     @ToString.Include
-    private String codigoBarras; // EAN / GTIN
+    private String codigoBarras;
 
     @Column(unique = true, length = 50)
-    @ToString.Include
-    private String sku; // NOVO: Código interno da loja (Stock Keeping Unit)
+    private String sku;
 
     @Column(length = 100)
     private String marca;
 
     @Column(length = 100)
-    private String categoria;
+    private String categoria; // Utilizado pelo Dashboard para o Top Categorias
 
     @Column(length = 100)
     private String subcategoria;
 
     @Column(length = 10)
-    private String unidade; // UN, KG, LT
+    private String unidade;
 
-    @Column(columnDefinition = "TEXT") // Imagens em Base64 ou URLs longas
+    @Column(columnDefinition = "TEXT")
     private String urlImagem;
 
-    // --- CONTROLE DE VALIDADE & LOTE (NOVO) ---
+    // --- CONTROLE DE VALIDADE & LOTE ---
     @Column(length = 100)
-    private String lote; // Rastreabilidade
+    private String lote;
 
-    private LocalDate validade; // Essencial para o relatório de vencidos
+    private LocalDate validade;
 
     // --- DADOS FISCAIS ---
     @Column(length = 20)
@@ -89,7 +87,7 @@ public class Produto {
     private TipoTributacaoReforma classificacaoReforma;
 
     // --- DADOS FINANCEIROS ---
-    @Column(precision = 15, scale = 4) // Ajustado para precisão financeira no Postgres
+    @Column(precision = 15, scale = 4)
     private BigDecimal precoVenda;
 
     @Column(precision = 15, scale = 4)
@@ -99,18 +97,15 @@ public class Produto {
     private BigDecimal precoMedioPonderado;
 
     // --- ESTOQUE ---
-    private Integer quantidadeEmEstoque; // Total
-    private Integer estoqueFiscal;       // Nota Fiscal
-    private Integer estoqueNaoFiscal;    // Sem Nota
-
+    private Integer quantidadeEmEstoque;
+    private Integer estoqueFiscal;
+    private Integer estoqueNaoFiscal;
     private Integer estoqueMinimo;
-    private Integer diasParaReposicao; // Lead time (tempo de entrega do fornecedor)
+    private Integer diasParaReposicao; // Lead time para inteligência de compra
 
-    // Média de vendas diária para inteligência de estoque
     @Column(precision = 10, scale = 4)
     private BigDecimal vendaMediaDiaria;
 
-    // DBA: Alterado para LAZY para evitar N+1 queries.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fornecedor_id")
     private Fornecedor fornecedor;
@@ -128,26 +123,20 @@ public class Produto {
         this.dataCadastro = LocalDateTime.now();
         if (this.isMonofasico == null) this.isMonofasico = false;
         if (this.isImpostoSeletivo == null) this.isImpostoSeletivo = false;
-
-        // Inicialização segura de estoques
         if (this.quantidadeEmEstoque == null) this.quantidadeEmEstoque = 0;
         if (this.estoqueFiscal == null) this.estoqueFiscal = 0;
         if (this.estoqueNaoFiscal == null) this.estoqueNaoFiscal = 0;
-
-        // Inicialização de inteligência
         if (this.vendaMediaDiaria == null) this.vendaMediaDiaria = BigDecimal.ZERO;
-        if (this.diasParaReposicao == null) this.diasParaReposicao = 7; // Padrão 7 dias
-
-        // Se não tiver SKU, usa o código de barras ou gera um provisório
+        if (this.diasParaReposicao == null) this.diasParaReposicao = 7;
         if (this.sku == null && this.codigoBarras != null) this.sku = this.codigoBarras;
     }
 
     @PreUpdate
     public void preUpdate() {
         this.dataAtualizacao = LocalDateTime.now();
-        // Garante integridade se um campo for nulo na atualização
         if (this.estoqueFiscal == null) this.estoqueFiscal = 0;
         if (this.estoqueNaoFiscal == null) this.estoqueNaoFiscal = 0;
+        this.atualizarSaldoTotal();
     }
 
     // --- MÉTODOS AUXILIARES ---
@@ -156,34 +145,20 @@ public class Produto {
         return isMonofasico != null && isMonofasico;
     }
 
-    public Boolean isImpostoSeletivo() {
-        return isImpostoSeletivo != null && isImpostoSeletivo;
-    }
-
-    /**
-     * Verifica se o produto está vencido.
-     * Usado pelo InventarioController para filtragem.
-     */
     public boolean isVencido() {
         if (this.validade == null) return false;
         return LocalDate.now().isAfter(this.validade);
     }
 
-    /**
-     * Atualiza o saldo total somando Fiscal + Não Fiscal.
-     */
     public void atualizarSaldoTotal() {
         this.quantidadeEmEstoque = (this.estoqueFiscal != null ? this.estoqueFiscal : 0)
                 + (this.estoqueNaoFiscal != null ? this.estoqueNaoFiscal : 0);
     }
 
-    /**
-     * Recalcula o estoque mínimo ideal baseado na média de vendas.
-     */
     public void recalcularEstoqueMinimoSugerido() {
         if (this.vendaMediaDiaria != null && this.vendaMediaDiaria.compareTo(BigDecimal.ZERO) > 0) {
             int diasLeadTime = (this.diasParaReposicao != null ? this.diasParaReposicao : 7);
-            int diasTotais = diasLeadTime + 2; // +2 dias de margem de segurança interna
+            int diasTotais = diasLeadTime + 2;
 
             this.estoqueMinimo = this.vendaMediaDiaria
                     .multiply(new BigDecimal(diasTotais))

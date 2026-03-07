@@ -2,13 +2,9 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.infrastructure.converter.CryptoConverter;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-import lombok.EqualsAndHashCode;
-import lombok.ToString;
+import lombok.*;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalTime;
 
@@ -18,9 +14,11 @@ import java.time.LocalTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "tb_configuracao")
-@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de Ouro do JPA
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @ToString(onlyExplicitlyIncluded = true)
-public class ConfiguracaoLoja {
+public class ConfiguracaoLoja implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -29,53 +27,34 @@ public class ConfiguracaoLoja {
     private Long id;
 
     @Embedded
-    private DadosLoja loja;
+    private DadosLoja loja = new DadosLoja();
 
     @Embedded
-    private EnderecoLoja endereco;
+    private EnderecoLoja endereco = new EnderecoLoja();
 
     @Embedded
-    private DadosFiscal fiscal;
+    private DadosFiscal fiscal = new DadosFiscal();
 
     @Embedded
-    private DadosFinanceiro financeiro;
+    private DadosFinanceiro financeiro = new DadosFinanceiro();
 
     @Embedded
-    private DadosVendas vendas;
+    private DadosVendas vendas = new DadosVendas();
 
     @Embedded
-    private DadosSistema sistema;
+    private DadosSistema sistema = new DadosSistema();
 
-    // Inicializa objetos para evitar NullPointerException
+    // 🛡️ GARANTIA ABSOLUTA CONTRA NULL POINTER 🛡️
+    @PostLoad
     @PrePersist
     @PreUpdate
-    public void preencherNulos() {
-        if (loja == null) loja = new DadosLoja();
-        if (endereco == null) endereco = new EnderecoLoja();
-        if (fiscal == null) fiscal = new DadosFiscal();
-        if (financeiro == null) financeiro = new DadosFinanceiro();
-        if (vendas == null) vendas = new DadosVendas();
-        if (sistema == null) sistema = new DadosSistema();
-    }
-
-    // ==================================================================================
-    // MÉTODOS UTILITÁRIOS PARA O SERVICE DE NFE
-    // ==================================================================================
-
-    public String getCnpjLimpo() {
-        if (loja != null && loja.getCnpj() != null) {
-            return loja.getCnpj().replaceAll("\\D", "");
-        }
-        return "00000000000000";
-    }
-
-    public String getCscIdAtivo() {
-        if (fiscal == null) return "";
-        return isProducao() ? fiscal.getCscIdProducao() : fiscal.getCscIdHomologacao();
-    }
-
-    public boolean isProducao() {
-        return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
+    public void garantirInstancias() {
+        if (this.loja == null) this.loja = new DadosLoja();
+        if (this.endereco == null) this.endereco = new EnderecoLoja();
+        if (this.fiscal == null) this.fiscal = new DadosFiscal();
+        if (this.financeiro == null) this.financeiro = new DadosFinanceiro();
+        if (this.vendas == null) this.vendas = new DadosVendas();
+        if (this.sistema == null) this.sistema = new DadosSistema();
     }
 
     // ==================================================================================
@@ -83,290 +62,140 @@ public class ConfiguracaoLoja {
     // ==================================================================================
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosLoja {
-        @Column(length = 150)
-        private String razaoSocial;
-
-        @Column(length = 150)
-        private String nomeFantasia;
-
-        @Column(length = 18)
-        private String cnpj;
-
-        @Column(length = 50)
-        private String ie;
-
-        @Column(length = 50)
-        private String im;
-
-        @Column(length = 20)
-        private String cnae;
-
-        @Column(length = 150)
-        private String email;
-
-        @Column(length = 20)
-        private String telefone;
-
-        @Column(length = 20)
-        private String whatsapp;
-
-        @Column(length = 150)
-        private String site;
-
-        @Column(length = 100)
-        private String instagram;
-
-        @Column(length = 255)
-        private String slogan;
-
-        @Column(length = 20)
-        private String corDestaque;
-
-        private Boolean isMatriz;
-
-        @Column(columnDefinition = "TIME")
+        @Column(length = 150) private String razaoSocial;
+        @Column(length = 150) private String nomeFantasia;
+        @Column(length = 18) private String cnpj;
+        @Column(length = 50) private String ie;
+        @Column(length = 50) private String im;
+        @Column(length = 20) private String cnae;
+        @Column(length = 150) private String email;
+        @Column(length = 20) private String telefone;
+        @Column(length = 20) private String whatsapp;
+        @Column(length = 150) private String site;
+        @Column(length = 100) private String instagram;
+        @Column(length = 255) private String slogan;
+        @Column(length = 20) private String corDestaque;
+        private Boolean isMatriz = true;
         private LocalTime horarioAbre;
-
-        @Column(columnDefinition = "TIME")
         private LocalTime horarioFecha;
-
-        private Integer toleranciaMinutos;
-        private Boolean bloqueioForaHorario;
-
-        @Column(precision = 15, scale = 2)
-        private BigDecimal taxaEntregaPadrao;
-
-        private Integer tempoEntregaMin;
-
-        @Column(columnDefinition = "TEXT")
-        private String logoUrl;
+        private Integer toleranciaMinutos = 0;
+        private Boolean bloqueioForaHorario = false;
+        @Column(precision = 15, scale = 2) private BigDecimal taxaEntregaPadrao = BigDecimal.ZERO;
+        private Integer tempoEntregaMin = 30;
+        @Column(columnDefinition = "TEXT") private String logoUrl;
     }
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class EnderecoLoja {
-        @Column(length = 10)
-        private String cep;
-
-        @Column(length = 255)
-        private String logradouro;
-
-        @Column(length = 20)
-        private String numero;
-
-        @Column(length = 100)
-        private String complemento;
-
-        @Column(length = 100)
-        private String bairro;
-
-        @Column(length = 100)
-        private String cidade;
-
-        @Column(length = 2)
-        private String uf;
+        @Column(length = 10) private String cep;
+        @Column(length = 255) private String logradouro;
+        @Column(length = 20) private String numero;
+        @Column(length = 100) private String complemento;
+        @Column(length = 100) private String bairro;
+        @Column(length = 100) private String cidade;
+        @Column(length = 2) private String uf;
     }
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosFiscal {
-        @Column(length = 20)
-        private String ambiente; // "HOMOLOGACAO" ou "PRODUCAO"
-
-        @Column(length = 20)
-        private String regime;   // 1=Simples, 3=Normal
-
-        // --- Configurações NFC-e (Homologação) ---
-        @Column(length = 100)
-        private String tokenHomologacao;
-
-        @Column(length = 50)
-        private String cscIdHomologacao;
-
-        private Integer serieHomologacao;
-        private Integer nfeHomologacao;
-
-        // --- Configurações NFC-e (Produção) ---
-        @Column(length = 100)
-        private String tokenProducao;
-
-        @Column(length = 50)
-        private String cscIdProducao;
-
-        private Integer serieProducao;
-        private Integer nfeProducao;
-
-        // --- Certificado Digital ---
-        @Column(length = 255)
+        @Column(length = 20) private String ambiente = "HOMOLOGACAO";
+        @Column(length = 20) private String regime = "1"; // 1=Simples Nacional
+        @Column(length = 100) private String tokenHomologacao;
+        @Column(length = 50) private String cscIdHomologacao;
+        private Integer serieHomologacao = 1;
+        private Integer nfeHomologacao = 1;
+        @Column(length = 100) private String tokenProducao;
+        @Column(length = 50) private String cscIdProducao;
+        private Integer serieProducao = 1;
+        private Integer nfeProducao = 1;
         private String caminhoCertificado;
-
-        // DBA FIX: Removido @Lob. O PostgreSQL mapeará byte[] nativamente para bytea (Binary Array)
-        // Isso melhora a performance e evita erros de OID no Postgres.
         private byte[] arquivoCertificado;
-
-        @Convert(converter = CryptoConverter.class)
-        @Column(length = 500) // Maior porque é criptografado
-        private String senhaCert;
-
-        // --- Compliance & Regras ---
-        @Column(length = 50)
-        private String csrtId;
-
-        @Convert(converter = CryptoConverter.class)
-        @Column(length = 500) // Maior porque é criptografado
-        private String csrtHash;
-
-        @Column(length = 255)
+        @Convert(converter = CryptoConverter.class) @Column(length = 500) private String senhaCert;
+        @Column(length = 50) private String csrtId;
+        @Convert(converter = CryptoConverter.class) @Column(length = 500) private String csrtHash;
         private String ibptToken;
-
-        @Column(length = 100)
-        private String naturezaPadrao;
-
-        @Column(length = 150)
+        private String naturezaPadrao = "VENDA DE MERCADORIA";
         private String emailContabil;
-
-        private Boolean enviarXmlAutomatico;
-
-        @Column(precision = 10, scale = 4) // Escala de 4 para alíquotas é mais segura
-        private BigDecimal aliquotaInterna;
-
-        private Boolean modoContingencia;
-        private Boolean priorizarMonofasico;
-
-        @Column(length = 500)
-        private String obsPadraoCupom;
+        private Boolean enviarXmlAutomatico = true;
+        @Column(precision = 10, scale = 4) private BigDecimal aliquotaInterna = new BigDecimal("18.00");
+        private Boolean modoContingencia = false;
+        private Boolean priorizarMonofasico = true;
+        @Column(length = 500) private String obsPadraoCupom;
     }
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosFinanceiro {
-        // DBA: Todas as moedas e percentuais blindados com precisão
-        @Column(precision = 15, scale = 2)
-        private BigDecimal comissaoProdutos;
+        @Column(precision = 15, scale = 2) private BigDecimal comissaoProdutos = BigDecimal.ZERO;
+        @Column(precision = 15, scale = 2) private BigDecimal comissaoServicos = BigDecimal.ZERO;
+        @Column(precision = 15, scale = 2) private BigDecimal alertaSangria = new BigDecimal("500.00");
+        @Column(precision = 15, scale = 2) private BigDecimal fundoTrocoPadrao = BigDecimal.ZERO;
+        @Column(precision = 15, scale = 2) private BigDecimal metaDiaria = BigDecimal.ZERO;
+        @Column(precision = 10, scale = 2) private BigDecimal taxaDebito = BigDecimal.ZERO;
+        @Column(precision = 10, scale = 2) private BigDecimal taxaCredito = BigDecimal.ZERO;
 
-        @Column(precision = 15, scale = 2)
-        private BigDecimal comissaoServicos;
+        // Limites de Desconto para o VendaService
+        @Column(precision = 15, scale = 2) private BigDecimal descCaixa = new BigDecimal("5.00");
+        @Column(precision = 15, scale = 2) private BigDecimal descGerente = new BigDecimal("20.00");
 
-        @Column(precision = 15, scale = 2)
-        private BigDecimal alertaSangria;
-
-        @Column(precision = 15, scale = 2)
-        private BigDecimal fundoTrocoPadrao;
-
-        @Column(precision = 15, scale = 2)
-        private BigDecimal metaDiaria;
-
-        // Taxas
-        @Column(precision = 10, scale = 2)
-        private BigDecimal taxaDebito;
-
-        @Column(precision = 10, scale = 2)
-        private BigDecimal taxaCredito;
-
-        // Descontos
-        @Column(precision = 15, scale = 2)
-        private BigDecimal descCaixa;
-
-        @Column(precision = 15, scale = 2)
-        private BigDecimal descGerente;
-
-        private Boolean descExtraPix;
-        private Boolean bloquearAbaixoCusto;
-
-        // Pix
-        @Column(length = 50)
-        private String pixTipo;
-
-        @Column(length = 255)
-        private String pixChave;
-
-        // Formas Aceitas
-        private Boolean aceitaDinheiro;
-        private Boolean aceitaPix;
-        private Boolean aceitaCredito;
-        private Boolean aceitaDebito;
-        private Boolean aceitaCrediario;
-
-        // Crediário
-        @Column(precision = 10, scale = 2)
-        private BigDecimal jurosMensal;
-
-        @Column(precision = 10, scale = 2)
-        private BigDecimal multaAtraso;
-
-        private Integer diasCarencia;
-
-        private Boolean fechamentoCego;
+        private Boolean descExtraPix = false;
+        private Boolean bloquearAbaixoCusto = true;
+        @Column(length = 50) private String pixTipo;
+        @Column(length = 255) private String pixChave;
+        private Boolean aceitaDinheiro = true;
+        private Boolean aceitaPix = true;
+        private Boolean aceitaCredito = true;
+        private Boolean aceitaDebito = true;
+        private Boolean aceitaCrediario = false;
+        @Column(precision = 10, scale = 2) private BigDecimal jurosMensal = BigDecimal.ZERO;
+        @Column(precision = 10, scale = 2) private BigDecimal multaAtraso = BigDecimal.ZERO;
+        private Integer diasCarencia = 0;
+        private Boolean fechamentoCego = true;
     }
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosVendas {
-        @Column(length = 50)
-        private String comportamentoCpf;
-
-        private Boolean bloquearEstoque;
-
-        @Column(length = 50)
-        private String layoutCupom;
-
-        private Boolean imprimirVendedor;
-        private Boolean imprimirTicketTroca;
-        private Boolean autoEnterScanner;
-        private Boolean fidelidadeAtiva;
-
-        @Column(precision = 10, scale = 2)
-        private BigDecimal pontosPorReal;
-
-        private Boolean usarBalanca;
-        private Boolean agruparItens;
+        private String comportamentoCpf = "OPCIONAL";
+        private Boolean bloquearEstoque = true;
+        private String layoutCupom = "80MM";
+        private Boolean imprimirVendedor = true;
+        private Boolean imprimirTicketTroca = true;
+        private Boolean autoEnterScanner = true;
+        private Boolean fidelidadeAtiva = false;
+        @Column(precision = 10, scale = 2) private BigDecimal pontosPorReal = BigDecimal.ONE;
+        private Boolean usarBalanca = false;
+        private Boolean agruparItens = true;
     }
 
     @Embeddable
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosSistema {
-        private Boolean impressaoAuto;
+        private Boolean impressaoAuto = true;
+        @Column(length = 20) private String larguraPapel = "80MM";
+        private Boolean backupAuto = true;
+        private LocalTime backupHora = LocalTime.of(23, 0);
+        @Column(length = 500) private String rodape;
+        @Column(length = 50) private String tema = "DARK";
+        private Boolean backupNuvem = false;
+        private Boolean senhaGerenteCancelamento = true;
+        @Column(length = 100) private String nomeTerminal = "CAIXA 01";
+        private Boolean imprimirLogoCupom = true;
+    }
 
-        @Column(length = 20)
-        private String larguraPapel;
+    // ==================================================================================
+    // MÉTODOS DE CONVENIÊNCIA (EVITAM LOGICA REPETIDA NO SERVICE)
+    // ==================================================================================
 
-        private Boolean backupAuto;
+    public String getCnpjLimpo() {
+        return (loja != null && loja.getCnpj() != null) ? loja.getCnpj().replaceAll("\\D", "") : "";
+    }
 
-        @Column(columnDefinition = "TIME")
-        private LocalTime backupHora;
-
-        @Column(length = 500)
-        private String rodape;
-
-        @Column(length = 50)
-        private String tema;
-
-        private Boolean backupNuvem;
-        private Boolean senhaGerenteCancelamento;
-
-        @Column(length = 100)
-        private String nomeTerminal;
-
-        private Boolean imprimirLogoCupom;
+    public boolean isProducao() {
+        return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
     }
 }

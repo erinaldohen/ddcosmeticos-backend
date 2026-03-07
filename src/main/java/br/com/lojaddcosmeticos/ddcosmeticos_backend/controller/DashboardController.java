@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -31,6 +32,7 @@ public class DashboardController {
     // =========================================================================
     @GetMapping
     @Operation(summary = "Carregar Dashboard")
+    @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
     public ResponseEntity<Map<String, Object>> getDashboardCompleto() {
         // Agora o Controller chama o método correto que contém a IA, Mix de Pagamentos e Lucro Bruto!
         return ResponseEntity.ok(dashboardService.obterDadosDoDashboard());

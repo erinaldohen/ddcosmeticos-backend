@@ -8,8 +8,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRanking
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEvento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PagamentoVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaPagarRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ContaReceberRepository;
@@ -54,166 +52,150 @@ public class DashboardService {
         LocalDateTime inicioMes = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimMes = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
-        // --- 1. FATURAMENTO E LUCRO BRUTO (COM CUSTO CORRIGIDO) ---
+        // --- 1. FATURAMENTO, CUSTO E REPOSIÇÃO ---
         List<Venda> vendasHoje = vendaRepository.buscarVendasPorPeriodo(inicioDia, fimDia);
 
         BigDecimal faturamentoHoje = BigDecimal.ZERO;
         BigDecimal custoTotalHoje = BigDecimal.ZERO;
-        long itensVendidosHoje = 0L;
+        BigDecimal descontosHoje = BigDecimal.ZERO;
+        long totalLinhasItensHoje = 0L;
 
-        // Loop seguro e aprova de falhas para calcular o Custo Exato
+        // Mapas para agrupamento dinâmico
+        Map<String, BigDecimal> faturamentoPorForma = new HashMap<>();
+        Map<String, BigDecimal> faturamentoPorCategoria = new HashMap<>();
+
         for (Venda v : vendasHoje) {
             faturamentoHoje = faturamentoHoje.add(safeBigDecimal(v.getValorTotal()));
+            descontosHoje = descontosHoje.add(safeBigDecimal(v.getDescontoTotal()));
+
+            // Agrupamento por Meio de Pagamento Real
+            if (v.getPagamentos() != null) {
+                v.getPagamentos().forEach(p -> {
+                    String forma = p.getFormaPagamento().name().replace("_", " ");
+                    faturamentoPorForma.merge(forma, safeBigDecimal(p.getValor()), BigDecimal::add);
+                });
+            }
 
             if (v.getItens() != null) {
+                totalLinhasItensHoje += v.getItens().size();
                 for (ItemVenda i : v.getItens()) {
-                    long qtd = i.getQuantidade() != null ? i.getQuantidade().longValue() : 0L;
-                    itensVendidosHoje += qtd;
+                    BigDecimal qtd = i.getQuantidade() != null ? i.getQuantidade() : BigDecimal.ZERO;
 
-                    BigDecimal custoUnitario = safeBigDecimal(i.getCustoUnitarioHistorico());
-
-                    // Plano B: Se por algum erro a venda foi salva sem custo histórico, ele busca o custo do produto no banco
-                    if (custoUnitario.compareTo(BigDecimal.ZERO) == 0 && i.getProduto() != null) {
-                        custoUnitario = safeBigDecimal(i.getProduto().getPrecoCusto());
+                    // Cálculo do Custo de Reposição (CMV)
+                    BigDecimal custoUnit = safeBigDecimal(i.getCustoUnitarioHistorico());
+                    if (custoUnit.compareTo(BigDecimal.ZERO) == 0 && i.getProduto() != null) {
+                        custoUnit = safeBigDecimal(i.getProduto().getPrecoCusto());
                     }
+                    custoTotalHoje = custoTotalHoje.add(custoUnit.multiply(qtd));
 
-                    BigDecimal custoDesteItem = custoUnitario.multiply(new BigDecimal(qtd));
-                    custoTotalHoje = custoTotalHoje.add(custoDesteItem);
+                    // Agrupamento por Categoria
+                    String cat = (i.getProduto() != null && i.getProduto().getCategoria() != null)
+                            ? i.getProduto().getCategoria() : "Diversos";
+                    faturamentoPorCategoria.merge(cat, safeBigDecimal(i.getPrecoUnitario()).multiply(qtd), BigDecimal::add);
                 }
             }
         }
 
-        BigDecimal lucroBrutoHoje = faturamentoHoje.subtract(custoTotalHoje);
+        // Formatação Meios de Pagamento para o Gráfico de Rosca
+        List<Map<String, Object>> formasPagamentoList = faturamentoPorForma.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("name", e.getKey());
+                    m.put("value", e.getValue());
+                    m.put("fill", e.getKey().contains("PIX") ? "#00bdae" :
+                            e.getKey().contains("CARTAO") ? "#3b82f6" : "#8b5cf6");
+                    return m;
+                }).collect(Collectors.toList());
+
+        // Formatação Top 3 Categorias
+        List<Map<String, Object>> topCategorias = faturamentoPorCategoria.entrySet().stream()
+                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
+                .limit(3)
+                .map(e -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("nome", e.getKey());
+                    m.put("valor", e.getValue());
+                    return m;
+                }).collect(Collectors.toList());
+
         long quantidadeVendas = vendasHoje.size();
-        BigDecimal ticketMedio = quantidadeVendas > 0
-                ? faturamentoHoje.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
+        BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoHoje.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensHoje / quantidadeVendas : 0.0;
 
-        // --- 2. MAPA DE CALOR (Vendas por Hora) ---
-        Map<Integer, List<Venda>> agrupadoPorHora = vendasHoje.stream()
-                .collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
-
+        // --- 2. MAPA DE CALOR E EVOLUÇÃO MENSAL ---
+        Map<Integer, List<Venda>> agrupadoPorHora = vendasHoje.stream().collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
         List<Map<String, Object>> vendasPorHora = new ArrayList<>();
-        for (int hora = 8; hora <= 20; hora++) {
-            List<Venda> vendasNaHora = agrupadoPorHora.getOrDefault(hora, new ArrayList<>());
-            Map<String, Object> mapHora = new HashMap<>();
-            mapHora.put("hora", hora);
-            mapHora.put("quantidadeVendas", vendasNaHora.size());
-            vendasPorHora.add(mapHora);
+        for (int h = 8; h <= 20; h++) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("horaStr", String.format("%02dh", h));
+            m.put("qtd", agrupadoPorHora.getOrDefault(h, new ArrayList<>()).size());
+            vendasPorHora.add(m);
         }
 
-        // --- 3. GRÁFICO: VENDAS DO MÊS ---
         List<Venda> vendasDoMes = vendaRepository.buscarVendasPorPeriodo(inicioMes, fimMes);
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
+        vendasDoMes.forEach(v -> mapaDias.merge(v.getDataVenda().format(fmt), safeBigDecimal(v.getValorTotal()), BigDecimal::add));
 
-        for (int i = 1; i <= agora.getDayOfMonth(); i++) {
-            mapaDias.put(agora.toLocalDate().withDayOfMonth(i).format(fmt), BigDecimal.ZERO);
-        }
-        for (Venda v : vendasDoMes) {
-            if (v.getDataVenda() != null) {
-                mapaDias.merge(v.getDataVenda().format(fmt), safeBigDecimal(v.getValorTotal()), BigDecimal::add);
-            }
-        }
-
-        List<Map<String, Object>> graficoVendas = mapaDias.entrySet().stream()
-                .map(e -> {
-                    Map<String, Object> mapDia = new HashMap<>();
-                    mapDia.put("data", e.getKey());
-                    mapDia.put("total", e.getValue());
-                    return mapDia;
-                }).collect(Collectors.toList());
-
-        // --- 4. TOP PRODUTOS (Curva A) ---
-        List<ProdutoRankingDTO> ranking = vendaRepository.buscarRankingProdutos(inicioDia, fimDia, PageRequest.of(0, 5));
-        List<Map<String, Object>> topProdutos = ranking.stream().map(r -> {
-            Map<String, Object> p = new HashMap<>();
-            p.put("produto", r.produto());
-            p.put("quantidade", r.quantidade());
-            p.put("valorTotal", r.valorTotal());
-            return p;
+        List<Map<String, Object>> graficoVendas = mapaDias.entrySet().stream().map(e -> {
+            Map<String, Object> m = new HashMap<>(); m.put("data", e.getKey()); m.put("total", e.getValue()); return m;
         }).collect(Collectors.toList());
 
-        // --- 5. INDICADORES TÁTICOS REAIS ---
-        long totalProdutosAtivos = produtoRepository.count();
-        long produtosZerados = produtoRepository.countByQuantidadeEmEstoqueLessThanEqualAndAtivoTrue(0);
-        double indiceRuptura = totalProdutosAtivos > 0 ? ((double) produtosZerados / totalProdutosAtivos) * 100 : 0.0;
-
-        Long estoqueQuery = produtoRepository.calcularQuantidadeTotalEstoque();
-        long estoqueTotalItens = estoqueQuery != null ? estoqueQuery : 0L;
-        long itensVendidosMes = vendasDoMes.stream()
-                .flatMap(v -> v.getItens().stream())
-                .mapToLong(i -> i.getQuantidade() != null ? i.getQuantidade().longValue() : 0L).sum();
-
-        int giroEstoqueDias = 0;
-        if (itensVendidosMes > 0 && agora.getDayOfMonth() > 0) {
-            double mediaVendaDiaria = (double) itensVendidosMes / agora.getDayOfMonth();
-            giroEstoqueDias = (int) (estoqueTotalItens / mediaVendaDiaria);
-        }
-
+        // --- 3. INDICADORES TÁTICOS E IMPOSTOS ---
         BigDecimal faturamentoMes = vendasDoMes.stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        String faixaSimples = "4,00% (Anexo I)";
-        if (faturamentoMes.compareTo(new BigDecimal("15000")) > 0) faixaSimples = "7,30% (Anexo I)";
-        if (faturamentoMes.compareTo(new BigDecimal("30000")) > 0) faixaSimples = "9,50% (Anexo I)";
-
-        // --- 6. PERFORMANCE VENDEDORES E ORIGEM ---
-        Map<String, List<Venda>> vendasPorVendedor = vendasHoje.stream()
-                .filter(v -> v.getUsuario() != null &&
-                        v.getUsuario().getNome() != null &&
-                        !v.getUsuario().getNome().isBlank())
-                .collect(Collectors.groupingBy(v -> v.getUsuario().getNome()));
-
-        List<Map<String, Object>> performanceVendedores = new ArrayList<>();
-        vendasPorVendedor.forEach((nome, vendasDaPessoa) -> {
-            BigDecimal totalVendVendedor = vendasDaPessoa.stream()
-                    .map(v -> safeBigDecimal(v.getValorTotal()))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            Map<String, Object> mapVendedor = new HashMap<>();
-            mapVendedor.put("nome", nome);
-            mapVendedor.put("vendas", totalVendVendedor);
-            mapVendedor.put("converteu", vendasDaPessoa.size());
-            performanceVendedores.add(mapVendedor);
-        });
-
-        performanceVendedores.sort((v1, v2) -> ((BigDecimal) v2.get("vendas")).compareTo((BigDecimal) v1.get("vendas")));
-
-        List<Map<String, Object>> origemCliente = new ArrayList<>();
-        origemCliente.add(Map.of("name", "Passante", "value", faturamentoHoje.multiply(new BigDecimal("0.60")).intValue(), "color", "#ec4899"));
-        origemCliente.add(Map.of("name", "Instagram", "value", faturamentoHoje.multiply(new BigDecimal("0.25")).intValue(), "color", "#8b5cf6"));
-        origemCliente.add(Map.of("name", "Indicação", "value", faturamentoHoje.multiply(new BigDecimal("0.10")).intValue(), "color", "#3b82f6"));
-
-        // --- 7. MONTAGEM DA RESPOSTA FINAL ---
-        Map<String, Object> response = new HashMap<>();
+        BigDecimal impostoMes = faturamentoMes.multiply(new BigDecimal("0.04")); // Simples Nacional Estimado
 
         Map<String, Object> financeiro = new HashMap<>();
         financeiro.put("faturamentoHoje", faturamentoHoje);
-        financeiro.put("lucroBrutoHoje", lucroBrutoHoje);
+        financeiro.put("descontosHoje", descontosHoje);
+        financeiro.put("custoTotalReposicaoHoje", custoTotalHoje);
+        financeiro.put("lucroBrutoHoje", faturamentoHoje.subtract(custoTotalHoje));
         financeiro.put("vendasHoje", quantidadeVendas);
         financeiro.put("ticketMedio", ticketMedio);
-        financeiro.put("itensVendidosHoje", itensVendidosHoje);
-        financeiro.put("taxaConversao", 14.5);
-        financeiro.put("faixaSimples", faixaSimples);
-        financeiro.put("graficoVendas", graficoVendas);
+        financeiro.put("produtosDistintosPorVenda", mixProdutos);
+        financeiro.put("impostoProvisorioMes", impostoMes);
+        financeiro.put("impostoFederal", impostoMes.multiply(new BigDecimal("0.74")));
+        financeiro.put("impostoEstadual", impostoMes.multiply(new BigDecimal("0.26")));
+        financeiro.put("formasPagamento", formasPagamentoList);
         financeiro.put("vendasPorHora", vendasPorHora);
+        financeiro.put("graficoVendas", graficoVendas);
+        financeiro.put("faixaSimples", "4,00% (Anexo I)");
 
-        Map<String, Object> inventario = new HashMap<>();
-        inventario.put("indiceRuptura", String.format(Locale.US, "%.1f", indiceRuptura));
-        inventario.put("perdasVencimentos", 0.0);
-        inventario.put("giroEstoqueDias", giroEstoqueDias);
-
+        Map<String, Object> response = new HashMap<>();
         response.put("financeiro", financeiro);
-        response.put("inventario", inventario);
-        response.put("topProdutos", topProdutos);
-        response.put("performanceVendedores", performanceVendedores);
-        response.put("origemCliente", origemCliente);
+        response.put("topCategorias", topCategorias);
+        response.put("topProdutos", vendaRepository.buscarRankingProdutos(inicioDia, fimDia, PageRequest.of(0, 5)));
+        response.put("performanceVendedores", performanceVendedoresHoje(vendasHoje));
+        response.put("inventario", Map.of("indiceRuptura", calcularRuptura()));
         response.put("metaDiaria", 1500);
 
         return response;
     }
 
+    private List<Map<String, Object>> performanceVendedoresHoje(List<Venda> vendas) {
+        return vendas.stream()
+                .filter(v -> v.getUsuario() != null && v.getUsuario().getNome() != null)
+                .collect(Collectors.groupingBy(v -> v.getUsuario().getNome()))
+                .entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("nome", e.getKey());
+                    m.put("converteu", (long) e.getValue().size());
+                    m.put("vendas", e.getValue().stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add));
+                    return m;
+                })
+                .sorted((a, b) -> ((BigDecimal) b.get("vendas")).compareTo((BigDecimal) a.get("vendas")))
+                .collect(Collectors.toList());
+    }
+
+    private String calcularRuptura() {
+        long total = produtoRepository.count();
+        long zerados = produtoRepository.countByQuantidadeEmEstoqueLessThanEqualAndAtivoTrue(0);
+        return total > 0 ? String.format(Locale.US, "%.1f", ((double) zerados / total) * 100) : "0.0";
+    }
+
     // =========================================================================
-    // 2. MÉTODOS ORIGINAIS DE RESUMO (MANTIDOS INTACTOS)
+    // 2. MÉTODOS DE COMPATIBILIDADE (MANTIDOS PARA OUTRAS CONTROLLERS)
     // =========================================================================
 
     @Transactional(readOnly = true)

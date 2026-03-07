@@ -1,6 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
-import com.fasterxml.jackson.annotation.JsonIgnore; // <--- IMPORTANTE
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -23,7 +23,7 @@ public class ItemVenda {
     @JoinColumn(name = "venda_id")
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
-    @JsonIgnore // <--- ADICIONE ISSO: Impede o loop infinito no JSON
+    @JsonIgnore // Impede o loop infinito no JSON
     private Venda venda;
 
     @ManyToOne
@@ -34,8 +34,22 @@ public class ItemVenda {
     private BigDecimal precoUnitario;
     private BigDecimal desconto;
 
-    // ... outros campos (custo, impostos) ...
+    // --- CUSTOS E TRIBUTAÇÃO FUTURA ---
     private BigDecimal custoUnitarioHistorico;
     private BigDecimal aliquotaIbsAplicada;
     private BigDecimal aliquotaCbsAplicada;
+
+    // =========================================================================
+    // BLINDAGEM FISCAL: Fotografia exata da tributação no momento da venda
+    // =========================================================================
+
+    @Column(length = 4)
+    private String cfop;
+
+    @Column(length = 4)
+    private String csosn;
+
+    @Column(length = 100)
+    private String naturezaOperacao;
+
 }

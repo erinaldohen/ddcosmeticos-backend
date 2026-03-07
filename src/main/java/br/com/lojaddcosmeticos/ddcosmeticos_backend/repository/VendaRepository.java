@@ -175,4 +175,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // Adicione esta linha para curar o erro na linha 213 do DashboardService
     @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND (v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA)")
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    @Query("SELECT SUM(v.valorTotal) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
+    BigDecimal calcularFaturamentoBruto(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

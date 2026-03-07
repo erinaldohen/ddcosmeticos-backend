@@ -47,7 +47,7 @@ public class ConfiguracaoLojaService {
         return repository.findAll().stream()
                 .findFirst()
                 .map(config -> {
-                    config.preencherNulos();
+                    config.garantirInstancias();
                     return config;
                 })
                 .orElseGet(this::criarConfiguracaoPadrao);
@@ -135,7 +135,7 @@ public class ConfiguracaoLojaService {
 
     // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) ---
     private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
-        c.preencherNulos();
+        c.garantirInstancias();
 
         String logoAtual = c.getLoja().getLogoUrl();
         c.setLoja(new ConfiguracaoLoja.DadosLoja(
@@ -278,7 +278,7 @@ public class ConfiguracaoLojaService {
 
     private ConfiguracaoLoja criarConfiguracaoPadrao() {
         ConfiguracaoLoja config = new ConfiguracaoLoja();
-        config.preencherNulos();
+        config.garantirInstancias();
         config.getSistema().setTema("light");
         config.getSistema().setImpressaoAuto(true);
         config.getFiscal().setAmbiente("HOMOLOGACAO");

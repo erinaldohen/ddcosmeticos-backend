@@ -67,7 +67,7 @@ public class Usuario implements UserDetails, Serializable {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // O Spring Security EXIGE o prefixo "ROLE_" para validar o .hasRole()
+        // Adicionamos "ROLE_" antes do nome do enum (ex: ROLE_ADMIN, ROLE_CAIXA)
         return List.of(new SimpleGrantedAuthority(this.perfilDoUsuario.name()));
     }
 

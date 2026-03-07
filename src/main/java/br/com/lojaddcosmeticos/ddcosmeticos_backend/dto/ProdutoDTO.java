@@ -78,7 +78,7 @@ public record ProdutoDTO(
                 p.getOrigem(),
                 p.isMonofasico(),
                 p.getClassificacaoReforma(),
-                p.isImpostoSeletivo(),
+                p.getIsImpostoSeletivo(),
                 p.getPrecoVenda(),
                 p.getPrecoCusto(),
                 p.getQuantidadeEmEstoque(),

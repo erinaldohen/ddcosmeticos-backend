@@ -1,22 +1,17 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
- * DTO para a solicitação formal de fecho de caixa.
- * Inclui o valor físico contado pelo operador para validação de integridade.
+ * DTO de Resposta (Response) após o Fechamento do Caixa.
+ * Utilizado para exibir o Relatório de Fechamento Cego no Frontend.
  */
 public record ConfirmacaoFechamentoDTO(
-
-        @NotNull(message = "A data do fecho é obrigatória.")
-        LocalDate data,
-
-        @NotNull(message = "O valor contado em espécie é obrigatório.")
-        @PositiveOrZero(message = "O valor contado não pode ser negativo.")
-        BigDecimal valorContadoEmEspecie,
-
-        String justificativaDiferenca // Obrigatório via lógica de serviço se a quebra for > R$ 5,00
+        Long caixaId,
+        String operador,
+        LocalDateTime dataFechamento,
+        BigDecimal saldoEsperado,
+        BigDecimal valorInformado,
+        BigDecimal diferenca
 ) {}

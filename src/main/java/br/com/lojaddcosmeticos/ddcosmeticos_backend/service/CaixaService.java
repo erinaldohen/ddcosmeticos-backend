@@ -1,8 +1,11 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfirmacaoFechamentoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
@@ -10,6 +13,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioReposi
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentacaoCaixaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.UsuarioRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,12 +29,13 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CaixaService {
 
     private final CaixaDiarioRepository caixaRepository;
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
-
+    private final AuditoriaService auditoriaService;
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
     // ==================================================================================
@@ -150,30 +155,61 @@ public class CaixaService {
     }
 
     @Transactional
-    public CaixaDiario fecharCaixa(BigDecimal saldoInformado) {
-        if (saldoInformado == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo final (gaveta) obrigatório.");
+    public ConfirmacaoFechamentoDTO fecharCaixa(BigDecimal valorFisicoInformado) {
+        Usuario operadorLogado = getUsuarioLogado();
+        CaixaDiario caixa;
 
-        Usuario operador = getUsuarioLogado();
-        CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Não há caixa aberto para este usuário."));
+        // 1. Busca inteligente do caixa
+        Optional<CaixaDiario> caixaProprio = caixaRepository.findFirstByUsuarioAberturaAndStatus(operadorLogado, StatusCaixa.ABERTO);
 
-        LocalDateTime agora = LocalDateTime.now();
+        if (caixaProprio.isPresent()) {
+            caixa = caixaProprio.get();
+        } else if (operadorLogado.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN) {
+            caixa = caixaRepository.findByStatus(StatusCaixa.ABERTO)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há caixa aberto no sistema."));
+        } else {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Você não possui um caixa aberto para fechar.");
+        }
 
-        // 1. Fórmula do Saldo Esperado (Fundo + VendasDinheiro + Suprimentos - Sangrias)
-        // Mais uma vez, não precisamos percorrer a lista de Venda.
-        BigDecimal saldoEsperado = caixa.getSaldoInicial()
-                .add(caixa.getTotalVendasDinheiro())
-                .add(caixa.getTotalEntradas())
-                .subtract(caixa.getTotalSaidas());
+        // 2. Cálculo do Saldo Esperado (Físico em Gaveta)
+        BigDecimal saldoInicial = caixa.getSaldoInicial() != null ? caixa.getSaldoInicial() : BigDecimal.ZERO;
+        BigDecimal suprimentos = caixa.getTotalEntradas() != null ? caixa.getTotalEntradas() : BigDecimal.ZERO;
+        BigDecimal vendasDinheiro = caixa.getTotalVendasDinheiro() != null ? caixa.getTotalVendasDinheiro() : BigDecimal.ZERO;
+        BigDecimal sangrias = caixa.getTotalSaidas() != null ? caixa.getTotalSaidas() : BigDecimal.ZERO;
 
-        // 2. Preenche dados finais
-        caixa.setValorCalculadoSistema(saldoEsperado);
-        caixa.setValorFechamento(saldoInformado);
-        caixa.setSaldoAtual(saldoEsperado);
-        caixa.setDataFechamento(agora);
+        BigDecimal saldoEsperado = saldoInicial.add(suprimentos).add(vendasDinheiro).subtract(sangrias);
+        BigDecimal valorInformado = valorFisicoInformado != null ? valorFisicoInformado : BigDecimal.ZERO;
+        BigDecimal diferenca = valorInformado.subtract(saldoEsperado);
+
+        // 3. Atualização dos campos na Entidade
+        caixa.setValorFisicoInformado(valorInformado);
+        caixa.setSaldoEsperadoSistema(saldoEsperado);
+        caixa.setDiferencaCaixa(diferenca);
         caixa.setStatus(StatusCaixa.FECHADO);
+        caixa.setDataFechamento(LocalDateTime.now());
 
-        return caixaRepository.save(caixa);
+        caixaRepository.save(caixa);
+
+        // 4. Registro de Auditoria e Log
+        String msgAuditoria = String.format("Fechamento Caixa #%d. Resp: %s. Esperado: %s. Informado: %s. Dif: %s",
+                caixa.getId(), operadorLogado.getNome(), saldoEsperado, valorInformado, diferenca);
+
+        if (diferenca.compareTo(BigDecimal.ZERO) < 0) {
+            auditoriaService.registrar("QUEBRA_DE_CAIXA", msgAuditoria);
+            log.warn("QUEBRA DETECTADA: {}", msgAuditoria);
+        } else {
+            auditoriaService.registrar("FECHAMENTO_CAIXA", msgAuditoria);
+        }
+
+        // 5. Retorno para o Frontend
+        return new ConfirmacaoFechamentoDTO(
+                caixa.getId(),
+                caixa.getUsuarioAbertura().getNome(),
+                caixa.getDataFechamento(),
+                saldoEsperado,
+                valorInformado,
+                diferenca
+        );
     }
 
     // --- SANGRIA E SUPRIMENTO ---

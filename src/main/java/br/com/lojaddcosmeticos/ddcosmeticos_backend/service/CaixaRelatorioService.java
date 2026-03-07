@@ -58,7 +58,7 @@ public class CaixaRelatorioService {
         document.add(new Paragraph("\n"));
         double total = listaCaixas.stream()
                 .filter(c -> c.getStatus().name().equals("FECHADO"))
-                .mapToDouble(c -> c.getValorFechamento() != null ? c.getValorFechamento().doubleValue() : 0.0)
+                .mapToDouble(c -> c.getValorFisicoInformado() != null ? c.getValorFisicoInformado().doubleValue() : 0.0)
                 .sum();
 
         Font fontTotal = FontFactory.getFont(FontFactory.HELVETICA_BOLD);
@@ -104,7 +104,7 @@ public class CaixaRelatorioService {
 
             table.addCell(new Phrase(formatMoney(c.getSaldoInicial().doubleValue()), font));
 
-            Double vFinal = c.getValorFechamento() != null ? c.getValorFechamento().doubleValue() : 0.0;
+            Double vFinal = c.getValorFisicoInformado() != null ? c.getValorFisicoInformado().doubleValue() : 0.0;
             table.addCell(new Phrase(formatMoney(vFinal), font));
 
             table.addCell(new Phrase(c.getStatus().toString(), font));

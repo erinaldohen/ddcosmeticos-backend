@@ -81,8 +81,12 @@ public class SecurityConfig {
 
                         // Operações de Venda e Caixa
                         .requestMatchers(HttpMethod.POST, "/api/v1/vendas/**").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").hasAnyRole("ADMIN", "CAIXA")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").hasAnyRole("ADMIN", "CAIXA")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").authenticated()
+                        // No SecurityConfig.java
+                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/caixas/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").authenticated()
 
                         // 3. RESTRITO A ADMIN (Escrita e Gestão)
                         // CORREÇÃO APLICADA: Substituído hasRole por hasAuthority para evitar o prefixo duplo "ROLE_ROLE_ADMIN"

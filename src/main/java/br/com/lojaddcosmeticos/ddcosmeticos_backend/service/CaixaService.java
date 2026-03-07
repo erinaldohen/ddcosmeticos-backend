@@ -36,6 +36,7 @@ public class CaixaService {
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
     private final AuditoriaService auditoriaService;
+
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
     // ==================================================================================
@@ -94,10 +95,6 @@ public class CaixaService {
         return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
 
-    // ----------------------------------------------------------------------------------
-    // CORREÇÃO CRÍTICA AQUI: O CaixaService não deve recalcular usando Lista de Vendas.
-    // Ele deve apenas devolver os acumuladores que o VendaService já preencheu lindamente.
-    // ----------------------------------------------------------------------------------
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
@@ -117,13 +114,13 @@ public class CaixaService {
                 caixa.getId(),
                 "ABERTO",
                 caixa.getSaldoInicial(),
-                saldoGaveta, // Passamos o saldo físico calculado na hora
+                saldoGaveta,
                 caixa.getTotalEntradas(),
                 caixa.getTotalSaidas(),
-                caixa.getTotalVendasDinheiro(), // Lê direto do BD
-                caixa.getTotalVendasPix(),      // Lê direto do BD
-                caixa.getTotalVendasCredito(),  // Lê direto do BD
-                caixa.getTotalVendasDebito()    // Lê direto do BD
+                caixa.getTotalVendasDinheiro(),
+                caixa.getTotalVendasPix(),
+                caixa.getTotalVendasCredito(),
+                caixa.getTotalVendasDebito()
         );
     }
 
@@ -166,9 +163,11 @@ public class CaixaService {
             caixa = caixaProprio.get();
         } else if (operadorLogado.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN) {
             caixa = caixaRepository.findByStatus(StatusCaixa.ABERTO)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há caixa aberto no sistema."));
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há nenhum caixa aberto no sistema."));
         } else {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Você não possui um caixa aberto para fechar.");
+            // CORREÇÃO: Mensagem de erro explícita explicando a Regra de Negócio
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Bloqueio de Segurança: Você (" + operadorLogado.getNome() + ") não possui um caixa aberto no seu nome. Apenas um Administrador pode fechar o turno de outro usuário.");
         }
 
         // 2. Cálculo do Saldo Esperado (Físico em Gaveta)

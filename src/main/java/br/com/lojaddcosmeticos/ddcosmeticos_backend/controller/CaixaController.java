@@ -42,9 +42,11 @@ public class CaixaController {
     // --- OPERACIONAL ---
 
     @PostMapping("/fechar")
-    public ResponseEntity<ConfirmacaoFechamentoDTO> fecharCaixa(
+    public ResponseEntity<Void> fecharCaixa(
             @Valid @RequestBody FechamentoCaixaRequestDTO request) {
-        return ResponseEntity.ok(caixaService.fecharCaixa(request.valorFisicoInformado()));
+        caixaService.fecharCaixa(request.valorFisicoInformado());
+        // Retorna status 200 OK limpo, blindando contra erros de serialização Jackson
+        return ResponseEntity.ok().build();
     }
 
     @GetMapping("/status")
@@ -74,8 +76,9 @@ public class CaixaController {
 
     @PostMapping("/abrir")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<CaixaDiario> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
+    public ResponseEntity<CaixaDiarioDTO> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
         BigDecimal saldoInicial = payload.get("saldoInicial");
+        // Retorna DTO em vez de Entidade
         return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
     }
 
@@ -103,7 +106,6 @@ public class CaixaController {
 
     // --- HISTÓRICO E RELATÓRIOS ---
 
-    // VERSÃO ÚNICA E CORRETA: Retorna o DTO, blindando contra o erro 500 do LazyLoading
     @GetMapping
     public ResponseEntity<Page<CaixaDiarioDTO>> listarTodos(
             Pageable pageable,
@@ -114,8 +116,10 @@ public class CaixaController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<CaixaDiario> buscarPorId(@PathVariable Long id) {
+    public ResponseEntity<CaixaDiarioDTO> buscarPorId(@PathVariable Long id) {
+        // Converte para DTO antes de mandar pro Frontend, evitando erro no botão "Ver Detalhes"
         return caixaRepository.findById(id)
+                .map(caixaService::converterParaDTOCompleto)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

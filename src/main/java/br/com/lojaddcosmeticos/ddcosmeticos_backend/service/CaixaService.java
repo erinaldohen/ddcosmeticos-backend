@@ -37,29 +37,23 @@ public class CaixaService {
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
     private final AuditoriaService auditoriaService;
+    private final CaixaAuditorIaService auditorIaService; // Injeção do Cérebro de IA
 
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
     // ==================================================================================
 
-    /**
-     * Busca o caixa atualmente aberto.
-     * Tenta primeiro o caixa do usuário logado, se não encontrar, tenta qualquer caixa aberto (fallback).
-     */
     public CaixaDiario buscarCaixaAberto() {
         try {
             Usuario operador = getUsuarioLogado();
             Optional<CaixaDiario> caixaUser = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
             if (caixaUser.isPresent()) return caixaUser.get();
         } catch (Exception e) {
-            // Ignora erro de usuário não logado (pode ser chamado por processo agendado)
+            // Ignora erro de usuário não logado
         }
         return caixaRepository.findByStatus(StatusCaixa.ABERTO).orElse(null);
     }
 
-    /**
-     * Salva uma movimentação e atualiza o saldo do caixa em tempo real.
-     */
     @Transactional
     public void salvarMovimentacao(MovimentacaoCaixa movimentacao) {
         if (movimentacao.getCaixa() == null) {
@@ -67,7 +61,6 @@ public class CaixaService {
             if (caixa != null) {
                 movimentacao.setCaixa(caixa);
 
-                // As movimentações manuais sempre atualizam os totalizadores de Entrada/Saída
                 BigDecimal valor = movimentacao.getValor();
                 if (movimentacao.getTipo() == TipoMovimentacaoCaixa.ENTRADA || movimentacao.getTipo() == TipoMovimentacaoCaixa.SUPRIMENTO) {
                     caixa.setSaldoAtual(caixa.getSaldoAtual().add(valor));
@@ -104,8 +97,6 @@ public class CaixaService {
 
         CaixaDiario caixa = caixaOpt.get();
 
-        // O saldo atual em gaveta = Saldo Inicial + Entradas(Suprimentos) + Vendas em Dinheiro - Saídas(Sangrias)
-        // OBS: Pagamentos digitais não afetam a gaveta, apenas os relatórios fiscais.
         BigDecimal saldoGaveta = caixa.getSaldoInicial()
                 .add(caixa.getTotalEntradas())
                 .add(caixa.getTotalVendasDinheiro())
@@ -117,7 +108,7 @@ public class CaixaService {
                 caixa.getId(),
                 "ABERTO",
                 caixa.getDataAbertura(),
-                null, // dataFechamento (Ainda está aberto)
+                null,
                 nomeOperador,
                 caixa.getSaldoInicial(),
                 saldoGaveta,
@@ -127,14 +118,14 @@ public class CaixaService {
                 caixa.getTotalVendasPix(),
                 caixa.getTotalVendasCredito(),
                 caixa.getTotalVendasDebito(),
-                BigDecimal.ZERO, // saldoEsperadoSistema (ainda não fechou)
-                BigDecimal.ZERO, // valorFisicoInformado (ainda não fechou)
-                BigDecimal.ZERO  // diferencaCaixa (ainda não fechou)
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO
         );
     }
 
     @Transactional
-    public CaixaDiario abrirCaixa(BigDecimal fundoTroco) {
+    public CaixaDiarioDTO abrirCaixa(BigDecimal fundoTroco) {
         Usuario operador = getUsuarioLogado();
 
         if (caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO).isPresent()) {
@@ -148,7 +139,6 @@ public class CaixaService {
         caixa.setSaldoAtual(caixa.getSaldoInicial());
         caixa.setStatus(StatusCaixa.ABERTO);
 
-        // Inicializa acumuladores
         caixa.setTotalVendasDinheiro(BigDecimal.ZERO);
         caixa.setTotalVendasPix(BigDecimal.ZERO);
         caixa.setTotalVendasCredito(BigDecimal.ZERO);
@@ -157,7 +147,37 @@ public class CaixaService {
         caixa.setTotalEntradas(BigDecimal.ZERO);
         caixa.setTotalSaidas(BigDecimal.ZERO);
 
-        return caixaRepository.save(caixa);
+        CaixaDiario caixaSalvo = caixaRepository.save(caixa);
+        return converterParaDTOCompleto(caixaSalvo);
+    }
+
+    // Agora é PUBLIC para ser usado no CaixaController
+    public CaixaDiarioDTO converterParaDTOCompleto(CaixaDiario caixa) {
+        BigDecimal saldoGaveta = caixa.getSaldoAtual() != null ? caixa.getSaldoAtual() : BigDecimal.ZERO;
+
+        String nomeOperador = "Operador Não Identificado";
+        if (caixa.getUsuarioAbertura() != null) {
+            nomeOperador = caixa.getUsuarioAbertura().getNome();
+        }
+
+        return new CaixaDiarioDTO(
+                caixa.getId(),
+                caixa.getStatus().name(),
+                caixa.getDataAbertura(),
+                caixa.getDataFechamento(),
+                nomeOperador,
+                caixa.getSaldoInicial(),
+                saldoGaveta,
+                caixa.getTotalEntradas(),
+                caixa.getTotalSaidas(),
+                caixa.getTotalVendasDinheiro(),
+                caixa.getTotalVendasPix(),
+                caixa.getTotalVendasCredito(),
+                caixa.getTotalVendasDebito(),
+                caixa.getSaldoEsperadoSistema(),
+                caixa.getValorFisicoInformado(),
+                caixa.getDiferencaCaixa()
+        );
     }
 
     @Transactional
@@ -165,7 +185,6 @@ public class CaixaService {
         Usuario operadorLogado = getUsuarioLogado();
         CaixaDiario caixa;
 
-        // 1. Busca inteligente do caixa
         Optional<CaixaDiario> caixaProprio = caixaRepository.findFirstByUsuarioAberturaAndStatus(operadorLogado, StatusCaixa.ABERTO);
 
         if (caixaProprio.isPresent()) {
@@ -174,12 +193,10 @@ public class CaixaService {
             caixa = caixaRepository.findByStatus(StatusCaixa.ABERTO)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há nenhum caixa aberto no sistema."));
         } else {
-            // CORREÇÃO: Mensagem de erro explícita explicando a Regra de Negócio
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Bloqueio de Segurança: Você (" + operadorLogado.getNome() + ") não possui um caixa aberto no seu nome. Apenas um Administrador pode fechar o turno de outro usuário.");
         }
 
-        // 2. Cálculo do Saldo Esperado (Físico em Gaveta)
         BigDecimal saldoInicial = caixa.getSaldoInicial() != null ? caixa.getSaldoInicial() : BigDecimal.ZERO;
         BigDecimal suprimentos = caixa.getTotalEntradas() != null ? caixa.getTotalEntradas() : BigDecimal.ZERO;
         BigDecimal vendasDinheiro = caixa.getTotalVendasDinheiro() != null ? caixa.getTotalVendasDinheiro() : BigDecimal.ZERO;
@@ -189,7 +206,6 @@ public class CaixaService {
         BigDecimal valorInformado = valorFisicoInformado != null ? valorFisicoInformado : BigDecimal.ZERO;
         BigDecimal diferenca = valorInformado.subtract(saldoEsperado);
 
-        // 3. Atualização dos campos na Entidade
         caixa.setValorFisicoInformado(valorInformado);
         caixa.setSaldoEsperadoSistema(saldoEsperado);
         caixa.setDiferencaCaixa(diferenca);
@@ -198,18 +214,27 @@ public class CaixaService {
 
         caixaRepository.save(caixa);
 
-        // 4. Registro de Auditoria e Log
         String msgAuditoria = String.format("Fechamento Caixa #%d. Resp: %s. Esperado: %s. Informado: %s. Dif: %s",
                 caixa.getId(), operadorLogado.getNome(), saldoEsperado, valorInformado, diferenca);
 
-        if (diferenca.compareTo(BigDecimal.ZERO) < 0) {
-            auditoriaService.registrar("QUEBRA_DE_CAIXA", msgAuditoria);
-            log.warn("QUEBRA DETECTADA: {}", msgAuditoria);
+        if (diferenca.compareTo(BigDecimal.ZERO) != 0) {
+            if (diferenca.compareTo(BigDecimal.ZERO) < 0) {
+                auditoriaService.registrar("QUEBRA_DE_CAIXA", msgAuditoria);
+                log.warn("QUEBRA DETECTADA: {}", msgAuditoria);
+            } else {
+                auditoriaService.registrar("SOBRA_DE_CAIXA", msgAuditoria);
+                log.info("SOBRA DETECTADA: {}", msgAuditoria);
+            }
+
+            // Disparo assíncrono do Auditor IA
+            if (auditorIaService != null) {
+                auditorIaService.auditarQuebraDeCaixa(caixa.getId(), operadorLogado.getNome(), null);
+            }
+
         } else {
             auditoriaService.registrar("FECHAMENTO_CAIXA", msgAuditoria);
         }
 
-        // 5. Retorno para o Frontend
         return new ConfirmacaoFechamentoDTO(
                 caixa.getId(),
                 caixa.getUsuarioAbertura().getNome(),
@@ -238,7 +263,6 @@ public class CaixaService {
         mov.setMotivo("SANGRIA: " + observacao);
         mov.setDataHora(LocalDateTime.now());
 
-        // Chama o método auxiliar que centraliza o recálculo do saldo
         salvarMovimentacao(mov);
     }
 
@@ -269,14 +293,10 @@ public class CaixaService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuário não encontrado."));
     }
 
-    // =========================================================================
-    //  CORREÇÃO APLICADA AQUI: USO DOS NOVOS MÉTODOS "COM USUARIO"
-    // =========================================================================
     @Transactional(readOnly = true)
     public Page<CaixaDiarioDTO> listarHistoricoPaginado(LocalDate inicio, LocalDate fim, Pageable pageable) {
         Page<CaixaDiario> paginaCaixas;
 
-        // Chama os métodos que já fazem o JOIN FETCH do Usuário para evitar LazyInitializationException
         if (inicio != null && fim != null) {
             paginaCaixas = caixaRepository.findByDataAberturaBetweenComUsuario(
                     inicio.atStartOfDay(),
@@ -287,36 +307,6 @@ public class CaixaService {
             paginaCaixas = caixaRepository.findAllComUsuario(pageable);
         }
 
-        // Converte cada entidade em um DTO seguro para JSON
         return paginaCaixas.map(this::converterParaDTOCompleto);
-    }
-
-    private CaixaDiarioDTO converterParaDTOCompleto(CaixaDiario caixa) {
-        // Cálculo do saldo em gaveta para caixas abertos, ou uso do saldo salvo para caixas fechados
-        BigDecimal saldoGaveta = caixa.getSaldoAtual() != null ? caixa.getSaldoAtual() : BigDecimal.ZERO;
-
-        String nomeOperador = "Operador Não Identificado";
-        if (caixa.getUsuarioAbertura() != null) {
-            nomeOperador = caixa.getUsuarioAbertura().getNome();
-        }
-
-        return new CaixaDiarioDTO(
-                caixa.getId(),
-                caixa.getStatus().name(), // Pega o valor do Enum (ABERTO/FECHADO)
-                caixa.getDataAbertura(),
-                caixa.getDataFechamento(),
-                nomeOperador,
-                caixa.getSaldoInicial(),
-                saldoGaveta,
-                caixa.getTotalEntradas(),
-                caixa.getTotalSaidas(),
-                caixa.getTotalVendasDinheiro(),
-                caixa.getTotalVendasPix(),
-                caixa.getTotalVendasCredito(),
-                caixa.getTotalVendasDebito(),
-                caixa.getSaldoEsperadoSistema(),
-                caixa.getValorFisicoInformado(),
-                caixa.getDiferencaCaixa()
-        );
     }
 }

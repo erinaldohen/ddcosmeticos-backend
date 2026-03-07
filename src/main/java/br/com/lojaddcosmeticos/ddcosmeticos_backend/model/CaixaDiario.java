@@ -91,6 +91,9 @@ public class CaixaDiario {
     @Column(columnDefinition = "TEXT")
     private String observacoes;
 
+    @Column(columnDefinition = "TEXT")
+    private String analiseAuditoriaIa; // A IA vai preencher isso no Java
+
     // --- EVENTOS DE CICLO DE VIDA (JPA HOOKS) ---
 
     @PrePersist

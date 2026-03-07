@@ -8,7 +8,7 @@ public record CaixaDiarioDTO(
         String status,
         LocalDateTime dataAbertura,
         LocalDateTime dataFechamento,
-        String operadorNome, // Nome de quem abriu o caixa
+        String operadorNome,
         BigDecimal saldoInicial,
         BigDecimal saldoAtual,
         BigDecimal totalEntradas,
@@ -17,8 +17,6 @@ public record CaixaDiarioDTO(
         BigDecimal totalVendasPix,
         BigDecimal totalVendasCredito,
         BigDecimal totalVendasDebito,
-
-        // Campos de Fechamento Cego
         BigDecimal saldoEsperadoSistema,
         BigDecimal valorFisicoInformado,
         BigDecimal diferencaCaixa

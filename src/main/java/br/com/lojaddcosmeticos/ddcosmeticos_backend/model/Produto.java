@@ -116,6 +116,7 @@ public class Produto {
     private LocalDateTime dataCadastro;
     private LocalDateTime dataAtualizacao;
 
+    private LocalDate dataUltimaVenda;
     // --- EVENTOS DO CICLO DE VIDA ---
 
     @PrePersist

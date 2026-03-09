@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoInfluenciaIA; // <--- NOVO IMPORT
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -51,5 +52,13 @@ public class ItemVenda {
 
     @Column(length = 100)
     private String naturezaOperacao;
+
+    // =========================================================================
+    // NOVO: INTELIGÊNCIA ARTIFICIAL E RASTREIO DE SUGESTÕES NO PDV
+    // =========================================================================
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
 
 }

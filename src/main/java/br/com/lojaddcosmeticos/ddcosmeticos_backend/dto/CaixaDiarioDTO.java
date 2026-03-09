@@ -19,5 +19,9 @@ public record CaixaDiarioDTO(
         BigDecimal totalVendasDebito,
         BigDecimal saldoEsperadoSistema,
         BigDecimal valorFisicoInformado,
-        BigDecimal diferencaCaixa
+        BigDecimal diferencaCaixa,
+
+        // --- NOVOS CAMPOS PARA A IA E AUDITORIA ---
+        String justificativaDiferenca,
+        String analiseAuditoriaIa
 ) {}

@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.handler;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.RateLimitException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -16,6 +17,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -40,61 +42,33 @@ public class ApiExceptionHandler {
     //  AUTENTICAÇÃO E LOGIN (Mapeamento exato para o Switch do Login.jsx)
     // ==================================================================================
 
-    /**
-     * CENÁRIO 1: LOGIN OU SENHA ERRADOS (Mas usuário existe)
-     * Status: 401 Unauthorized
-     * Frontend exibe: "Credenciais inválidas..."
-     */
     @ExceptionHandler({BadCredentialsException.class, InternalAuthenticationServiceException.class})
     public ResponseEntity<ErrorResponse> handleBadCredentials(Exception ex) {
         return buildResponse(HttpStatus.UNAUTHORIZED, "Credenciais inválidas. Verifique seu login e senha.", null);
     }
 
-    /**
-     * CENÁRIO 2: USUÁRIO NÃO ENCONTRADO
-     * Status: 404 Not Found
-     * Frontend exibe: "Usuário não encontrado no sistema."
-     * OBS: Requer authProvider.setHideUserNotFoundExceptions(false) no SecurityConfig.
-     */
     @ExceptionHandler({UsernameNotFoundException.class, ResourceNotFoundException.class})
     public ResponseEntity<ErrorResponse> handleUserNotFound(RuntimeException ex) {
         return buildResponse(HttpStatus.NOT_FOUND, "Usuário ou recurso não encontrado no sistema.", null);
     }
 
-    /**
-     * CENÁRIO 3: CONTA BLOQUEADA / INATIVA
-     * Status: 403 Forbidden
-     * Frontend exibe: "Acesso negado. Sua conta pode estar inativa..."
-     */
     @ExceptionHandler({DisabledException.class, LockedException.class, AccountExpiredException.class})
     public ResponseEntity<ErrorResponse> handleAccountStatus(RuntimeException ex) {
         return buildResponse(HttpStatus.FORBIDDEN, "Acesso negado. Sua conta está inativa ou bloqueada.", null);
     }
 
-    /**
-     * CENÁRIO 4: ACESSO NEGADO (SEM PERMISSÃO EM ROTA)
-     * Status: 403 Forbidden
-     */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
         return buildResponse(HttpStatus.FORBIDDEN, "Acesso negado: Permissão insuficiente.", null);
     }
 
-    /**
-     * CENÁRIO 5: MUITAS TENTATIVAS (RATE LIMIT)
-     * Status: 429 Too Many Requests
-     */
     @ExceptionHandler(RateLimitException.class)
     public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitException ex) {
         return buildResponse(HttpStatus.TOO_MANY_REQUESTS, "Muitas tentativas consecutivas. Aguarde.", null);
     }
 
-    /**
-     * Outros erros de autenticação genéricos
-     */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ErrorResponse> handleAuthenticationException(AuthenticationException ex) {
-        // Evita loop se nenhuma das anteriores capturar
         return buildResponse(HttpStatus.UNAUTHORIZED, "Falha na autenticação.", null);
     }
 
@@ -124,6 +98,22 @@ public class ApiExceptionHandler {
     }
 
     // ==================================================================================
+    //  MÁGICA DO FECHAMENTO DE CAIXA (Erro 428)
+    // ==================================================================================
+
+    /**
+     * Garante que o ResponseStatusException (como o 428 PRECONDITION_REQUIRED de Justificativa)
+     * chegue ao React com o status correto, utilizando o padrao ErrorResponse da sua classe.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(ResponseStatusException e) {
+        HttpStatus status = HttpStatus.valueOf(e.getStatusCode().value());
+        String mensagem = e.getReason() != null ? e.getReason() : "Erro de regra de negócio.";
+
+        return buildResponse(status, mensagem, null);
+    }
+
+    // ==================================================================================
     //  FALLBACK (ERRO 500)
     // ==================================================================================
 
@@ -133,6 +123,7 @@ public class ApiExceptionHandler {
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno no servidor. Nossa equipe já foi notificada.", null);
     }
 
+    // Record utilizado para padronizar o JSON retornado
     public record ErrorResponse(
             String mensagem,
             int status,

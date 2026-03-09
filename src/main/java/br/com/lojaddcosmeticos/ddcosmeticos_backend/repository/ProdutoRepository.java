@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -136,4 +137,24 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     long countBaixoEstoque();
     @Query("SELECT COALESCE(SUM(p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
     Long calcularQuantidadeTotalEstoque();
+
+    // --- PROJEÇÕES PARA GESTÃO DE RISCO DE ESTOQUE (NOVO DASHBOARD) ---
+    interface RiscoEstoqueProjection {
+        Integer getItens();
+        BigDecimal getValorRisco();
+    }
+
+    // 1. Produtos vencendo em X dias ou já vencidos (com estoque > 0)
+    @Query("SELECT CAST(COUNT(p.id) AS int) as itens, " +
+            "CAST(COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) AS bigdecimal) as valorRisco " +
+            "FROM Produto p WHERE p.validade <= :dataLimite AND p.quantidadeEmEstoque > 0 AND p.ativo = true")
+    RiscoEstoqueProjection calcularRiscoVencimento(@Param("dataLimite") LocalDate dataLimite);
+
+    // 2. Estoque Parado / Curva C (Com estoque > 0, mas sem giro nos últimos X dias)
+    @Query("SELECT CAST(COUNT(p.id) AS int) as itens, " +
+            "CAST(COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) AS bigdecimal) as valorRisco " +
+            "FROM Produto p WHERE p.quantidadeEmEstoque > 0 AND p.ativo = true AND " +
+            "(p.dataUltimaVenda IS NULL OR p.dataUltimaVenda <= :dataLimiteGiro)")
+    RiscoEstoqueProjection calcularEstoqueParado(@Param("dataLimiteGiro") LocalDate dataLimiteGiro);
+
 }

@@ -37,7 +37,7 @@ public class CaixaService {
     private final UsuarioRepository usuarioRepository;
     private final MovimentacaoCaixaRepository movimentacaoRepository;
     private final AuditoriaService auditoriaService;
-    private final CaixaAuditorIaService auditorIaService; // Injeção do Cérebro de IA
+    private final CaixaAuditorIaService auditorIaService;
 
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
@@ -49,7 +49,7 @@ public class CaixaService {
             Optional<CaixaDiario> caixaUser = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
             if (caixaUser.isPresent()) return caixaUser.get();
         } catch (Exception e) {
-            // Ignora erro de usuário não logado
+            // Ignora erro
         }
         return caixaRepository.findByStatus(StatusCaixa.ABERTO).orElse(null);
     }
@@ -89,6 +89,7 @@ public class CaixaService {
         return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
 
+    @Transactional(readOnly = true)
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
         Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
@@ -120,7 +121,9 @@ public class CaixaService {
                 caixa.getTotalVendasDebito(),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
-                BigDecimal.ZERO
+                BigDecimal.ZERO,
+                null, // justificativaDiferenca (Ainda está aberto)
+                null  // analiseAuditoriaIa (Ainda está aberto)
         );
     }
 
@@ -151,7 +154,6 @@ public class CaixaService {
         return converterParaDTOCompleto(caixaSalvo);
     }
 
-    // Agora é PUBLIC para ser usado no CaixaController
     public CaixaDiarioDTO converterParaDTOCompleto(CaixaDiario caixa) {
         BigDecimal saldoGaveta = caixa.getSaldoAtual() != null ? caixa.getSaldoAtual() : BigDecimal.ZERO;
 
@@ -176,12 +178,14 @@ public class CaixaService {
                 caixa.getTotalVendasDebito(),
                 caixa.getSaldoEsperadoSistema(),
                 caixa.getValorFisicoInformado(),
-                caixa.getDiferencaCaixa()
+                caixa.getDiferencaCaixa(),
+                caixa.getJustificativaDiferenca(), // AGORA SIM: Extrai do banco
+                caixa.getAnaliseAuditoriaIa()      // AGORA SIM: Extrai do banco
         );
     }
 
     @Transactional
-    public ConfirmacaoFechamentoDTO fecharCaixa(BigDecimal valorFisicoInformado) {
+    public ConfirmacaoFechamentoDTO fecharCaixa(BigDecimal valorFisicoInformado, String justificativa) {
         Usuario operadorLogado = getUsuarioLogado();
         CaixaDiario caixa;
 
@@ -194,7 +198,7 @@ public class CaixaService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há nenhum caixa aberto no sistema."));
         } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Bloqueio de Segurança: Você (" + operadorLogado.getNome() + ") não possui um caixa aberto no seu nome. Apenas um Administrador pode fechar o turno de outro usuário.");
+                    "Bloqueio de Segurança: Você não possui um caixa aberto no seu nome.");
         }
 
         BigDecimal saldoInicial = caixa.getSaldoInicial() != null ? caixa.getSaldoInicial() : BigDecimal.ZERO;
@@ -206,9 +210,14 @@ public class CaixaService {
         BigDecimal valorInformado = valorFisicoInformado != null ? valorFisicoInformado : BigDecimal.ZERO;
         BigDecimal diferenca = valorInformado.subtract(saldoEsperado);
 
+        if (diferenca.compareTo(BigDecimal.ZERO) != 0 && (justificativa == null || justificativa.trim().isEmpty())) {
+            throw new ResponseStatusException(HttpStatus.PRECONDITION_REQUIRED, "Divergência detectada. É obrigatório fornecer uma justificativa para o administrador.");
+        }
+
         caixa.setValorFisicoInformado(valorInformado);
         caixa.setSaldoEsperadoSistema(saldoEsperado);
         caixa.setDiferencaCaixa(diferenca);
+        caixa.setJustificativaDiferenca(justificativa);
         caixa.setStatus(StatusCaixa.FECHADO);
         caixa.setDataFechamento(LocalDateTime.now());
 
@@ -226,9 +235,8 @@ public class CaixaService {
                 log.info("SOBRA DETECTADA: {}", msgAuditoria);
             }
 
-            // Disparo assíncrono do Auditor IA
             if (auditorIaService != null) {
-                auditorIaService.auditarQuebraDeCaixa(caixa.getId(), operadorLogado.getNome(), null);
+                auditorIaService.auditarQuebraDeCaixa(caixa.getId(), operadorLogado.getNome(), justificativa);
             }
 
         } else {
@@ -308,5 +316,16 @@ public class CaixaService {
         }
 
         return paginaCaixas.map(this::converterParaDTOCompleto);
+    }
+    // ==================================================================================
+    //  MÉTODOS DE AUDITORIA E ALERTAS
+    // ==================================================================================
+    @Transactional(readOnly = true)
+    public List<CaixaDiarioDTO> buscarAlertasRiscoDashboard() {
+        return caixaRepository.findAll().stream()
+                .filter(c -> c.getAnaliseAuditoriaIa() != null &&
+                        (c.getAnaliseAuditoriaIa().contains("[RISCO: ALTO]") || c.getAnaliseAuditoriaIa().contains("[RISCO: MEDIO]")))
+                .map(this::converterParaDTOCompleto)
+                .toList();
     }
 }

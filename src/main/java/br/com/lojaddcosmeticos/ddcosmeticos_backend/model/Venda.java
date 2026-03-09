@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.CanalOrigem;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
@@ -40,6 +41,12 @@ public class Venda {
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
+    private BigDecimal troco;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 50)
+    private CanalOrigem canalOrigem = CanalOrigem.LOJA_FISICA;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "id_cliente")
     private Cliente cliente;
@@ -57,13 +64,11 @@ public class Venda {
 
     private BigDecimal descontoTotal;
 
-    // --- CAMPO NOVO ADICIONADO ---
-    // Essencial para calcular o valor líquido em dinheiro no caixa
-    private BigDecimal troco;
-    // -----------------------------
-
     @Column(length = 100)
     private String clienteNome;
+
+    @Column(name = "cliente_telefone")
+    private String clienteTelefone;
 
     @Column(length = 20)
     private String clienteDocumento;

@@ -142,6 +142,22 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     """)
     List<CrossSellDTO> buscarCrossSell(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
 
+    /**
+     * IA DE BALCÃO: Busca o produto que mais combina com o item que acabou de ser bipado.
+     * Analisa o histórico de cupons (Cross-Selling dinâmico).
+     */
+    @Query(value = """
+        SELECT p2.descricao 
+        FROM tb_item_venda i1
+        JOIN tb_item_venda i2 ON i1.venda_id = i2.venda_id AND i1.produto_id <> i2.produto_id
+        JOIN produto p2 ON i2.produto_id = p2.id
+        WHERE i1.produto_id = :produtoId
+        GROUP BY p2.descricao
+        ORDER BY COUNT(*) DESC
+        LIMIT 2
+        """, nativeQuery = true)
+    List<String> buscarSugestoesParaProduto(@Param("produtoId") Long produtoId);
+
     // =========================================================================
     // 4. MÉTODOS DE CONVENÇÃO (SPRING DATA)
     // =========================================================================
@@ -177,4 +193,60 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     BigDecimal sumTotalVendaByDataVendaBetween(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
     @Query("SELECT SUM(v.valorTotal) FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim")
     BigDecimal calcularFaturamentoBruto(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    interface OrigemVendaProjection {
+        br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.CanalOrigem getCanalOrigem();
+        BigDecimal getTotal();
+    }
+
+    // --- NOVO: Agrupar Faturamento Mensal por Canal de Origem ---
+    @Query("SELECT v.canalOrigem as canalOrigem, COALESCE(SUM(v.valorTotal), 0) as total " +
+            "FROM Venda v WHERE v.dataVenda >= :inicioMes " +
+            "AND v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA " +
+            "GROUP BY v.canalOrigem ORDER BY total DESC")
+    List<OrigemVendaProjection> somarFaturamentoPorOrigemMes(@Param("inicioMes") LocalDateTime inicioMes);
+
+    // =========================================================================
+    // 5. INTELIGÊNCIA DE CLIENTE (RECORRÊNCIA)
+    // =========================================================================
+
+    @Query("SELECT COUNT(DISTINCT v.clienteDocumento) FROM Venda v WHERE v.dataVenda >= :inicioMes AND v.clienteDocumento IS NOT NULL")
+    Long contarClientesIdentificadosNoMes(@Param("inicioMes") LocalDateTime inicioMes);
+
+    @Query("SELECT COUNT(DISTINCT v.clienteDocumento) FROM Venda v " +
+            "WHERE v.dataVenda >= :inicioMes AND v.clienteDocumento IS NOT NULL " +
+            "AND v.clienteDocumento IN (SELECT v2.clienteDocumento FROM Venda v2 WHERE v2.dataVenda < :inicioMes AND v2.clienteDocumento IS NOT NULL)")
+    Long contarClientesRecorrentesNoMes(@Param("inicioMes") LocalDateTime inicioMes);
+
+    // =========================================================================
+    // 6. ROI DA INTELIGÊNCIA ARTIFICIAL
+    // =========================================================================
+
+    @Query("""
+        SELECT COALESCE(SUM(i.precoUnitario * i.quantidade), 0)
+        FROM ItemVenda i
+        WHERE i.venda.dataVenda >= :inicio AND i.venda.dataVenda <= :fim
+        AND i.influenciaIA IN ('DIRETA', 'INDIRETA')
+        AND i.venda.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA
+    """)
+    BigDecimal calcularFaturamentoInfluenciaIA(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+
+    @Query("""
+        SELECT COUNT(i)
+        FROM ItemVenda i
+        WHERE i.venda.dataVenda >= :inicio AND i.venda.dataVenda <= :fim
+        AND i.influenciaIA IN ('DIRETA', 'INDIRETA')
+        AND i.venda.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA
+    """)
+    Long contarItensInfluenciaIA(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    // =========================================================================
+    // 5. INTELIGÊNCIA DE CLIENTE (RECORRÊNCIA POR CPF OU TELEFONE)
+    // =========================================================================
+
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda >= :inicioMes AND (v.clienteDocumento IS NOT NULL OR v.clienteTelefone IS NOT NULL)")
+    Long contarVendasIdentificadasNoMes(@Param("inicioMes") LocalDateTime inicioMes);
+
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataVenda >= :inicioMes AND " +
+            "((v.clienteDocumento IS NOT NULL AND v.clienteDocumento IN (SELECT v2.clienteDocumento FROM Venda v2 WHERE v2.dataVenda < :inicioMes AND v2.clienteDocumento IS NOT NULL)) OR " +
+            "(v.clienteTelefone IS NOT NULL AND v.clienteTelefone IN (SELECT v3.clienteTelefone FROM Venda v3 WHERE v3.dataVenda < :inicioMes AND v3.clienteTelefone IS NOT NULL)))")
+    Long contarVendasRecorrentesNoMes(@Param("inicioMes") LocalDateTime inicioMes);
 }

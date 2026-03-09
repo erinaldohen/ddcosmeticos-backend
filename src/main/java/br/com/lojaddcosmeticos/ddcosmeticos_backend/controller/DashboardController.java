@@ -1,7 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
@@ -21,21 +20,19 @@ import java.util.Map;
 @RequestMapping("/api/v1/dashboard")
 @RequiredArgsConstructor
 @Tag(name = "Dashboard", description = "Endpoints para dados analíticos e indicadores")
-// CORREÇÃO: Removemos @CrossOrigin(origins = "*") pois conflita com allowCredentials=true do CorsConfig
-// Se precisar usar, use: @CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class DashboardController {
 
     private final DashboardService dashboardService;
 
     // =========================================================================
-    // 1. ENDPOINT PRINCIPAL (ATUALIZADO PARA O NOVO MOTOR GERENCIAL)
+    // 1. ENDPOINT PRINCIPAL (COM FILTRO DE DATA "A MÁQUINA DO TEMPO")
     // =========================================================================
     @GetMapping
-    @Operation(summary = "Carregar Dashboard")
+    @Operation(summary = "Carregar Dashboard Dinâmico")
     @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
-    public ResponseEntity<Map<String, Object>> getDashboardCompleto() {
-        // Agora o Controller chama o método correto que contém a IA, Mix de Pagamentos e Lucro Bruto!
-        return ResponseEntity.ok(dashboardService.obterDadosDoDashboard());
+    public ResponseEntity<Map<String, Object>> getDashboardData(
+            @RequestParam(defaultValue = "este_mes") String periodo) {
+        return ResponseEntity.ok(dashboardService.obterDadosDoDashboard(periodo));
     }
 
     // 2. Resumo Operacional
@@ -52,13 +49,21 @@ public class DashboardController {
         return ResponseEntity.ok(dashboardService.buscarAlertasRecentes());
     }
 
-    // 4. Dados Fiscais
+    // 4. Modal de Risco (Drill-Down do Estoque)
+    @GetMapping("/risco-lista")
+    @Operation(summary = "Lista de Produtos em Risco")
+    @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
+    public ResponseEntity<List<Map<String, Object>>> getListaRisco(@RequestParam String tipo) {
+        return ResponseEntity.ok(dashboardService.obterListaRisco(tipo));
+    }
+
+    // 5. Dados Fiscais
     @GetMapping("/fiscal")
     @Operation(summary = "Dados Fiscais")
     public ResponseEntity<FiscalDashboardDTO> getDadosFiscais(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
-    ) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
+
         if (inicio == null) inicio = LocalDate.now().withDayOfMonth(1);
         if (fim == null) fim = LocalDate.now();
 

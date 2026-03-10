@@ -65,15 +65,21 @@ public class VendaService {
         venda.setDataVenda(LocalDateTime.now());
         venda.setCaixa(caixa);
 
+        // =====================================================================
+        // CORREÇÃO: MAPEAMENTO COMPLETO DE CLIENTE (COM TELEFONE/WHATSAPP)
+        // =====================================================================
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
             venda.setCliente(cliente);
             venda.setClienteNome(cliente.getNome());
             venda.setClienteDocumento(cliente.getDocumento());
+            venda.setClienteTelefone(cliente.getTelefone());
         } else {
             venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Consumidor Final");
             venda.setClienteDocumento(dto.clienteDocumento());
+            // A LINHA QUE FALTAVA: Agora o telefone do modal do PDV é guardado!
+            venda.setClienteTelefone(dto.clienteTelefone());
         }
 
         venda.setDescontoTotal(nvl(dto.descontoTotal()));
@@ -167,7 +173,13 @@ public class VendaService {
         venda.setDataVenda(LocalDateTime.now());
         venda.setStatusNfce(StatusFiscal.EM_ESPERA);
 
-        if (dto.clienteId() != null) clienteRepository.findById(dto.clienteId()).ifPresent(venda::setCliente);
+        if (dto.clienteId() != null) {
+            clienteRepository.findById(dto.clienteId()).ifPresent(venda::setCliente);
+        } else {
+            // Garante que o telefone do cliente não se perca se ele pedir para suspender a venda
+            venda.setClienteDocumento(dto.clienteDocumento());
+            venda.setClienteTelefone(dto.clienteTelefone());
+        }
 
         if (dto.pagamentos() != null && !dto.pagamentos().isEmpty()) {
             venda.setFormaDePagamento(dto.pagamentos().get(0).formaPagamento());
@@ -379,11 +391,9 @@ public class VendaService {
         if (descontoAplicado.compareTo(BigDecimal.ZERO) <= 0) return;
 
         ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
-        // Garante que não teremos NullPointerException se a config financeira não existir
         ConfiguracaoLoja.DadosFinanceiro dadosFin = config.getFinanceiro();
 
         if (dadosFin == null) {
-            // Fallback caso a configuração no banco de dados esteja incompleta
             dadosFin = new ConfiguracaoLoja.DadosFinanceiro();
             dadosFin.setDescCaixa(new BigDecimal("5.00"));
             dadosFin.setDescGerente(new BigDecimal("20.00"));
@@ -394,8 +404,6 @@ public class VendaService {
 
         BigDecimal percentual = descontoAplicado.divide(bruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
 
-        // CORREÇÃO DOS NOMES DOS MÉTODOS:
-        // Se o seu campo na Classe DadosFinanceiro for 'descGerente', o getter é 'getDescGerente'
         BigDecimal limite = (usuario.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN)
                 ? nvl(dadosFin.getDescGerente(), new BigDecimal("20.00"))
                 : nvl(dadosFin.getDescCaixa(), new BigDecimal("5.00"));

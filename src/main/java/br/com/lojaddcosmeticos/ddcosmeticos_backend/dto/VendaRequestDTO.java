@@ -14,6 +14,7 @@ public record VendaRequestDTO(
         String clienteNome,
         String observacao,
         FormaDePagamento formaDePagamento,
+        String clienteTelefone,
 
         @NotEmpty(message = "A venda deve ter pelo menos um item")
         @Valid

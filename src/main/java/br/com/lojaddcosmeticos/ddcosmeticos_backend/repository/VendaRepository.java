@@ -249,4 +249,9 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
             "((v.clienteDocumento IS NOT NULL AND v.clienteDocumento IN (SELECT v2.clienteDocumento FROM Venda v2 WHERE v2.dataVenda < :inicioMes AND v2.clienteDocumento IS NOT NULL)) OR " +
             "(v.clienteTelefone IS NOT NULL AND v.clienteTelefone IN (SELECT v3.clienteTelefone FROM Venda v3 WHERE v3.dataVenda < :inicioMes AND v3.clienteTelefone IS NOT NULL)))")
     Long contarVendasRecorrentesNoMes(@Param("inicioMes") LocalDateTime inicioMes);
+    // =========================================================================
+    // 6. CONSULTAS PARA O CRM (CLIENTES IDENTIFICADOS)
+    // =========================================================================
+    @Query("SELECT v FROM Venda v WHERE (v.clienteTelefone IS NOT NULL AND v.clienteTelefone != '') OR (v.clienteDocumento IS NOT NULL AND v.clienteDocumento != '')")
+    List<Venda> buscarTodasVendasIdentificadas();
 }

@@ -2,6 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.enums;
 
 public enum StatusFiscal {
     PENDENTE,
+    CONCLUIDA,
     EM_PROCESSAMENTO,
     AUTORIZADA,
     REJEITADA,

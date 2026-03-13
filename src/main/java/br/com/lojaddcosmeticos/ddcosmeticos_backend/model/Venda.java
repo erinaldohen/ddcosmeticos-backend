@@ -62,6 +62,10 @@ public class Venda {
     @ToString.Include
     private BigDecimal valorTotal;
 
+    // --- NOVO: Necessário para o Relatório de Lucro e Comissões ---
+    @Column(precision = 15, scale = 2)
+    private BigDecimal custoTotal = BigDecimal.ZERO;
+
     private BigDecimal descontoTotal;
 
     @Column(length = 100)
@@ -116,4 +120,42 @@ public class Venda {
 
     @Column(columnDefinition = "TEXT") // Transformado em texto longo caso a observação seja gigante
     private String observacao;
+
+    // =========================================================================
+    // MÉTODOS DE CONVENIÊNCIA (INTEGRAÇÃO COM O MOTOR DE COMISSÕES)
+    // =========================================================================
+
+    /**
+     * O motor de relatórios procura por "getVendedor()".
+     * Como o modelo chama "usuario", criamos esta ponte.
+     */
+    public Usuario getVendedor() {
+        return this.usuario;
+    }
+
+    /**
+     * O motor procura pela forma de pagamento em formato de texto ("CREDITO", "DEBITO").
+     */
+    public String getFormaPagamento() {
+        return this.formaDePagamento != null ? this.formaDePagamento.name() : "";
+    }
+
+    /**
+     * Sobrescrita inteligente: Se a venda antiga não tiver "custoTotal" salvo na base de dados,
+     * ele calcula na hora a partir dos itens. Isso impede que vendas antigas mostrem 100% de lucro.
+     */
+    public BigDecimal getCustoTotal() {
+        if (this.custoTotal != null && this.custoTotal.compareTo(BigDecimal.ZERO) > 0) {
+            return this.custoTotal;
+        }
+
+        // Fallback dinâmico para vendas antigas, usando o método limpo do ItemVenda
+        if (this.itens != null && !this.itens.isEmpty()) {
+            return this.itens.stream()
+                    .map(ItemVenda::getCustoTotalItem)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        return BigDecimal.ZERO;
+    }
 }

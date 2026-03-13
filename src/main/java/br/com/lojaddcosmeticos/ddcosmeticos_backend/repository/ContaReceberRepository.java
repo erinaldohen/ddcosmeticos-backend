@@ -15,12 +15,13 @@ import java.util.List;
 @Repository
 public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long> {
 
-    // DBA: Query otimizada. Evita N+1 trazendo o cliente junto se necessário.
+    // ==================================================================================
+    // SEÇÃO 1: CONSULTAS OPERACIONAIS E PDV (CRÍTICAS)
+    // ==================================================================================
+
     @Query("SELECT c FROM ContaReceber c JOIN FETCH c.cliente WHERE c.venda = :venda")
     List<ContaReceber> findByVenda(@Param("venda") Venda venda);
 
-    // Backend Fix: Resolve o erro "No property id found for type Venda"
-    // Acessamos c.venda.idVenda explicitamente
     @Query("SELECT c FROM ContaReceber c WHERE c.venda.idVenda = :vendaId")
     List<ContaReceber> findByVendaId(@Param("vendaId") Long vendaId);
 
@@ -29,39 +30,41 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     List<ContaReceber> findByStatus(StatusConta status);
 
     // ==================================================================================
-    // VALIDAÇÃO DE CRÉDITO
+    // SEÇÃO 2: MOTOR DE CRÉDITO E CRM
     // ==================================================================================
 
+    // CORREÇÃO: Substituição do caminho longo do Enum por string literal ('PAGA')
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
             "WHERE c.cliente.documento = :documento " +
-            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE")
+            "AND c.status <> 'PAGA'")
     BigDecimal somarDividaTotalPorDocumento(@Param("documento") String documento);
 
-    // DBA: Uso de EXISTS (CASE WHEN COUNT > 0) é muito mais rápido que trazer os objetos
     @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM ContaReceber c " +
             "WHERE c.cliente.documento = :documento " +
-            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
+            "AND c.status <> 'PAGA' " +
             "AND c.dataVencimento < :hoje")
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
-    // ==================================================================================
-    // RELATÓRIOS E DASHBOARD
-    // ==================================================================================
-
-    @Query("SELECT DISTINCT c.cliente.documento " +
-            "FROM ContaReceber c " +
-            "WHERE c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE")
-    List<String> buscarDocumentosComPendencia();
-
     @Query("SELECT c FROM ContaReceber c " +
             "WHERE c.cliente.documento = :documento " +
-            "AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE " +
+            "AND c.status <> 'PAGA' " +
             "ORDER BY c.dataVencimento ASC")
     List<ContaReceber> listarContasEmAberto(@Param("documento") String documento);
 
+    // ==================================================================================
+    // SEÇÃO 3: INTELIGÊNCIA DE DASHBOARD E PROJEÇÕES
+    // ==================================================================================
+
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
+            "WHERE c.dataVencimento BETWEEN :inicio AND :fim " +
+            "AND c.status <> 'PAGA'")
+    BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
+
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
+            "WHERE c.dataVencimento < :hoje " +
+            "AND c.status <> 'PAGA'")
+    BigDecimal somarTotalInadimplencia(@Param("hoje") LocalDate hoje);
+
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento = :data")
     BigDecimal sumValorByDataVencimento(@Param("data") LocalDate data);
-
-    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
-    BigDecimal somarRecebiveisNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 }

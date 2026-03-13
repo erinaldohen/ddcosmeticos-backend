@@ -132,19 +132,20 @@ public class AuditoriaService {
         for (Object[] row : results) {
             Produto p = (Produto) row[0];
 
-            // Cast seguro para a entidade padrão de revisão do Envers
-            org.hibernate.envers.DefaultRevisionEntity rev = (org.hibernate.envers.DefaultRevisionEntity) row[1];
-
+            // Cast para a sua entidade CUSTOMIZADA de auditoria!
+            br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity rev =
+                    (br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity) row[1];
             RevisionType type = (RevisionType) row[2];
 
             historico.add(new HistoricoProdutoDTO(
                     rev.getId(),                 // 1. Integer (ID da Revisão)
-                    rev.getRevisionDate(),       // 2. Date (java.util.Date direto, sem converter)
+                    new Date(rev.getTimestamp()),// 2. Date (Pega o timestamp e converte)
                     type.name(),                 // 3. String (ADD, MOD, DEL)
                     p.getDescricao(),            // 4. String (Descrição)
                     p.getPrecoVenda(),           // 5. BigDecimal (Preço Venda)
-                    p.getPrecoCusto(),           // 6. BigDecimal (Preço Custo - FALTAVA ESTE)
-                    p.getQuantidadeEmEstoque()   // 7. Integer (Estoque)
+                    p.getPrecoCusto(),           // 6. BigDecimal (Preço Custo)
+                    p.getQuantidadeEmEstoque(),  // 7. Integer (Estoque)
+                    rev.getUsuarioResponsavel()  // 8. String (Responsável)
             ));
         }
         return historico;

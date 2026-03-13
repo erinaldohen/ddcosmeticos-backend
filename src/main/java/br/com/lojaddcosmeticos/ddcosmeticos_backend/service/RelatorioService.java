@@ -1,11 +1,17 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ComissaoVendedorDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioComissaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import com.lowagie.text.*;
 import com.lowagie.text.Font;
@@ -39,6 +45,7 @@ public class RelatorioService {
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
+    @Autowired private ConfiguracaoRepository configuracaoRepository;
 
     // =========================================================================
     // 1. BI COMERCIAL (VENDAS)
@@ -170,8 +177,8 @@ public class RelatorioService {
         BigDecimal custoMercadoria = nvl(vendaRepository.calcularLucroBrutoNoPeriodo(dataInicio, dataFim));
         BigDecimal cmvReal = totalFaturado.subtract(custoMercadoria);
 
-        BigDecimal pagarPeriodo = nvl(contaPagarRepository.sumValorByDataVencimentoAndStatus(hoje, StatusConta.PENDENTE));
-        BigDecimal vencidoPagar = nvl(contaPagarRepository.sumValorByDataVencimentoBeforeAndStatus(hoje, StatusConta.PENDENTE));
+        BigDecimal pagarPeriodo = nvl(contaPagarRepository.somarValorPorVencimentoEStatus(hoje, StatusConta.PENDENTE));
+        BigDecimal vencidoPagar = nvl(contaPagarRepository.somarTotalVencido(hoje));
         BigDecimal receberPeriodo = nvl(contaReceberRepository.sumValorByDataVencimento(hoje));
 
         List<Map<String, Object>> dre = new ArrayList<>();
@@ -225,7 +232,82 @@ public class RelatorioService {
     }
 
     // =========================================================================
-    // 5. GERAÇÃO DE PDF E ETIQUETAS
+    // 5. BI COMISSÕES DE VENDEDORES (NOVO)
+    // =========================================================================
+
+    @Transactional(readOnly = true)
+    public RelatorioComissaoDTO gerarRelatorioComissoes(LocalDateTime inicio, LocalDateTime fim, Long vendedorId) {
+
+        // Pega as configurações globais de comissão
+        ConfiguracaoLoja config = configuracaoRepository.findFirstByOrderByIdAsc();
+        BigDecimal percentualComissao = BigDecimal.ZERO;
+        boolean sobreLucro = true;
+        boolean descontarTaxas = false;
+        BigDecimal taxaCredito = BigDecimal.ZERO;
+
+        if (config != null && config.getComissoes() != null) {
+            percentualComissao = nvl(config.getComissoes().getPercentualGeral());
+            sobreLucro = "LUCRO".equalsIgnoreCase(config.getComissoes().getComissionarSobre());
+            descontarTaxas = Boolean.TRUE.equals(config.getComissoes().getDescontarTaxasCartao());
+
+            if (config.getFinanceiro() != null) {
+                taxaCredito = nvl(config.getFinanceiro().getTaxaCredito());
+            }
+        }
+
+        // Busca Vendas
+        List<Venda> vendas;
+        if (vendedorId != null) {
+            vendas = vendaRepository.findByDataVendaBetweenAndUsuarioIdAndStatusNfce(inicio, fim, vendedorId, StatusFiscal.CONCLUIDA);
+        } else {
+            vendas = vendaRepository.findByDataVendaBetweenAndStatusNfce(inicio, fim, StatusFiscal.CONCLUIDA);
+        }
+
+        Map<Long, ComissaoVendedorDTO> mapaComissoes = new HashMap<>();
+        RelatorioComissaoDTO relatorio = new RelatorioComissaoDTO();
+        relatorio.setDataInicio(inicio.toLocalDate());
+        relatorio.setDataFim(fim.toLocalDate());
+
+        for (Venda venda : vendas) {
+            Usuario vendedor = venda.getVendedor();
+            if (vendedor == null) continue;
+
+            ComissaoVendedorDTO dtoVendedor = mapaComissoes.computeIfAbsent(vendedor.getId(),
+                    id -> new ComissaoVendedorDTO(id, vendedor.getNome(), 0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+
+            BigDecimal valorBase = sobreLucro
+                    ? nvl(venda.getValorTotal()).subtract(nvl(venda.getCustoTotal()))
+                    : nvl(venda.getValorTotal());
+
+            // Garante que a base não seja negativa em caso de prejuízo e comissionamento sobre lucro
+            if (valorBase.compareTo(BigDecimal.ZERO) < 0) valorBase = BigDecimal.ZERO;
+
+            if (descontarTaxas && ("CREDITO".equalsIgnoreCase(venda.getFormaPagamento()) || "DEBITO".equalsIgnoreCase(venda.getFormaPagamento()))) {
+                BigDecimal valorDesconto = valorBase.multiply(taxaCredito).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+                valorBase = valorBase.subtract(valorDesconto);
+            }
+
+            BigDecimal comissaoDaVenda = valorBase.multiply(percentualComissao).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+
+            dtoVendedor.setQuantidadeVendas(dtoVendedor.getQuantidadeVendas() + 1);
+            dtoVendedor.setValorTotalVendido(dtoVendedor.getValorTotalVendido().add(nvl(venda.getValorTotal())));
+            dtoVendedor.setValorBaseComissao(dtoVendedor.getValorBaseComissao().add(valorBase));
+            dtoVendedor.setValorComissao(dtoVendedor.getValorComissao().add(comissaoDaVenda));
+
+            relatorio.setTotalVendidoGeral(relatorio.getTotalVendidoGeral().add(nvl(venda.getValorTotal())));
+            relatorio.setTotalComissoesGeral(relatorio.getTotalComissoesGeral().add(comissaoDaVenda));
+        }
+
+        relatorio.getVendedores().addAll(mapaComissoes.values());
+
+        // Ordena do que mais vendeu (em valor) para o que menos vendeu
+        relatorio.getVendedores().sort((v1, v2) -> v2.getValorTotalVendido().compareTo(v1.getValorTotalVendido()));
+
+        return relatorio;
+    }
+
+    // =========================================================================
+    // 6. GERAÇÃO DE PDF E ETIQUETAS
     // =========================================================================
 
     public byte[] gerarPdfAuditoria(String search, String inicioStr, String fimStr) {
@@ -313,4 +395,70 @@ public class RelatorioService {
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
     private Long nvl(Long val) { return val == null ? 0L : val; }
     private Integer nvl(Integer val) { return val == null ? 0 : val; }
+    public byte[] gerarPdfComissoes(RelatorioComissaoDTO dados) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Fontes
+            Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+            Font fontSub = FontFactory.getFont(FontFactory.HELVETICA, 10, Color.DARK_GRAY);
+            Font fontHeader = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE);
+            Font fontLinha = FontFactory.getFont(FontFactory.HELVETICA, 9);
+
+            // Cabeçalho
+            Paragraph titulo = new Paragraph("FECHAMENTO DE COMISSÕES - DD COSMÉTICOS", fontTitulo);
+            titulo.setAlignment(Element.ALIGN_CENTER);
+            document.add(titulo);
+
+            Paragraph periodo = new Paragraph(String.format("Período: %s até %s",
+                    dados.getDataInicio().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
+                    dados.getDataFim().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))), fontSub);
+            periodo.setAlignment(Element.ALIGN_CENTER);
+            document.add(periodo);
+            document.add(new Paragraph(" "));
+
+            // Tabela
+            PdfPTable table = new PdfPTable(4);
+            table.setWidthPercentage(100);
+            table.setWidths(new float[]{4f, 2f, 2.5f, 2.5f});
+
+            String[] headers = {"Vendedor", "Vendas", "Total Vendido", "Comissão"};
+            for (String h : headers) {
+                PdfPCell cell = new PdfPCell(new Phrase(h, fontHeader));
+                cell.setBackgroundColor(new Color(15, 23, 42)); // Azul Escuro DD
+                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cell.setPadding(8);
+                table.addCell(cell);
+            }
+
+            for (ComissaoVendedorDTO v : dados.getVendedores()) {
+                table.addCell(criarCelula(v.getNomeVendedor(), Element.ALIGN_LEFT));
+                table.addCell(criarCelula(v.getQuantidadeVendas().toString(), Element.ALIGN_CENTER));
+                table.addCell(criarCelula("R$ " + v.getValorTotalVendido().setScale(2, RoundingMode.HALF_UP), Element.ALIGN_RIGHT));
+                table.addCell(criarCelula("R$ " + v.getValorComissao().setScale(2, RoundingMode.HALF_UP), Element.ALIGN_RIGHT));
+            }
+            document.add(table);
+
+            // Totais Gerais
+            document.add(new Paragraph(" "));
+            Paragraph total = new Paragraph(String.format("Total Geral de Comissões: R$ %s",
+                    dados.getTotalComissoesGeral().setScale(2, RoundingMode.HALF_UP)), fontTitulo);
+            total.setAlignment(Element.ALIGN_RIGHT);
+            document.add(total);
+
+            // Rodapé com Assinatura
+            document.add(new Paragraph("\n\n\n\n"));
+            Paragraph pAssinatura = new Paragraph("__________________________________________\nAssinatura do Responsável", fontSub);
+            pAssinatura.setAlignment(Element.ALIGN_CENTER);
+            document.add(pAssinatura);
+
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            log.error("Erro ao gerar PDF de Comissões: ", e);
+            return new byte[0];
+        }
+    }
 }

@@ -1,92 +1,102 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioMensalService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioComissaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 
-@RestController
 @Slf4j
+@RestController
 @RequestMapping("/api/v1/relatorios")
-@Tag(name = "Relatórios", description = "Análises gerenciais da DD Cosméticos")
-@CrossOrigin("*")
 @RequiredArgsConstructor
 public class RelatorioController {
 
     private final RelatorioService relatorioService;
-    private final RelatorioMensalService relatorioMensalService;
 
-    // =========================================================================
-    // 1. DISPARO DE E-MAIL MENSAL
-    // =========================================================================
+    /**
+     * Busca o relatório de comissões.
+     * Nota: Utiliza HttpServletRequest para evitar bloqueios de serialização de data do Spring 3.x
+     */
+    @GetMapping("/comissoes")
+    public ResponseEntity<?> buscarComissoes(HttpServletRequest request) {
+        String dataInicioRaw = request.getParameter("dataInicio");
+        String dataFimRaw = request.getParameter("dataFim");
+        String vendedorIdRaw = request.getParameter("vendedorId");
 
-    @PostMapping("/enviar-mensal")
-    @Operation(summary = "Forçar envio do relatório mensal por e-mail")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<String> enviarRelatorioMensal(@RequestParam(required = false) String email) {
-        String emailDestino = email;
-
-        if (emailDestino == null || emailDestino.isBlank()) {
-            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth != null && auth.isAuthenticated() && !auth.getName().equals("anonymousUser")) {
-                emailDestino = auth.getName();
-            } else {
-                return ResponseEntity.badRequest().body("Erro: E-mail não informado e usuário não identificado.");
-            }
+        if (dataInicioRaw == null || dataFimRaw == null) {
+            return ResponseEntity.badRequest().body("Parâmetros de data são obrigatórios.");
         }
 
-        relatorioMensalService.processarRelatorioMensal(emailDestino);
-        return ResponseEntity.ok("Relatório será enviado para " + emailDestino + " em instantes.");
+        try {
+            LocalDateTime inicio = LocalDate.parse(dataInicioRaw).atStartOfDay();
+            LocalDateTime fim = LocalDate.parse(dataFimRaw).atTime(LocalTime.MAX);
+
+            Long idVendedor = parseVendedorId(vendedorIdRaw);
+
+            RelatorioComissaoDTO relatorio = relatorioService.gerarRelatorioComissoes(inicio, fim, idVendedor);
+            return ResponseEntity.ok(relatorio);
+
+        } catch (Exception e) {
+            log.error("[COMISSOES] Falha ao processar relatório: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body("Erro ao processar relatório.");
+        }
     }
 
-    // =========================================================================
-    // 2. ROTA DINÂMICA PARA O BI (REACT) - BLINDAGEM TOTAL COM MAP
-    // =========================================================================
-
-    @GetMapping("/{categoria}")
-    @Operation(summary = "Relatórios Dinâmicos de BI", description = "Retorna dados analíticos baseados na aba selecionada.")
-    public ResponseEntity<?> obterRelatorioDinamico(
-            @PathVariable String categoria,
-            // A Opção Nuclear: Recebe qualquer parâmetro da URL como um mapa de textos
-            @RequestParam Map<String, String> parametros) {
-
-        log.info("Requisição recebida na categoria: '{}' com os parâmetros brutos: {}", categoria, parametros);
-
-        LocalDate inicio = null;
-        LocalDate fim = null;
-
-        // Extraímos e convertemos as datas manualmente, blindando contra o Erro 400
+    /**
+     * Trata o ID do vendedor vindo do Frontend para evitar NumberFormatException
+     */
+    private Long parseVendedorId(String idRaw) {
+        if (idRaw == null || idRaw.trim().isEmpty() ||
+                idRaw.equals("undefined") || idRaw.equals("null") || idRaw.equals("0")) {
+            return null;
+        }
         try {
-            if (parametros.containsKey("inicio") && !parametros.get("inicio").trim().isEmpty()) {
-                inicio = LocalDate.parse(parametros.get("inicio"));
+            return Long.parseLong(idRaw);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+    @GetMapping("/comissoes/pdf")
+    public ResponseEntity<?> baixarPdfComissoes(HttpServletRequest request) {
+        try {
+            // 1. Buscamos os dados usando a mesma lógica do relatório de tela
+            String dataInicioRaw = request.getParameter("dataInicio");
+            String dataFimRaw = request.getParameter("dataFim");
+            String vendedorIdRaw = request.getParameter("vendedorId");
+
+            LocalDateTime inicio = LocalDate.parse(dataInicioRaw).atStartOfDay();
+            LocalDateTime fim = LocalDate.parse(dataFimRaw).atTime(LocalTime.MAX);
+
+            Long idVendedor = null;
+            if (vendedorIdRaw != null && !vendedorIdRaw.trim().isEmpty() && !vendedorIdRaw.equals("undefined")) {
+                idVendedor = Long.parseLong(vendedorIdRaw);
             }
-            if (parametros.containsKey("fim") && !parametros.get("fim").trim().isEmpty()) {
-                fim = LocalDate.parse(parametros.get("fim"));
+
+            // 2. Geramos o DTO de dados
+            RelatorioComissaoDTO dados = relatorioService.gerarRelatorioComissoes(inicio, fim, idVendedor);
+
+            // 3. Geramos o PDF a partir desses dados
+            byte[] pdf = relatorioService.gerarPdfComissoes(dados);
+
+            if (pdf == null || pdf.length == 0) {
+                return ResponseEntity.internalServerError().body("Falha ao gerar conteúdo do PDF.");
             }
+
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/pdf")
+                    .header("Content-Disposition", "attachment; filename=comissoes_ddcosmeticos.pdf")
+                    .body(pdf);
+
         } catch (Exception e) {
-            log.warn("Erro ao converter as datas recebidas do React. Usando período padrão. Detalhe: {}", e.getMessage());
+            log.error("Erro ao processar PDF: ", e);
+            return ResponseEntity.internalServerError().body("Erro: " + e.getMessage());
         }
-
-        if ("vendas".equalsIgnoreCase(categoria)) {
-            return ResponseEntity.ok(relatorioService.gerarRelatorioVendas(inicio, fim));
-        } else if ("estoque".equalsIgnoreCase(categoria)) {
-            return ResponseEntity.ok(relatorioService.gerarRelatorioEstoque(inicio, fim));
-        } else if ("financeiro".equalsIgnoreCase(categoria)) {
-            return ResponseEntity.ok(relatorioService.gerarRelatorioFinanceiro(inicio, fim));
-        } else if ("fiscal".equalsIgnoreCase(categoria)) {
-            return ResponseEntity.ok(relatorioService.gerarRelatorioFiscal(inicio, fim));
-        }
-
-        return ResponseEntity.notFound().build();
     }
 }

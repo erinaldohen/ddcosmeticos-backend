@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -42,6 +43,30 @@ public class ConfiguracaoLojaService {
         }
     }
 
+    // =========================================================================
+    // CORREÇÃO: Método auxiliar para evitar o erro de construtor nas Vendas
+    // =========================================================================
+    private ConfiguracaoLoja.DadosVendas converterVendas(ConfiguracaoDTO.VendasDTO dto) {
+        if (dto == null) return new ConfiguracaoLoja.DadosVendas();
+
+        ConfiguracaoLoja.DadosVendas vendas = new ConfiguracaoLoja.DadosVendas();
+        vendas.setComportamentoCpf(dto.comportamentoCpf());
+        vendas.setBloquearEstoque(dto.bloquearEstoque());
+        vendas.setLayoutCupom(dto.layoutCupom());
+        vendas.setImprimirVendedor(dto.imprimirVendedor());
+        vendas.setImprimirTicketTroca(dto.imprimirTicketTroca());
+        vendas.setAutoEnterScanner(dto.autoEnterScanner());
+        vendas.setFidelidadeAtiva(dto.fidelidadeAtiva());
+        vendas.setPontosPorReal(dto.pontosPorReal());
+        vendas.setUsarBalanca(dto.usarBalanca());
+        vendas.setAgruparItens(dto.agruparItens());
+
+        // A LIBERDADE DO ADMIN:
+        vendas.setMetaMensal(dto.metaMensal() != null ? dto.metaMensal() : BigDecimal.ZERO);
+
+        return vendas;
+    }
+
     @Transactional
     public ConfiguracaoLoja buscarConfiguracao() {
         return repository.findAll().stream()
@@ -66,16 +91,14 @@ public class ConfiguracaoLojaService {
         return converterParaDTO(salva);
     }
 
-    // --- MÉTODOS DE ARQUIVOS (UPLOAD) ---
+    // --- MÉTODOS DE ARQUIVOS (UPLOAD) MANTIDOS INTACTOS ---
 
     @Transactional
     public Map<String, Object> salvarCertificado(MultipartFile file, String senha) throws Exception {
 
-        // 1. Abre o certificado usando a senha enviada pelo React
         KeyStore ks = KeyStore.getInstance("PKCS12");
         ks.load(file.getInputStream(), senha.toCharArray());
 
-        // 2. Pega o primeiro certificado disponível no arquivo
         Enumeration<String> aliases = ks.aliases();
         if (!aliases.hasMoreElements()) {
             throw new RuntimeException("Nenhum certificado encontrado dentro do arquivo PFX.");
@@ -84,22 +107,18 @@ public class ConfiguracaoLojaService {
         String alias = aliases.nextElement();
         X509Certificate certificate = (X509Certificate) ks.getCertificate(alias);
 
-        // 3. Extrai a data de vencimento e calcula os dias restantes
         Date dataExpiracao = certificate.getNotAfter();
         LocalDate dataValidadeLocal = dataExpiracao.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
         long diasRestantes = ChronoUnit.DAYS.between(LocalDate.now(), dataValidadeLocal);
 
-        // 4. Salva o arquivo no disco do servidor
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
         salvarArquivoEmDisco(file, fileName);
 
-        // 5. Salva os caminhos no banco de dados da loja
         ConfiguracaoLoja config = buscarConfiguracao();
         config.getFiscal().setCaminhoCertificado(fileName);
-        config.getFiscal().setSenhaCert(senha); // O Java guarda a senha para assinar os XMLs da NFC-e depois
+        config.getFiscal().setSenhaCert(senha);
         repository.save(config);
 
-        // 6. Retorna o Map para o Controller devolver pro React
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         Map<String, Object> response = new HashMap<>();
         response.put("validade", dataValidadeLocal.format(formatter));
@@ -133,7 +152,7 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
-    // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) ---
+    // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) MANTIDO INTACTO ---
     private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
         c.garantirInstancias();
 
@@ -168,7 +187,6 @@ public class ConfiguracaoLojaService {
             f.setNfeProducao(d.fiscal().producao().nfe());
         }
 
-        // A SENHA É TRATADA SEPARADAMENTE NO UPLOAD, MAS SE VIER AQUI, MANTÉM A PROTEÇÃO
         if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) f.setSenhaCert(d.fiscal().senhaCert());
 
         f.setCsrtId(d.fiscal().csrtId());
@@ -209,11 +227,8 @@ public class ConfiguracaoLojaService {
             fin.setAceitaCrediario(d.financeiro().pagamentos().crediario());
         }
 
-        c.setVendas(new ConfiguracaoLoja.DadosVendas(
-                d.vendas().comportamentoCpf(), d.vendas().bloquearEstoque(), d.vendas().layoutCupom(),
-                d.vendas().imprimirVendedor(), d.vendas().imprimirTicketTroca(), d.vendas().autoEnterScanner(),
-                d.vendas().fidelidadeAtiva(), d.vendas().pontosPorReal(), d.vendas().usarBalanca(), d.vendas().agruparItens()
-        ));
+        // CORREÇÃO CRÍTICA AQUI: Chamamos o método seguro em vez de instanciar direto
+        c.setVendas(converterVendas(d.vendas()));
 
         c.setSistema(new ConfiguracaoLoja.DadosSistema(
                 d.sistema().impressaoAuto(), d.sistema().larguraPapel(), d.sistema().backupAuto(), d.sistema().backupHora(),
@@ -265,7 +280,8 @@ public class ConfiguracaoLojaService {
                         c.getVendas().getComportamentoCpf(), c.getVendas().getBloquearEstoque(), c.getVendas().getLayoutCupom(),
                         c.getVendas().getImprimirVendedor(), c.getVendas().getImprimirTicketTroca(), c.getVendas().getAutoEnterScanner(),
                         c.getVendas().getFidelidadeAtiva(), c.getVendas().getPontosPorReal(),
-                        c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens()
+                        c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens(),
+                        c.getVendas().getMetaMensal() // AQUI ESTÁ O NOVO CAMPO (11º PARÂMETRO)
                 ),
                 new ConfiguracaoDTO.SistemaDTO(
                         c.getSistema().getImpressaoAuto(), c.getSistema().getLarguraPapel(), c.getSistema().getBackupAuto(),

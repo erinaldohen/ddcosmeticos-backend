@@ -44,6 +44,13 @@ public class ConfiguracaoLoja implements Serializable {
     @Embedded
     private DadosSistema sistema = new DadosSistema();
 
+    // --- NOVA SESSÃO DE COMISSÕES ADICIONADA ---
+    @Embedded
+    private DadosComissoes comissoes = new DadosComissoes();
+
+    @Column(name = "meta_faturamento_mensal", precision = 15, scale = 2)
+    private BigDecimal metaFaturamentoMensal = BigDecimal.ZERO;
+
     // 🛡️ GARANTIA ABSOLUTA CONTRA NULL POINTER 🛡️
     @PostLoad
     @PrePersist
@@ -55,6 +62,7 @@ public class ConfiguracaoLoja implements Serializable {
         if (this.financeiro == null) this.financeiro = new DadosFinanceiro();
         if (this.vendas == null) this.vendas = new DadosVendas();
         if (this.sistema == null) this.sistema = new DadosSistema();
+        if (this.comissoes == null) this.comissoes = new DadosComissoes(); // Proteção para a nova classe
     }
 
     // ==================================================================================
@@ -158,18 +166,21 @@ public class ConfiguracaoLoja implements Serializable {
     }
 
     @Embeddable
-    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class DadosVendas {
-        private String comportamentoCpf = "OPCIONAL";
+        private String comportamentoCpf = "PERGUNTAR";
         private Boolean bloquearEstoque = true;
-        private String layoutCupom = "80MM";
-        private Boolean imprimirVendedor = true;
-        private Boolean imprimirTicketTroca = true;
-        private Boolean autoEnterScanner = true;
-        private Boolean fidelidadeAtiva = false;
-        @Column(precision = 10, scale = 2) private BigDecimal pontosPorReal = BigDecimal.ONE;
-        private Boolean usarBalanca = false;
-        private Boolean agruparItens = true;
+        private String layoutCupom;
+        private Boolean imprimirVendedor;
+        private Boolean imprimirTicketTroca;
+        private Boolean autoEnterScanner;
+        private Boolean fidelidadeAtiva;
+        private BigDecimal pontosPorReal;
+        private Boolean usarBalanca;
+        private Boolean agruparItens;
+        private BigDecimal metaMensal = BigDecimal.ZERO;
     }
 
     @Embeddable
@@ -185,6 +196,16 @@ public class ConfiguracaoLoja implements Serializable {
         private Boolean senhaGerenteCancelamento = true;
         @Column(length = 100) private String nomeTerminal = "CAIXA 01";
         private Boolean imprimirLogoCupom = true;
+    }
+
+    // --- NOVA CLASSE EMBEDDABLE PARA O MOTOR DE COMISSÕES ---
+    @Embeddable
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
+    public static class DadosComissoes {
+        @Column(length = 20) private String tipoCalculo = "GERAL"; // GERAL ou CATEGORIA
+        @Column(precision = 5, scale = 2) private BigDecimal percentualGeral = BigDecimal.ZERO;
+        @Column(length = 20) private String comissionarSobre = "LUCRO"; // LUCRO ou TOTAL_VENDA
+        private Boolean descontarTaxasCartao = false;
     }
 
     // ==================================================================================

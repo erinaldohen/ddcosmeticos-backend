@@ -15,77 +15,52 @@ import java.util.List;
 @Repository
 public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
-    // [NOVO] Método essencial para o Fechamento de Caixa Otimizado
+    // ==================================================================================
+    // SEÇÃO 1: CONSULTAS DE FLUXO E FECHAMENTO
+    // ==================================================================================
+
     List<ContaPagar> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
 
-    // Busca de alertas de vencimento (usado em Jobs ou alertas na tela inicial)
+    List<ContaPagar> findByDataVencimentoBetween(LocalDate inicio, LocalDate fim);
+
+    List<ContaPagar> findByStatus(StatusConta status);
+
     List<ContaPagar> findByDataVencimentoBeforeAndStatus(LocalDate data, StatusConta status);
 
     // ==================================================================================
-    // SESSÃO 1: DASHBOARD E FLUXO DE CAIXA
+    // SEÇÃO 2: AGREGAÇÕES PARA BI E DASHBOARD (Inteligência)
     // ==================================================================================
 
-    /**
-     * Soma o total a pagar num intervalo de datas.
-     */
-    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento BETWEEN :inicio AND :fim")
-    BigDecimal somarPagamentosNoPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
-
-    /**
-     * Soma o total de contas vencidas (atrasadas) e ainda pendentes.
-     * OBS: Ajustei o caminho do Enum para usar o parâmetro ou o caminho completo se preferir,
-     * mas usar parametro 'status' é mais seguro em JPQL puro. Aqui mantive hardcoded como no seu exemplo.
-     */
-    @Query("""
-        SELECT COALESCE(SUM(c.valorTotal), 0) 
-        FROM ContaPagar c 
-        WHERE c.dataVencimento < :hoje 
-        AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-    """)
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :hoje AND c.status <> 'PAGA'")
     BigDecimal somarTotalVencido(@Param("hoje") LocalDate hoje);
 
-    /**
-     * Soma o total que vence na data específica e ainda está pendente.
-     */
-    @Query("""
-        SELECT COALESCE(SUM(c.valorTotal), 0) 
-        FROM ContaPagar c 
-        WHERE c.dataVencimento = :data 
-        AND c.status = br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta.PENDENTE
-    """)
-    BigDecimal somarAPagarPorData(@Param("data") LocalDate data);
+    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = :status")
+    BigDecimal somarValorPorVencimentoEStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
 
-    /**
-     * Agrupamento para gráficos de despesas.
-     * CORREÇÃO: Alterado de 'categoria' (que não existe) para 'fornecedor.razaoSocial'.
-     */
+    // CORREÇÃO CRÍTICA: Removido o campo 'categoria' que não existe.
+    // O Fallback 'Despesa Avulsa' agora é a única alternativa se não houver fornecedor.
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO(
-            COALESCE(f.razaoSocial, 'Despesa Avulsa'), 
+            COALESCE(f.nomeFantasia, 'Despesa Avulsa'), 
             COUNT(c), 
             SUM(c.valorTotal)
         ) 
         FROM ContaPagar c 
         LEFT JOIN c.fornecedor f
         WHERE c.dataVencimento BETWEEN :inicio AND :fim 
-        GROUP BY f.razaoSocial
+        GROUP BY f.nomeFantasia
     """)
     List<ResumoDespesaDTO> agruparDespesasPorPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 
     // ==================================================================================
-    // SESSÃO 2: MÉTODOS ADICIONADOS PARA COMPATIBILIDADE COM DASHBOARD SERVICE
+    // SEÇÃO 3: AUXILIARES DE GESTÃO
     // ==================================================================================
 
-    /**
-     * Soma valor total por data de vencimento e status dinâmico.
-     */
-    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = :status")
-    BigDecimal sumValorByDataVencimentoAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
+    @Query("SELECT c FROM ContaPagar c WHERE c.dataVencimento < :hoje AND c.status <> 'PAGA'")
+    List<ContaPagar> buscarContasVencidas(@Param("hoje") LocalDate hoje);
 
-    /**
-     * Soma valor total vencido antes da data e com status dinâmico.
-     */
-    @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :data AND c.status = :status")
-    BigDecimal sumValorByDataVencimentoBeforeAndStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
+    @Query("SELECT c FROM ContaPagar c WHERE c.status = 'PENDENTE' ORDER BY c.dataVencimento ASC")
+    List<ContaPagar> buscarProximosVencimentos();
 
+    List<ContaPagar> findByFornecedorId(Long fornecedorId);
 }

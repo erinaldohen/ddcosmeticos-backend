@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.AuditoriaService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
@@ -11,6 +12,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/auditoria")
@@ -58,6 +60,22 @@ public class AuditoriaController {
 
         } catch (Exception e) {
             return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    // =========================================================================
+    // ROTA QUE ESTAVA FALTANDO PARA O HISTÓRICO DO PRODUTO FUNCIONAR!
+    // =========================================================================
+    @GetMapping("/produto/{id}")
+    public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistoricoProduto(@PathVariable Long id) {
+        try {
+            List<HistoricoProdutoDTO> historico = auditoriaService.buscarHistoricoDoProduto(id);
+            return ResponseEntity.ok(historico);
+        } catch (Exception e) {
+            // AGORA SIM! O IntelliJ vai gritar o erro no terminal:
+            System.err.println("🚨 ERRO CRÍTICO AO BUSCAR AUDITORIA DO PRODUTO " + id + " 🚨");
+            e.printStackTrace();
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
     }
 }

@@ -24,5 +24,6 @@ public class CustomRevisionEntity {
     @RevisionTimestamp
     private long timestamp;
 
-    private String usuarioResponsavel; // O nome do operador logado
+    @Column(name = "usuario_responsavel")
+    private String usuarioResponsavel; // Pode estar com outro nome, como "usuario", "username", "responsavel"... // O nome do operador logado
 }

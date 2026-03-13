@@ -29,8 +29,8 @@ public record ConfiguracaoDTO(
 
     public record FiscalDTO(
             String ambiente, String regime,
-            FiscalAmbienteDTO homologacao, // Agrupado no front, desagrupado no banco
-            FiscalAmbienteDTO producao,    // Agrupado no front, desagrupado no banco
+            FiscalAmbienteDTO homologacao,
+            FiscalAmbienteDTO producao,
             String caminhoCertificado, String senhaCert,
             String csrtId, String csrtHash, String ibptToken, String naturezaPadrao,
             String emailContabil, Boolean enviarXmlAutomatico, BigDecimal aliquotaInterna,
@@ -52,7 +52,9 @@ public record ConfiguracaoDTO(
     public record VendasDTO(
             String comportamentoCpf, Boolean bloquearEstoque, String layoutCupom, Boolean imprimirVendedor,
             Boolean imprimirTicketTroca, Boolean autoEnterScanner, Boolean fidelidadeAtiva, BigDecimal pontosPorReal,
-            Boolean usarBalanca, Boolean agruparItens
+            Boolean usarBalanca, Boolean agruparItens,
+            // [LIBERDADE PARA O ADMIN]: Campo adicionado para receber a meta do Frontend
+            BigDecimal metaMensal
     ) {}
 
     public record SistemaDTO(

@@ -594,4 +594,142 @@ public class RelatorioService {
             return null;
         }
     }
+    // =========================================================================
+    // 8. GERADOR DO BALANÇO TRIMESTRAL (EARNINGS RELEASE CORPORATIVO)
+    // =========================================================================
+    public byte[] gerarBalancoTrimestralPdf(int ano, int trimestre) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4, 50, 50, 50, 50);
+            PdfWriter writer = PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Definição das Datas do Trimestre
+            LocalDate inicio;
+            LocalDate fim;
+            switch (trimestre) {
+                case 1: inicio = LocalDate.of(ano, 1, 1); fim = LocalDate.of(ano, 3, 31); break;
+                case 2: inicio = LocalDate.of(ano, 4, 1); fim = LocalDate.of(ano, 6, 30); break;
+                case 3: inicio = LocalDate.of(ano, 7, 1); fim = LocalDate.of(ano, 9, 30); break;
+                case 4: inicio = LocalDate.of(ano, 10, 1); fim = LocalDate.of(ano, 12, 31); break;
+                default: throw new IllegalArgumentException("Trimestre inválido");
+            }
+
+            // Extração Global de Dados
+            RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio, fim);
+            Map<String, Object> fin = gerarRelatorioFinanceiro(inicio, fim);
+            Map<String, Object> est = gerarRelatorioEstoque(inicio, fim);
+
+            BigDecimal fatBruto = vendas.getTotalFaturado();
+            BigDecimal lucroBruto = vendas.getLucroBrutoEstimado();
+            BigDecimal despOp = (BigDecimal) fin.get("aPagar");
+            BigDecimal ebitda = fatBruto.subtract(fatBruto.subtract(lucroBruto)).subtract(despOp);
+            BigDecimal custoEst = (BigDecimal) est.get("custoEstoque");
+            BigDecimal gmroi = custoEst.compareTo(BigDecimal.ZERO) > 0 ? lucroBruto.divide(custoEst, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+
+            // Fontes Corporativas
+            Font fTituloLogo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 26, new Color(236, 72, 153));
+            Font fSub = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.GRAY);
+            Font fSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(15, 23, 42));
+            Font fTexto = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.DARK_GRAY);
+            Font fDestaque = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, new Color(59, 130, 246));
+
+            // =========================================================
+            // CAPA E CABEÇALHO
+            // =========================================================
+            Paragraph logo = new Paragraph("DD COSMÉTICOS S/A", fTituloLogo);
+            logo.setAlignment(Element.ALIGN_CENTER);
+            document.add(logo);
+
+            Paragraph release = new Paragraph("EARNINGS RELEASE | RESULTADOS DO " + trimestre + "T" + ano, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16));
+            release.setAlignment(Element.ALIGN_CENTER);
+            release.setSpacingBefore(10);
+            document.add(release);
+
+            Paragraph dataBase = new Paragraph("Período base: " + inicio + " a " + fim, fSub);
+            dataBase.setAlignment(Element.ALIGN_CENTER);
+            dataBase.setSpacingAfter(30);
+            document.add(dataBase);
+
+            // =========================================================
+            // PARTE I: CARTA DA ADMINISTRAÇÃO E ANÁLISE DE IA
+            // =========================================================
+            Paragraph p1 = new Paragraph("PARTE I: MENSAGEM DA ADMINISTRAÇÃO (SÍNTESE INTELIGENTE)", fSecao);
+            p1.setSpacingAfter(10);
+            document.add(p1);
+
+            // Heurística Financeira
+            String txtFin = "Durante o " + trimestre + "º trimestre, a companhia atingiu um faturamento bruto de R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP) + ". ";
+            if (ebitda.compareTo(BigDecimal.ZERO) > 0) {
+                txtFin += "O EBITDA ajustado foi positivo em R$ " + ebitda.setScale(2, RoundingMode.HALF_UP) + ", demonstrando excelente capacidade de geração de caixa pelas operações diárias. A estrutura de custos fixos está alinhada com as receitas.";
+            } else {
+                txtFin += "O EBITDA ajustado registou consumo de caixa na ordem de R$ " + ebitda.setScale(2, RoundingMode.HALF_UP) + ". Exige-se reavaliação imediata dos custos operacionais ou aumento do ticket médio para estancar o deficit operacional.";
+            }
+            document.add(new Paragraph("Desempenho Financeiro:\n" + txtFin, fTexto));
+            document.add(new Paragraph(" "));
+
+            // Heurística de Estoque (GMROI)
+            String txtEst = "O Capital de Giro imobilizado em mercadorias fechou o trimestre em R$ " + custoEst.setScale(2, RoundingMode.HALF_UP) + ". ";
+            if (gmroi.compareTo(new BigDecimal("1.5")) >= 0) {
+                txtEst += "O indicador de retorno GMROI é de " + gmroi + ", o que indica altíssima eficiência. A cada R$ 1,00 estocado, a empresa gera lucros substanciais, provando forte aderência do mix de produtos junto ao consumidor.";
+            } else {
+                txtEst += "O indicador GMROI está em " + gmroi + ", abaixo do ideal histórico. Há excesso de estoque sem giro (Curva C) prendendo o caixa da companhia. Necessária política agressiva de liquidação de inventário antigo.";
+            }
+            document.add(new Paragraph("Eficiência de Capital e Supply Chain:\n" + txtEst, fTexto));
+            document.add(new Paragraph(" "));
+
+            // =========================================================
+            // PARTE II: ANÁLISE FUNDAMENTALISTA (NÚMEROS FRIOS)
+            // =========================================================
+            document.add(Chunk.NEXTPAGE); // Quebra de Página
+
+            Paragraph p2 = new Paragraph("PARTE II: INDICADORES FUNDAMENTALISTAS", fSecao);
+            p2.setSpacingAfter(20);
+            document.add(p2);
+
+            PdfPTable table = new PdfPTable(2);
+            table.setWidthPercentage(100);
+
+            // Estilo do Cabeçalho da Tabela
+            PdfPCell h1 = new PdfPCell(new Phrase("Métrica Operacional", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
+            h1.setBackgroundColor(new Color(15, 23, 42)); h1.setPadding(8);
+            PdfPCell h2 = new PdfPCell(new Phrase("Resultado Consolidado", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
+            h2.setBackgroundColor(new Color(15, 23, 42)); h2.setPadding(8); h2.setHorizontalAlignment(Element.ALIGN_RIGHT);
+            table.addCell(h1); table.addCell(h2);
+
+            // Linhas de Dados
+            addTableRow(table, "1. Faturamento Bruto", "R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "2. Lucro Bruto (Margem)", "R$ " + lucroBruto.setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "3. Ticket Médio Trimestral", "R$ " + vendas.getTicketMedio().setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "4. Despesas Operacionais Realizadas", "R$ " + despOp.setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "5. EBITDA Operacional", "R$ " + ebitda.setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "6. Custo de Estoque Total", "R$ " + custoEst.setScale(2, RoundingMode.HALF_UP));
+            addTableRow(table, "7. Ruptura de Estoque (Faltas)", est.get("ruptura") + "%");
+            addTableRow(table, "8. GMROI (Retorno s/ Investimento)", gmroi.toString() + "x");
+
+            document.add(table);
+
+            // Aviso Legal
+            document.add(new Paragraph("\n\n"));
+            Paragraph legal = new Paragraph("DISCLAIMER: Este relatório contém projeções geradas por inteligência heurística baseadas em dados inseridos no sistema. Não serve como auditoria contábil externa com valor legal para a Receita Federal.", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.LIGHT_GRAY));
+            legal.setAlignment(Element.ALIGN_JUSTIFIED);
+            document.add(legal);
+
+            document.close();
+            return out.toByteArray();
+
+        } catch (Exception e) {
+            log.error("Falha ao gerar o Balanço Trimestral: ", e);
+            return null;
+        }
+    }
+
+    private void addTableRow(PdfPTable table, String label, String value) {
+        PdfPCell c1 = new PdfPCell(new Phrase(label, FontFactory.getFont(FontFactory.HELVETICA, 11)));
+        c1.setPadding(8);
+        PdfPCell c2 = new PdfPCell(new Phrase(value, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11)));
+        c2.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        c2.setPadding(8);
+        table.addCell(c1);
+        table.addCell(c2);
+    }
 }

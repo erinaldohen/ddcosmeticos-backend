@@ -192,4 +192,28 @@ public class RelatorioController {
             return ResponseEntity.internalServerError().build();
         }
     }
+    // =========================================================================
+    // 4. BALANÇO TRIMESTRAL PARA INVESTIDORES / DIRETORIA (EARNINGS RELEASE)
+    // =========================================================================
+    @GetMapping("/balanco-trimestral/pdf")
+    public ResponseEntity<byte[]> baixarBalancoTrimestral(
+            @RequestParam("ano") int ano,
+            @RequestParam("trimestre") int trimestre) {
+        try {
+            byte[] pdfBytes = relatorioService.gerarBalancoTrimestralPdf(ano, trimestre);
+
+            if (pdfBytes == null || pdfBytes.length == 0) {
+                return ResponseEntity.internalServerError().body(null);
+            }
+
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/pdf")
+                    .header("Content-Disposition", "attachment; filename=Balanco_DD_Cosmeticos_" + trimestre + "T" + ano + ".pdf")
+                    .body(pdfBytes);
+
+        } catch (Exception e) {
+            log.error("Erro ao gerar Balanço Trimestral: ", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }

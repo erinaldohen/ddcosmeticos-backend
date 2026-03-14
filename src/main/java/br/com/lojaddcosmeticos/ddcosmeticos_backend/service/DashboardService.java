@@ -42,28 +42,27 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public Map<String, Object> obterDadosDoDashboard(String periodo) {
         LocalDateTime agora = LocalDateTime.now();
-        LocalDateTime inicioDia = agora.toLocalDate().atStartOfDay();
-        LocalDateTime fimDia = agora.toLocalDate().atTime(LocalTime.MAX);
 
-        // A MÁQUINA DO TEMPO (inicioRef e fimRef)
+        // =========================================================================
+        // MOTOR DE FILTRO TEMPORAL BLINDADO
+        // Define o início e fim baseando-se no que o utilizador pediu no Frontend
+        // =========================================================================
         LocalDateTime inicioRef = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimRef = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
         if ("hoje".equalsIgnoreCase(periodo)) {
-            inicioRef = inicioDia;
-            fimRef = fimDia;
+            inicioRef = agora.toLocalDate().atStartOfDay();
+            fimRef = agora.toLocalDate().atTime(LocalTime.MAX);
         } else if ("mes_passado".equalsIgnoreCase(periodo)) {
             inicioRef = agora.minusMonths(1).toLocalDate().withDayOfMonth(1).atStartOfDay();
             fimRef = agora.minusMonths(1).toLocalDate().withDayOfMonth(agora.minusMonths(1).toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
         }
 
         // =========================================================================
-        // CORREÇÃO CRÍTICA: BUSCA DAS CONFIGURAÇÕES GLOBAIS (META MENSAL)
-        // Removido o containsKey() que gerava erro de compilação.
+        // CONFIGURAÇÕES GLOBAIS (META MENSAL)
         // =========================================================================
         ConfiguracaoLoja config = configuracaoRepository.findAll().stream().findFirst().orElse(null);
-
-        BigDecimal metaMensal = BigDecimal.valueOf(10000.00); // Valor padrão de sobrevivência
+        BigDecimal metaMensal = BigDecimal.valueOf(10000.00);
 
         if (config != null && config.getVendas() != null) {
             BigDecimal metaSalva = config.getVendas().getMetaMensal();
@@ -72,20 +71,31 @@ public class DashboardService {
             }
         }
 
-        // --- 1. FATURAMENTO, CUSTO E REPOSIÇÃO (Sempre de Hoje para os KPIs rápidos) ---
-        List<Venda> vendasHoje = vendaRepository.buscarVendasPorPeriodo(inicioDia, fimDia);
+        // =========================================================================
+        // DADOS REAIS BASEADOS NO PERÍODO SELECIONADO
+        // A lista vendasDoPeriodo vai alimentar TODOS os cards
+        // =========================================================================
+        List<Venda> vendasDoPeriodo = vendaRepository.buscarVendasPorPeriodo(inicioRef, fimRef);
 
-        BigDecimal faturamentoHoje = BigDecimal.ZERO;
-        BigDecimal custoTotalHoje = BigDecimal.ZERO;
-        BigDecimal descontosHoje = BigDecimal.ZERO;
-        long totalLinhasItensHoje = 0L;
+        BigDecimal faturamentoPeriodo = BigDecimal.ZERO;
+        BigDecimal custoTotalPeriodo = BigDecimal.ZERO;
+        BigDecimal descontosPeriodo = BigDecimal.ZERO;
+        long totalLinhasItensPeriodo = 0L;
 
         Map<String, BigDecimal> faturamentoPorForma = new HashMap<>();
         Map<String, BigDecimal> faturamentoPorCategoria = new HashMap<>();
+        Map<Integer, List<Venda>> agrupadoPorHora = new HashMap<>();
+        Map<String, BigDecimal> mapaDias = new TreeMap<>();
+        DateTimeFormatter fmtDia = DateTimeFormatter.ofPattern("dd/MM");
 
-        for (Venda v : vendasHoje) {
-            faturamentoHoje = faturamentoHoje.add(safeBigDecimal(v.getValorTotal()));
-            descontosHoje = descontosHoje.add(safeBigDecimal(v.getDescontoTotal()));
+        for (Venda v : vendasDoPeriodo) {
+            BigDecimal totalVenda = safeBigDecimal(v.getValorTotal());
+            faturamentoPeriodo = faturamentoPeriodo.add(totalVenda);
+            descontosPeriodo = descontosPeriodo.add(safeBigDecimal(v.getDescontoTotal()));
+
+            // Agrupamento para os Gráficos
+            agrupadoPorHora.computeIfAbsent(v.getDataVenda().getHour(), k -> new ArrayList<>()).add(v);
+            mapaDias.merge(v.getDataVenda().format(fmtDia), totalVenda, BigDecimal::add);
 
             if (v.getPagamentos() != null) {
                 v.getPagamentos().forEach(p -> {
@@ -95,15 +105,14 @@ public class DashboardService {
             }
 
             if (v.getItens() != null) {
-                totalLinhasItensHoje += v.getItens().size();
+                totalLinhasItensPeriodo += v.getItens().size();
                 for (ItemVenda i : v.getItens()) {
                     BigDecimal qtd = i.getQuantidade() != null ? i.getQuantidade() : BigDecimal.ZERO;
-
                     BigDecimal custoUnit = safeBigDecimal(i.getCustoUnitarioHistorico());
                     if (custoUnit.compareTo(BigDecimal.ZERO) == 0 && i.getProduto() != null) {
                         custoUnit = safeBigDecimal(i.getProduto().getPrecoCusto());
                     }
-                    custoTotalHoje = custoTotalHoje.add(custoUnit.multiply(qtd));
+                    custoTotalPeriodo = custoTotalPeriodo.add(custoUnit.multiply(qtd));
 
                     String cat = (i.getProduto() != null && i.getProduto().getCategoria() != null)
                             ? i.getProduto().getCategoria() : "Diversos";
@@ -112,19 +121,18 @@ public class DashboardService {
             }
         }
 
+        // --- Gráficos do Frontend ---
         List<Map<String, Object>> formasPagamentoList = faturamentoPorForma.entrySet().stream()
                 .map(e -> {
                     Map<String, Object> m = new HashMap<>();
                     m.put("name", e.getKey());
                     m.put("value", e.getValue());
-                    m.put("fill", e.getKey().contains("PIX") ? "#00bdae" :
-                            e.getKey().contains("CARTAO") ? "#3b82f6" : "#8b5cf6");
-                    return m;
+                    return m; // Cores geridas no Front
                 }).collect(Collectors.toList());
 
         List<Map<String, Object>> topCategorias = faturamentoPorCategoria.entrySet().stream()
                 .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
-                .limit(3)
+                .limit(5)
                 .map(e -> {
                     Map<String, Object> m = new HashMap<>();
                     m.put("nome", e.getKey());
@@ -132,11 +140,10 @@ public class DashboardService {
                     return m;
                 }).collect(Collectors.toList());
 
-        long quantidadeVendas = vendasHoje.size();
-        BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoHoje.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-        double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensHoje / quantidadeVendas : 0.0;
+        long quantidadeVendas = vendasDoPeriodo.size();
+        BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoPeriodo.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensPeriodo / quantidadeVendas : 0.0;
 
-        Map<Integer, List<Venda>> agrupadoPorHora = vendasHoje.stream().collect(Collectors.groupingBy(v -> v.getDataVenda().getHour()));
         List<Map<String, Object>> vendasPorHora = new ArrayList<>();
         for (int h = 8; h <= 20; h++) {
             Map<String, Object> m = new HashMap<>();
@@ -145,17 +152,10 @@ public class DashboardService {
             vendasPorHora.add(m);
         }
 
-        // --- DADOS DINÂMICOS BASEADOS NO FILTRO (inicioRef / fimRef) ---
-        List<Venda> vendasDoPeriodo = vendaRepository.buscarVendasPorPeriodo(inicioRef, fimRef);
-        Map<String, BigDecimal> mapaDias = new TreeMap<>();
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
-        vendasDoPeriodo.forEach(v -> mapaDias.merge(v.getDataVenda().format(fmt), safeBigDecimal(v.getValorTotal()), BigDecimal::add));
-
         List<Map<String, Object>> graficoVendas = mapaDias.entrySet().stream().map(e -> {
             Map<String, Object> m = new HashMap<>(); m.put("data", e.getKey()); m.put("total", e.getValue()); return m;
         }).collect(Collectors.toList());
 
-        BigDecimal faturamentoPeriodo = vendasDoPeriodo.stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal impostoMes = faturamentoPeriodo.multiply(new BigDecimal("0.04"));
 
         List<Map<String, Object>> origemVendas = vendaRepository.somarFaturamentoPorOrigemMes(inicioRef).stream()
@@ -167,8 +167,7 @@ public class DashboardService {
                     return m;
                 }).collect(Collectors.toList());
 
-        if (origemVendas.isEmpty()) origemVendas.add(Map.of("name", "Loja Física", "value", BigDecimal.ZERO));
-
+        // --- Estoque e Inteligência ---
         ProdutoRepository.RiscoEstoqueProjection projVencendo = produtoRepository.calcularRiscoVencimento(LocalDate.now().plusDays(60));
         Map<String, Object> riscoVencendo = new HashMap<>();
         riscoVencendo.put("itens", projVencendo != null && projVencendo.getItens() != null ? projVencendo.getItens() : 0);
@@ -190,32 +189,43 @@ public class DashboardService {
                 : 0.0;
 
         // =========================================================================
-        // PROJEÇÃO FINANCEIRA (A MÁGICA DA IA E METAS)
+        // O NOVO CÁLCULO REAL DE FLUXO DE 7 DIAS (A partir de Hoje, não do filtro)
         // =========================================================================
         int diasPassados = Math.max(1, ("hoje".equals(periodo) ? 1 : agora.getDayOfMonth()));
         int diasNoMes = YearMonth.from(inicioRef).lengthOfMonth();
-
-        // Run Rate: Onde a loja vai chegar se continuar vendendo como vendeu até hoje
         BigDecimal runRate = faturamentoPeriodo.divide(new BigDecimal(diasPassados), 2, RoundingMode.HALF_UP).multiply(new BigDecimal(diasNoMes));
 
-        // Projeção Rápida (Próximos 7 Dias)
-        BigDecimal projecaoReceitas7d = faturamentoPeriodo.divide(new BigDecimal(diasPassados), 2, RoundingMode.HALF_UP).multiply(new BigDecimal("7"));
+        LocalDate diaAtual = agora.toLocalDate();
+        LocalDate daquiA7Dias = diaAtual.plusDays(7);
 
-        // Em vez de 8000 fixo, calculamos uma margem de segurança de 40% do que entra ou usamos contas a pagar reais
-        BigDecimal despesasEstimadas;
+        // A Receber: Boletos de Clientes (Crediário)
+        BigDecimal totalReceitasPrevistas = BigDecimal.ZERO;
         try {
-            despesasEstimadas = contaPagarRepository.findAll().stream()
-                    .filter(c -> c.getDataVencimento() != null && c.getDataVencimento().isAfter(agora.toLocalDate().minusDays(1)) && c.getDataVencimento().isBefore(agora.toLocalDate().plusDays(8)))
-                    .map(c -> c.getValorTotal())
+            totalReceitasPrevistas = contaReceberRepository.findAll().stream()
+                    .filter(c -> !c.isPago() && c.getDataVencimento() != null &&
+                            !c.getDataVencimento().isBefore(diaAtual) && !c.getDataVencimento().isAfter(daquiA7Dias))
+                    .map(c -> safeBigDecimal(c.getValor()))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         } catch (Exception e) {
-            despesasEstimadas = projecaoReceitas7d.multiply(new BigDecimal("0.40")); // 40% é custo fixo na média
+            log.warn("Repositório ContaReceber vazio ou sem dados pendentes.");
+        }
+
+        // A Pagar: Faturas de Fornecedores, Despesas e Boletos
+        BigDecimal totalDespesasPrevistas = BigDecimal.ZERO;
+        try {
+            totalDespesasPrevistas = contaPagarRepository.findAll().stream()
+                    .filter(c -> !c.isPago() && c.getDataVencimento() != null &&
+                            !c.getDataVencimento().isBefore(diaAtual) && !c.getDataVencimento().isAfter(daquiA7Dias))
+                    .map(c -> safeBigDecimal(c.getValorTotal()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        } catch (Exception e) {
+            log.warn("Repositório ContaPagar vazio ou sem dados pendentes.");
         }
 
         Map<String, Object> fluxo7Dias = new HashMap<>();
-        fluxo7Dias.put("receitasPrevistas", projecaoReceitas7d);
-        fluxo7Dias.put("despesasPrevistas", despesasEstimadas);
-        fluxo7Dias.put("saldoProjetado", projecaoReceitas7d.subtract(despesasEstimadas));
+        fluxo7Dias.put("receitasPrevistas", totalReceitasPrevistas);
+        fluxo7Dias.put("despesasPrevistas", totalDespesasPrevistas);
+        fluxo7Dias.put("saldoProjetado", totalReceitasPrevistas.subtract(totalDespesasPrevistas));
 
         // Vendas Perdidas
         Long qtdVendasPerdidas = vendaPerdidaRepository.contarRupturasNoPeriodo(inicioRef, fimRef);
@@ -249,46 +259,38 @@ public class DashboardService {
         inventarioNode.put("vendasPerdidas", vendasPerdidas);
 
         Map<String, Object> financeiro = new HashMap<>();
-        financeiro.put("faturamentoHoje", faturamentoHoje);
-        financeiro.put("descontosHoje", descontosHoje);
-        financeiro.put("custoTotalReposicaoHoje", custoTotalHoje);
-        financeiro.put("lucroBrutoHoje", faturamentoHoje.subtract(custoTotalHoje));
+        // O NOME DAS VARIÁVEIS AQUI NÃO MUDA PARA NÃO QUEBRAR O FRONTEND, MAS OS DADOS RESPEITAM O FILTRO
+        financeiro.put("faturamentoHoje", faturamentoPeriodo);
+        financeiro.put("descontosHoje", descontosPeriodo);
+        financeiro.put("custoTotalReposicaoHoje", custoTotalPeriodo);
+        financeiro.put("lucroBrutoHoje", faturamentoPeriodo.subtract(custoTotalPeriodo));
         financeiro.put("vendasHoje", quantidadeVendas);
+
         financeiro.put("ticketMedio", ticketMedio);
         financeiro.put("produtosDistintosPorVenda", mixProdutos);
         financeiro.put("impostoProvisorioMes", impostoMes);
-        financeiro.put("impostoFederal", impostoMes.multiply(new BigDecimal("0.74")));
-        financeiro.put("impostoEstadual", impostoMes.multiply(new BigDecimal("0.26")));
         financeiro.put("formasPagamento", formasPagamentoList);
         financeiro.put("vendasPorHora", vendasPorHora);
         financeiro.put("graficoVendas", graficoVendas);
-        financeiro.put("faixaSimples", "4,00% (Anexo I)");
         financeiro.put("origemVendas", origemVendas);
         financeiro.put("taxaRecorrencia", taxaRecorrencia);
-        financeiro.put("fluxoCaixa7Dias", fluxo7Dias);
+        financeiro.put("fluxoCaixa7Dias", fluxo7Dias); // Fluxo real de Contas
         financeiro.put("crescimentoMoM", crescimentoMoM);
         financeiro.put("runRate", runRate);
 
         Map<String, Object> response = new HashMap<>();
         response.put("financeiro", financeiro);
         response.put("topCategorias", topCategorias);
-        response.put("topProdutos", vendaRepository.buscarRankingProdutos(inicioRef, fimRef, PageRequest.of(0, 5)));
-        response.put("performanceVendedores", performanceVendedoresHoje(vendasHoje)); // Vendedores sempre de hoje
+        response.put("topProdutos", vendaRepository.buscarRankingProdutos(inicioRef, fimRef, PageRequest.of(0, 10)));
+        response.put("performanceVendedores", performanceVendedoresPeriodo(vendasDoPeriodo));
         response.put("inventario", inventarioNode);
-
-        // A NOVA META E CÁLCULO DIÁRIO ALINHANDO FRONTEND E BACKEND
-        BigDecimal metaDiariaEsperada = metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP);
-        response.put("metaDiaria", metaDiariaEsperada);
+        response.put("metaDiaria", metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP));
         response.put("metaMensal", metaMensal);
-
         response.put("inteligencia", inteligenciaVendas);
 
         return response;
     }
 
-    // =========================================================================
-    // ENDPOINT DO MODAL DE DRILL DOWN
-    // =========================================================================
     @Transactional(readOnly = true)
     public List<Map<String, Object>> obterListaRisco(String tipo) {
         List<Map<String, Object>> lista = new ArrayList<>();
@@ -302,10 +304,19 @@ public class DashboardService {
         return lista;
     }
 
-    private List<Map<String, Object>> performanceVendedoresHoje(List<Venda> vendas) {
-        return vendas.stream().filter(v -> v.getUsuario() != null && v.getUsuario().getNome() != null).collect(Collectors.groupingBy(v -> v.getUsuario().getNome())).entrySet().stream().map(e -> {
-            Map<String, Object> m = new HashMap<>(); m.put("nome", e.getKey()); m.put("converteu", (long) e.getValue().size()); m.put("vendas", e.getValue().stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add)); return m;
-        }).sorted((a, b) -> ((BigDecimal) b.get("vendas")).compareTo((BigDecimal) a.get("vendas"))).collect(Collectors.toList());
+    private List<Map<String, Object>> performanceVendedoresPeriodo(List<Venda> vendas) {
+        return vendas.stream().filter(v -> v.getUsuario() != null && v.getUsuario().getNome() != null)
+                .collect(Collectors.groupingBy(v -> v.getUsuario().getNome()))
+                .entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("nome", e.getKey());
+                    m.put("converteu", (long) e.getValue().size());
+                    m.put("vendas", e.getValue().stream().map(v -> safeBigDecimal(v.getValorTotal())).reduce(BigDecimal.ZERO, BigDecimal::add));
+                    return m;
+                })
+                .sorted((a, b) -> ((BigDecimal) b.get("vendas")).compareTo((BigDecimal) a.get("vendas")))
+                .collect(Collectors.toList());
     }
 
     private String calcularRuptura() {

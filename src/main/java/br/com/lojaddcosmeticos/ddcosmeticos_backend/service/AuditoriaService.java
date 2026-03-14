@@ -33,11 +33,14 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -87,7 +90,7 @@ public class AuditoriaService {
     }
 
     // =========================================================================
-    // 2. CONSULTAS
+    // 2. CONSULTAS GERAIS
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -114,7 +117,7 @@ public class AuditoriaService {
     }
 
     // =========================================================================
-    // 3. HIBERNATE ENVERS (CORRIGIDO)
+    // 3. HIBERNATE ENVERS (HISTÓRICO E LIXEIRA)
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -132,23 +135,70 @@ public class AuditoriaService {
         for (Object[] row : results) {
             Produto p = (Produto) row[0];
 
-            // Cast para a sua entidade CUSTOMIZADA de auditoria!
             br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity rev =
                     (br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity) row[1];
             RevisionType type = (RevisionType) row[2];
 
             historico.add(new HistoricoProdutoDTO(
-                    rev.getId(),                 // 1. Integer (ID da Revisão)
-                    new Date(rev.getTimestamp()),// 2. Date (Pega o timestamp e converte)
-                    type.name(),                 // 3. String (ADD, MOD, DEL)
-                    p.getDescricao(),            // 4. String (Descrição)
-                    p.getPrecoVenda(),           // 5. BigDecimal (Preço Venda)
-                    p.getPrecoCusto(),           // 6. BigDecimal (Preço Custo)
-                    p.getQuantidadeEmEstoque(),  // 7. Integer (Estoque)
-                    rev.getUsuarioResponsavel()  // 8. String (Responsável)
+                    rev.getId(),
+                    new Date(rev.getTimestamp()),
+                    type.name(),
+                    p.getDescricao(),
+                    p.getPrecoVenda(),
+                    p.getPrecoCusto(),
+                    p.getQuantidadeEmEstoque(),
+                    rev.getUsuarioResponsavel()
             ));
         }
         return historico;
+    }
+
+    /**
+     * NOVO MÉTODO: OBTENÇÃO DOS ITENS EXCLUÍDOS (LIXEIRA)
+     * Utiliza o Hibernate Envers para buscar entidades onde o RevisionType seja DEL (Deletado)
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> obterItensLixeira(String search, LocalDate inicio, LocalDate fim) {
+        AuditReader reader = AuditReaderFactory.get(entityManager);
+
+        // Busca exclusões (DEL) da entidade Produto
+        List<Object[]> results = reader.createQuery()
+                .forRevisionsOfEntity(Produto.class, false, true)
+                .add(AuditEntity.revisionType().eq(RevisionType.DEL))
+                .addOrder(AuditEntity.revisionNumber().desc())
+                .getResultList();
+
+        List<Map<String, Object>> lixeira = new ArrayList<>();
+
+        for (Object[] row : results) {
+            Produto p = (Produto) row[0];
+            br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity rev =
+                    (br.com.lojaddcosmeticos.ddcosmeticos_backend.audit.CustomRevisionEntity) row[1];
+
+            LocalDateTime dataExclusao = LocalDateTime.ofInstant(new Date(rev.getTimestamp()).toInstant(), ZoneId.systemDefault());
+
+            // 1. Filtros de Data
+            if (inicio != null && dataExclusao.toLocalDate().isBefore(inicio)) continue;
+            if (fim != null && dataExclusao.toLocalDate().isAfter(fim)) continue;
+
+            // 2. Filtro de Pesquisa (Nome, Código ou Responsável)
+            boolean matchesSearch = search == null || search.isBlank() ||
+                    (p.getDescricao() != null && p.getDescricao().toLowerCase().contains(search.toLowerCase())) ||
+                    (p.getCodigoBarras() != null && p.getCodigoBarras().contains(search)) ||
+                    (rev.getUsuarioResponsavel() != null && rev.getUsuarioResponsavel().toLowerCase().contains(search.toLowerCase()));
+
+            if (matchesSearch) {
+                // Monta o objeto no formato exato que o React (Lixeira) espera
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", p.getId());
+                item.put("descricao", p.getDescricao());
+                item.put("codigoBarras", p.getCodigoBarras());
+                item.put("usuarioExclusao", rev.getUsuarioResponsavel() != null ? rev.getUsuarioResponsavel() : "Sistema");
+                item.put("dataHora", dataExclusao);
+                lixeira.add(item);
+            }
+        }
+        return lixeira;
     }
 
     // =========================================================================

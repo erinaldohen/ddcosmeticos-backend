@@ -8,38 +8,42 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CalculadoraFiscalService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.FiscalComplianceService;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 
+@Slf4j
 @RestController
-@RequestMapping("/api/fiscal")
+@RequestMapping("/api/v1/fiscal")
+@RequiredArgsConstructor
 public class FiscalController {
 
     @Autowired
     private FiscalComplianceService fiscalService;
+
     @Autowired
     private CalculadoraFiscalService calculadoraFiscalService;
+
     @Autowired
     private ProdutoRepository produtoRepository;
+
     @Autowired
     private DashboardService dashboardService;
 
     @GetMapping("/simular-reforma/{codigoBarras}")
     public ResponseEntity<SimulacaoTributariaDTO> simularImpacto(@PathVariable String codigoBarras) {
-        // Agora busca por 'findByCodigoBarras' em vez de 'findById'
         return produtoRepository.findByCodigoBarras(codigoBarras)
                 .map(produto -> {
-                    // Opcional: Validar dados antes de simular
                     try {
                         fiscalService.auditarDadosFiscais(produto);
                     } catch (IllegalArgumentException e) {
                         // Log ou header de aviso opcional
                     }
-
                     SimulacaoTributariaDTO simulacao = fiscalService.simularImpactoReforma(produto);
                     return ResponseEntity.ok(simulacao);
                 })
@@ -62,14 +66,33 @@ public class FiscalController {
         return ResponseEntity.ok(resultado);
     }
 
+    // =========================================================================
+    // APENAS UM MÉTODO PARA O DASHBOARD (Opção Blindada ativada)
+    // =========================================================================
     @GetMapping("/dashboard-resumo")
-    public ResponseEntity<FiscalDashboardDTO> getDashboardResumo(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
+    public ResponseEntity<?> getResumoFiscal(HttpServletRequest request) {
+        try {
+            // Extração manual e blindada para evitar bloqueios do Spring
+            String inicioRaw = request.getParameter("inicio");
+            String fimRaw = request.getParameter("fim");
 
-        if (inicio == null) inicio = LocalDate.now().withDayOfMonth(1);
-        if (fim == null) fim = LocalDate.now();
+            if (inicioRaw == null || fimRaw == null) {
+                return ResponseEntity.badRequest().body("As datas de início e fim são obrigatórias.");
+            }
 
-        return ResponseEntity.ok(dashboardService.getResumoFiscal(inicio, fim));
+            LocalDate inicio = LocalDate.parse(inicioRaw);
+            LocalDate fim = LocalDate.parse(fimRaw);
+
+            log.info("Buscando Painel Fiscal de {} até {}", inicio, fim);
+
+            // Chama o Service existente
+            FiscalDashboardDTO resumo = dashboardService.getResumoFiscal(inicio, fim);
+
+            return ResponseEntity.ok(resumo);
+
+        } catch (Exception e) {
+            log.error("🚨 ERRO 500 - PAINEL FISCAL: ", e);
+            return ResponseEntity.internalServerError().body("Falha ao processar dados fiscais: " + e.getMessage());
+        }
     }
 }

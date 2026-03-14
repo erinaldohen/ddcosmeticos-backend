@@ -461,4 +461,137 @@ public class RelatorioService {
             return new byte[0];
         }
     }
+    // =========================================================================
+    // 7. DOSSIÊ EXECUTIVO 360º COM "MOTOR DE IA" HEURÍSTICO
+    // =========================================================================
+    public byte[] gerarDossieExecutivoPdf(LocalDate inicio, LocalDate fim) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4, 40, 40, 40, 40);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Estilos de Fonte
+            Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Color.DARK_GRAY);
+            Font fontSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153)); // Rosa da Marca
+            Font fontCorpo = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.BLACK);
+            Font fontIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246)); // Azul IA
+
+            // 1. DADOS DE TODAS AS ÁREAS (Cruzamento)
+            RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio, fim);
+            Map<String, Object> financeiro = gerarRelatorioFinanceiro(inicio, fim);
+            Map<String, Object> estoque = gerarRelatorioEstoque(inicio, fim);
+            Map<String, Object> fiscal = gerarRelatorioFiscal(inicio, fim);
+
+            // Cálculos Derivados
+            BigDecimal fatBruto = vendas.getTotalFaturado();
+            BigDecimal lucroBruto = vendas.getLucroBrutoEstimado();
+            BigDecimal despPagar = (BigDecimal) financeiro.get("aPagar");
+            BigDecimal ebitda = fatBruto.subtract(fatBruto.subtract(lucroBruto)).subtract(despPagar); // Simplificação
+            BigDecimal custoEst = (BigDecimal) estoque.get("custoEstoque");
+            BigDecimal gmroi = custoEst.compareTo(BigDecimal.ZERO) > 0 ? lucroBruto.divide(custoEst, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            Long errosFiscais = (Long) fiscal.get("erros");
+
+            // CABEÇALHO DO DOCUMENTO
+            Paragraph titulo = new Paragraph("DOSSIÊ EXECUTIVO 360º", fontTitulo);
+            titulo.setAlignment(Element.ALIGN_CENTER);
+            document.add(titulo);
+
+            Paragraph subtitulo = new Paragraph("DD Cosméticos - Análise Estratégica Interdepartamental\nPeríodo: " +
+                    inicio.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) + " a " +
+                    fim.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) + "\n\n", fontCorpo);
+            subtitulo.setAlignment(Element.ALIGN_CENTER);
+            document.add(subtitulo);
+
+            // ==========================================
+            // PARECER DA INTELIGÊNCIA ARTIFICIAL (C-LEVEL)
+            // ==========================================
+            document.add(new Paragraph("RESUMO EXECUTIVO (SÍNTESE IA)", fontSecao));
+
+            StringBuilder analiseIA = new StringBuilder();
+            analiseIA.append("A operação encontra-se num ciclo ").append(ebitda.compareTo(BigDecimal.ZERO) >= 0 ? "de expansão saudável." : "de atenção por consumo de caixa.");
+            analiseIA.append(" O EBITDA no período foi de R$ ").append(ebitda).append(".");
+            analiseIA.append(" A eficiência sobre o capital investido (GMROI) está em ").append(gmroi).append(" (para cada R$ 1 retido no estoque, a empresa gerou R$ ").append(gmroi).append(" de lucro bruto). ");
+
+            if (errosFiscais > 0) {
+                analiseIA.append("No campo Jurídico/Compliance, há um risco tributário eminente: ").append(errosFiscais).append(" produtos estão sem NCM/CEST, podendo gerar autuações fiscais.");
+            } else {
+                analiseIA.append("A conformidade Fiscal e Compliance operam a 100% de precisão.");
+            }
+
+            Paragraph parecerIA = new Paragraph("✨ " + analiseIA.toString() + "\n\n", fontIA);
+            parecerIA.setSpacingAfter(15f);
+            document.add(parecerIA);
+
+            // ==========================================
+            // DEPARTAMENTO: FINANCEIRO & COMERCIAL
+            // ==========================================
+            document.add(new Paragraph("1. DEPARTAMENTO FINANCEIRO E COMERCIAL", fontSecao));
+
+            PdfPTable tableFin = new PdfPTable(2);
+            tableFin.setWidthPercentage(100);
+            tableFin.setSpacingBefore(10f);
+            tableFin.setSpacingAfter(20f);
+
+            tableFin.addCell(new PdfPCell(new Phrase("Faturamento Bruto", fontCorpo)));
+            tableFin.addCell(new PdfPCell(new Phrase("R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP), fontCorpo)));
+
+            tableFin.addCell(new PdfPCell(new Phrase("Lucro Bruto (Margem de Contribuição)", fontCorpo)));
+            tableFin.addCell(new PdfPCell(new Phrase("R$ " + lucroBruto.setScale(2, RoundingMode.HALF_UP), fontCorpo)));
+
+            tableFin.addCell(new PdfPCell(new Phrase("Despesas Operacionais (A Pagar)", fontCorpo)));
+            tableFin.addCell(new PdfPCell(new Phrase("R$ " + despPagar.setScale(2, RoundingMode.HALF_UP), fontCorpo)));
+
+            tableFin.addCell(new PdfPCell(new Phrase("EBITDA (Caixa Operacional Livre)", fontCorpo)));
+            PdfPCell cellEbitda = new PdfPCell(new Phrase("R$ " + ebitda.setScale(2, RoundingMode.HALF_UP), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11)));
+            cellEbitda.setBackgroundColor(ebitda.compareTo(BigDecimal.ZERO) >= 0 ? new Color(220, 252, 231) : new Color(254, 226, 226));
+            tableFin.addCell(cellEbitda);
+
+            document.add(tableFin);
+
+            // ==========================================
+            // DEPARTAMENTO: OPERAÇÕES & SUPPLY CHAIN
+            // ==========================================
+            document.add(new Paragraph("2. OPERAÇÕES, ESTOQUE E SUPPLY CHAIN", fontSecao));
+            Paragraph txtOperacoes = new Paragraph("O departamento de compras possui atualmente R$ " + custoEst.setScale(2, RoundingMode.HALF_UP) + " imobilizados. " +
+                    "A taxa de ruptura (falta de produto na prateleira) atual é de " + estoque.get("ruptura") + "% do mix ativo.\n\n", fontCorpo);
+            document.add(txtOperacoes);
+
+            // ==========================================
+            // DEPARTAMENTO: RH E PERFORMANCE
+            // ==========================================
+            document.add(new Paragraph("3. RECURSOS HUMANOS (PERFORMANCE DE VENDAS)", fontSecao));
+
+            // Pega o relatório de comissões dinamicamente
+            RelatorioComissaoDTO comissoes = gerarRelatorioComissoes(inicio.atStartOfDay(), fim.atTime(LocalTime.MAX), null);
+            BigDecimal totalComissoes = comissoes.getTotalComissoesGeral();
+
+            Paragraph txtRh = new Paragraph("Foram realizadas " + vendas.getQuantidadeVendas() + " operações de caixa. " +
+                    "O custo com comissionamento da equipa (folha de incentivos) estimou-se em R$ " + totalComissoes.setScale(2, RoundingMode.HALF_UP) + " neste período. " +
+                    "O Ticket Médio por cliente manteve-se em R$ " + vendas.getTicketMedio().setScale(2, RoundingMode.HALF_UP) + ".\n\n", fontCorpo);
+            document.add(txtRh);
+
+            // ==========================================
+            // DEPARTAMENTO: JURÍDICO, FISCAL E COMPLIANCE
+            // ==========================================
+            document.add(new Paragraph("4. JURÍDICO, FISCAL E COMPLIANCE", fontSecao));
+            Paragraph txtFiscal = new Paragraph("Alíquota média Simples Nacional projetada: " + fiscal.get("aliquota") + "%. " +
+                    "A segregação de produtos monofásicos permitiu uma economia Lícita (Recuperação Tributária) estimada em R$ " +
+                    ((BigDecimal) fiscal.get("recuperacao")).setScale(2, RoundingMode.HALF_UP) + ".\n", fontCorpo);
+            document.add(txtFiscal);
+
+            // Rodapé Oficial
+            document.add(new Paragraph("\n\n"));
+            Paragraph rodape = new Paragraph("Documento Confidencial DD Cosméticos. Gerado eletronicamente em " +
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) + ".", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.GRAY));
+            rodape.setAlignment(Element.ALIGN_CENTER);
+            document.add(rodape);
+
+            document.close();
+            return out.toByteArray();
+
+        } catch (Exception e) {
+            log.error("Falha ao montar o PDF do Dossiê: ", e);
+            return null;
+        }
+    }
 }

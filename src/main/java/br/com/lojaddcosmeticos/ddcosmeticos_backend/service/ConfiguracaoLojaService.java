@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfiguracaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Service
 public class ConfiguracaoLojaService {
 
@@ -43,12 +45,8 @@ public class ConfiguracaoLojaService {
         }
     }
 
-    // =========================================================================
-    // CORREÇÃO: Método auxiliar para evitar o erro de construtor nas Vendas
-    // =========================================================================
     private ConfiguracaoLoja.DadosVendas converterVendas(ConfiguracaoDTO.VendasDTO dto) {
         if (dto == null) return new ConfiguracaoLoja.DadosVendas();
-
         ConfiguracaoLoja.DadosVendas vendas = new ConfiguracaoLoja.DadosVendas();
         vendas.setComportamentoCpf(dto.comportamentoCpf());
         vendas.setBloquearEstoque(dto.bloquearEstoque());
@@ -60,10 +58,7 @@ public class ConfiguracaoLojaService {
         vendas.setPontosPorReal(dto.pontosPorReal());
         vendas.setUsarBalanca(dto.usarBalanca());
         vendas.setAgruparItens(dto.agruparItens());
-
-        // A LIBERDADE DO ADMIN:
         vendas.setMetaMensal(dto.metaMensal() != null ? dto.metaMensal() : BigDecimal.ZERO);
-
         return vendas;
     }
 
@@ -91,11 +86,9 @@ public class ConfiguracaoLojaService {
         return converterParaDTO(salva);
     }
 
-    // --- MÉTODOS DE ARQUIVOS (UPLOAD) MANTIDOS INTACTOS ---
-
     @Transactional
     public Map<String, Object> salvarCertificado(MultipartFile file, String senha) throws Exception {
-
+        log.info("Processando upload de novo Certificado Digital A1...");
         KeyStore ks = KeyStore.getInstance("PKCS12");
         ks.load(file.getInputStream(), senha.toCharArray());
 
@@ -115,9 +108,14 @@ public class ConfiguracaoLojaService {
         salvarArquivoEmDisco(file, fileName);
 
         ConfiguracaoLoja config = buscarConfiguracao();
+
+        // SALVA OS DADOS BINÁRIOS NA BASE DE DADOS E O CAMINHO
         config.getFiscal().setCaminhoCertificado(fileName);
         config.getFiscal().setSenhaCert(senha);
+        config.getFiscal().setArquivoCertificado(file.getBytes()); // <--- CRÍTICO PARA A EMISSÃO NFC-e
+
         repository.save(config);
+        log.info("Certificado salvo com sucesso. Validade: {} dias.", diasRestantes);
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         Map<String, Object> response = new HashMap<>();
@@ -152,7 +150,9 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
-    // --- MAPEAMENTO MANUAL (DTO <-> ENTIDADE) MANTIDO INTACTO ---
+    // =========================================================================
+    // CORREÇÃO CRÍTICA: ATUALIZAÇÃO BLINDADA (PREVINE JSON DATA WIPING)
+    // =========================================================================
     private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
         c.garantirInstancias();
 
@@ -171,6 +171,12 @@ public class ConfiguracaoLojaService {
         ));
 
         ConfiguracaoLoja.DadosFiscal f = c.getFiscal();
+
+        // Backup dos dados sensíveis do certificado ANTES de processar o DTO
+        String senhaCertAtual = f.getSenhaCert();
+        String caminhoCertAtual = f.getCaminhoCertificado();
+        byte[] arquivoCertAtual = f.getArquivoCertificado();
+
         f.setAmbiente(d.fiscal().ambiente());
         f.setRegime(d.fiscal().regime());
 
@@ -187,7 +193,22 @@ public class ConfiguracaoLojaService {
             f.setNfeProducao(d.fiscal().producao().nfe());
         }
 
-        if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) f.setSenhaCert(d.fiscal().senhaCert());
+        // SE O FRONTEND NÃO MANDOU A SENHA, MANTÉM A ANTIGA
+        if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) {
+            f.setSenhaCert(d.fiscal().senhaCert());
+        } else {
+            f.setSenhaCert(senhaCertAtual);
+        }
+
+        // SE O FRONTEND NÃO MANDOU O CAMINHO, MANTÉM O ANTIGO
+        if (d.fiscal().caminhoCertificado() != null && !d.fiscal().caminhoCertificado().isEmpty()) {
+            f.setCaminhoCertificado(d.fiscal().caminhoCertificado());
+        } else {
+            f.setCaminhoCertificado(caminhoCertAtual);
+        }
+
+        // GARANTE QUE O BINÁRIO DO CERTIFICADO NÃO SE PERCA
+        f.setArquivoCertificado(arquivoCertAtual);
 
         f.setCsrtId(d.fiscal().csrtId());
         f.setCsrtHash(d.fiscal().csrtHash());
@@ -227,7 +248,6 @@ public class ConfiguracaoLojaService {
             fin.setAceitaCrediario(d.financeiro().pagamentos().crediario());
         }
 
-        // CORREÇÃO CRÍTICA AQUI: Chamamos o método seguro em vez de instanciar direto
         c.setVendas(converterVendas(d.vendas()));
 
         c.setSistema(new ConfiguracaoLoja.DadosSistema(
@@ -281,7 +301,7 @@ public class ConfiguracaoLojaService {
                         c.getVendas().getImprimirVendedor(), c.getVendas().getImprimirTicketTroca(), c.getVendas().getAutoEnterScanner(),
                         c.getVendas().getFidelidadeAtiva(), c.getVendas().getPontosPorReal(),
                         c.getVendas().getUsarBalanca(), c.getVendas().getAgruparItens(),
-                        c.getVendas().getMetaMensal() // AQUI ESTÁ O NOVO CAMPO (11º PARÂMETRO)
+                        c.getVendas().getMetaMensal()
                 ),
                 new ConfiguracaoDTO.SistemaDTO(
                         c.getSistema().getImpressaoAuto(), c.getSistema().getLarguraPapel(), c.getSistema().getBackupAuto(),

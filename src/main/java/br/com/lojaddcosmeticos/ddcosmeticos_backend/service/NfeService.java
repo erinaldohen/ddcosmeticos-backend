@@ -8,10 +8,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PagamentoVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 
-// Imports Bibliotecas NFe
 import br.com.swconsultoria.certificado.Certificado;
 import br.com.swconsultoria.certificado.CertificadoService;
 import br.com.swconsultoria.nfe.Nfe;
@@ -23,12 +21,12 @@ import br.com.swconsultoria.nfe.schema_4.consStatServ.TRetConsStatServ;
 import br.com.swconsultoria.nfe.util.XmlNfeUtil;
 import br.com.swconsultoria.nfe.schema_4.enviNFe.*;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
@@ -36,20 +34,23 @@ import java.util.List;
 import java.util.Random;
 
 @Service
+@Slf4j
 public class NfeService {
 
     @Autowired
     private VendaRepository vendaRepository;
 
     @Autowired
-    private ConfiguracaoLojaRepository configuracaoLojaRepository;
+    private ConfiguracaoLojaService configuracaoLojaService; // A FONTE ÚNICA DE VERDADE
 
-    // --- NOVO MÉTODO: STATUS SEFAZ ---
+    // =========================================================================
+    // STATUS SEFAZ (PING NF-e)
+    // =========================================================================
     public String consultarStatusSefaz() throws Exception {
-        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L)
-                .orElseThrow(() -> new ValidationException("Loja não configurada."));
+        ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
 
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
+            log.warn("Certificado não encontrado na base de dados para a NF-e.");
             return "Ambiente: SIMULACAO (Sem Certificado) | Status: 107 - Serviço em Operação (Simulado)";
         }
 
@@ -63,11 +64,8 @@ public class NfeService {
 
     @Transactional
     public NfceResponseDTO emitirNfeModelo55(Long idVenda) {
-        // 1. Busca Configurações
-        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L)
-                .orElseThrow(() -> new ValidationException("Loja não configurada."));
+        ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
 
-        // 2. Busca Venda
         Venda venda = vendaRepository.findById(idVenda)
                 .orElseThrow(() -> new ValidationException("Venda não encontrada."));
 
@@ -75,40 +73,23 @@ public class NfeService {
             throw new ValidationException("Para emitir NF-e (Modelo 55), é obrigatório informar um Cliente cadastrado.");
         }
 
-        // Validação de segurança para dev (Simulação)
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
             return simularNfe(venda, configLoja);
         }
 
         try {
-            // 3. Inicializar Configuração
             ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
 
-            // 4. Montagem da Chave (Modelo 55)
             String modelo = "55";
             String serie = "1";
             String nNF = String.valueOf(venda.getIdVenda());
             String cnf = String.format("%08d", new Random().nextInt(99999999));
+            String cnpjEmitente = (configLoja.getLoja() != null && configLoja.getLoja().getCnpj() != null) ? configLoja.getLoja().getCnpj().replaceAll("\\D", "") : "00000000000000";
 
-            String cnpjEmitente = "00000000000000";
-            if (configLoja.getLoja() != null && configLoja.getLoja().getCnpj() != null) {
-                cnpjEmitente = configLoja.getLoja().getCnpj().replaceAll("\\D", "");
-            }
-
-            String chaveSemDigito = gerarChaveAcesso(
-                    configNfe.getEstado().getCodigoUF(), // Pega estado do certificado
-                    LocalDateTime.now(),
-                    cnpjEmitente,
-                    modelo,
-                    serie,
-                    nNF,
-                    "1",
-                    cnf
-            );
+            String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, modelo, serie, nNF, "1", cnf);
             String dv = calcularDV(chaveSemDigito);
             String chaveAcesso = chaveSemDigito + dv;
 
-            // 5. XML
             TNFe nfe = new TNFe();
             TNFe.InfNFe infNFe = new TNFe.InfNFe();
             infNFe.setId("NFe" + chaveAcesso);
@@ -125,7 +106,6 @@ public class NfeService {
 
             nfe.setInfNFe(infNFe);
 
-            // 6. Envio
             TEnviNFe enviNFe = new TEnviNFe();
             enviNFe.setVersao("4.00");
             enviNFe.setIdLote("1");
@@ -134,7 +114,6 @@ public class NfeService {
 
             TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFe, DocumentoEnum.NFE);
 
-            // 7. Retorno
             String status = retorno.getProtNFe().getInfProt().getCStat();
             String motivo = retorno.getProtNFe().getInfProt().getXMotivo();
 
@@ -152,18 +131,10 @@ public class NfeService {
                 throw new ValidationException("Erro Sefaz: " + status + " - " + motivo);
             }
 
-            return new NfceResponseDTO(
-                    venda.getIdVenda(),
-                    status,
-                    motivo,
-                    chaveAcesso,
-                    protocolo,
-                    venda.getXmlNota(),
-                    null
-            );
+            return new NfceResponseDTO(venda.getIdVenda(), status, motivo, chaveAcesso, protocolo, venda.getXmlNota(), null);
 
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Erro ao emitir NF-e", e);
             throw new ValidationException("Erro ao emitir NF-e: " + e.getMessage());
         }
     }
@@ -175,9 +146,7 @@ public class NfeService {
         String senha = loja.getFiscal().getSenhaCert();
 
         Certificado certificado = CertificadoService.certificadoPfxBytes(certificadoBytes, senha);
-
         EstadosEnum estado = EstadosEnum.valueOf(loja.getEndereco().getUf());
-
         boolean isProducao = "PRODUCAO".equalsIgnoreCase(loja.getFiscal().getAmbiente());
         AmbienteEnum ambiente = isProducao ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO;
 
@@ -186,21 +155,8 @@ public class NfeService {
 
     private NfceResponseDTO simularNfe(Venda venda, ConfiguracaoLoja config) {
         String chaveFake = "35230900000000000000550010000000011000000001";
-
-        return new NfceResponseDTO(
-                venda.getIdVenda(),
-                "100",
-                "AUTORIZADO (SIMULACAO)",
-                chaveFake,
-                "PROTOCOLO_FAKE",
-                "<xml>NFe Simulada</xml>",
-                null
-        );
+        return new NfceResponseDTO(venda.getIdVenda(), "100", "AUTORIZADO (SIMULACAO)", chaveFake, "PROTOCOLO_FAKE", "<xml>NFe Simulada</xml>", null);
     }
-
-    // --- Placeholders XML (Métodos Auxiliares) ---
-    // (Pode copiar os mesmos métodos 'montarIde', 'montarEmit', etc do arquivo anterior se preferir,
-    // mas aqui estão versões funcionais simplificadas para evitar o erro de compilação)
 
     private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe config, String cnf, String nNF, String dv, String modelo, String serie) {
         TNFe.InfNFe.Ide ide = new TNFe.InfNFe.Ide();
@@ -270,6 +226,7 @@ public class NfeService {
     }
 
     private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itens) { return Collections.emptyList(); }
+
     private TNFe.InfNFe.Total montarTotal(Venda venda) {
         TNFe.InfNFe.Total total = new TNFe.InfNFe.Total();
         TNFe.InfNFe.Total.ICMSTot icms = new TNFe.InfNFe.Total.ICMSTot();
@@ -280,11 +237,13 @@ public class NfeService {
         total.setICMSTot(icms);
         return total;
     }
+
     private TNFe.InfNFe.Transp montarTransp() {
         TNFe.InfNFe.Transp t = new TNFe.InfNFe.Transp();
         t.setModFrete("9");
         return t;
     }
+
     private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pags, BigDecimal tot) {
         TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
         TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();

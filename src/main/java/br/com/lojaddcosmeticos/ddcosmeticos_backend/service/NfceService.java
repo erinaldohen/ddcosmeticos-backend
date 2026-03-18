@@ -2,16 +2,14 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEmissao; // <--- AGORA USA O NOSSO ENUM
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEmissao;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PagamentoVenda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 
-// Bibliotecas NFe (Apenas imports utilitários e de configuração)
 import br.com.swconsultoria.certificado.Certificado;
 import br.com.swconsultoria.certificado.CertificadoService;
 import br.com.swconsultoria.nfe.Nfe;
@@ -19,16 +17,10 @@ import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
 import br.com.swconsultoria.nfe.dom.enuns.DocumentoEnum;
 import br.com.swconsultoria.nfe.dom.enuns.EstadosEnum;
 import br.com.swconsultoria.nfe.dom.enuns.AmbienteEnum;
+import br.com.swconsultoria.nfe.schema_4.consStatServ.TRetConsStatServ;
 import br.com.swconsultoria.nfe.util.XmlNfeUtil;
 
-// Imports do Schema XML (Essenciais para montar a nota)
 import br.com.swconsultoria.nfe.schema_4.enviNFe.*;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det.Prod;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det.Imposto;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det.Imposto.ICMS;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det.Imposto.PIS;
-import br.com.swconsultoria.nfe.schema_4.enviNFe.TNFe.InfNFe.Det.Imposto.COFINS;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,29 +44,49 @@ public class NfceService {
     private VendaRepository vendaRepository;
 
     @Autowired
-    private ConfiguracaoLojaRepository configuracaoLojaRepository;
+    private ConfiguracaoLojaService configuracaoLojaService; // A FONTE ÚNICA DE VERDADE
 
     @Autowired
     private TributacaoService tributacaoService;
 
+    // =========================================================================
+    // STATUS SEFAZ (PING NFC-e)
+    // =========================================================================
+    public String consultarStatusSefaz() throws Exception {
+        // Agora busca a configuração exata que foi salva, independente do ID no banco
+        ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
+
+        if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
+            log.warn("Certificado não encontrado na base de dados para a NFC-e.");
+            return "Ambiente: SIMULACAO (Sem Certificado) | Status: 107 - Serviço em Operação (Simulado)";
+        }
+
+        try {
+            ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
+            TRetConsStatServ retorno = Nfe.statusServico(configNfe, DocumentoEnum.NFCE);
+
+            return "Ambiente: " + configNfe.getAmbiente() +
+                    " | Status: " + retorno.getCStat() +
+                    " - " + retorno.getXMotivo();
+
+        } catch (Exception e) {
+            log.error("Erro ao consultar Status SEFAZ NFC-e: ", e);
+            throw new ValidationException("Falha de comunicação com a SEFAZ: " + e.getMessage());
+        }
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
-        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L)
-                .orElseThrow(() -> new ValidationException("Loja não configurada."));
+        ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
 
-        // Se não tiver certificado, simula em DEV
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
             return simularEmissaoEmDev(venda, configLoja);
         }
 
         try {
-            // Tenta emissão NORMAL (Tipo 1)
             return processarEmissao(venda, configLoja, TipoEmissao.NORMAL);
-
         } catch (Exception e) {
             log.error("🔴 Falha na emissão Online. Tentando Contingência Offline. Erro: {}", e.getMessage());
-
-            // Se for erro de rede, tenta OFFLINE (Tipo 9)
             if (isErroDeConexao(e)) {
                 try {
                     return processarEmissao(venda, configLoja, TipoEmissao.OFFLINE);
@@ -83,18 +95,15 @@ public class NfceService {
                     throw new ValidationException("Erro Crítico na Contingência: " + exContingencia.getMessage());
                 }
             } else {
-                // Se não for rede (ex: dados inválidos), estoura o erro
                 throw new ValidationException("Erro na emissão NFC-e: " + e.getMessage());
             }
         }
     }
 
     private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja, TipoEmissao tipoEmissao) throws Exception {
-        // 1. Configurações Iniciais
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
 
-        // 2. Dados Básicos
-        String modelo = "65"; // NFC-e
+        String modelo = "65";
         String serie = String.valueOf(configLoja.getFiscal().getSerieProducao());
         if (!configNfe.getAmbiente().equals(AmbienteEnum.PRODUCAO)) {
             serie = String.valueOf(configLoja.getFiscal().getSerieHomologacao());
@@ -102,30 +111,13 @@ public class NfceService {
 
         String nNF = String.valueOf(venda.getIdVenda() + 1000);
         String cnf = String.format("%08d", new Random().nextInt(99999999));
-
-        String cnpjEmitente = "00000000000000";
-        if (configLoja.getLoja() != null && configLoja.getLoja().getCnpj() != null) {
-            cnpjEmitente = configLoja.getLoja().getCnpj().replaceAll("\\D", "");
-        }
-
-        // AQUI ESTÁ A CORREÇÃO: Usamos o .getCodigo() do nosso Enum ("1" ou "9")
+        String cnpjEmitente = (configLoja.getLoja() != null && configLoja.getLoja().getCnpj() != null) ? configLoja.getLoja().getCnpj().replaceAll("\\D", "") : "00000000000000";
         String tpEmisStr = tipoEmissao.getCodigo();
 
-        // 3. Montar Chave de Acesso
-        String chaveSemDigito = gerarChaveAcesso(
-                configNfe.getEstado().getCodigoUF(),
-                LocalDateTime.now(),
-                cnpjEmitente,
-                modelo,
-                serie,
-                nNF,
-                tpEmisStr,
-                cnf
-        );
+        String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, modelo, serie, nNF, tpEmisStr, cnf);
         String dv = calcularDV(chaveSemDigito);
         String chaveAcesso = chaveSemDigito + dv;
 
-        // 4. Preencher o XML
         TNFe nfe = new TNFe();
         TNFe.InfNFe infNFe = new TNFe.InfNFe();
         infNFe.setId("NFe" + chaveAcesso);
@@ -134,96 +126,58 @@ public class NfceService {
         infNFe.setIde(montarIde(configNfe, cnf, nNF, dv, modelo, serie, tpEmisStr));
         infNFe.setEmit(montarEmit(configLoja));
 
-        if (venda.getCliente() != null) {
-            infNFe.setDest(montarDest(venda.getCliente()));
-        }
+        if (venda.getCliente() != null) infNFe.setDest(montarDest(venda.getCliente()));
 
-        // Itens
         infNFe.getDet().addAll(montarDetalhes(venda.getItens()));
-
-        // Totais e Pagamentos
         infNFe.setTotal(montarTotal(venda));
         infNFe.setTransp(montarTransp());
         infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal()));
 
-        // Lei da Transparência (Rodapé)
         TNFe.InfNFe.InfAdic infAdic = new TNFe.InfNFe.InfAdic();
-        String textoTributos = tributacaoService.calcularTextoTransparencia(venda);
-        infAdic.setInfCpl(textoTributos);
+        infAdic.setInfCpl(tributacaoService.calcularTextoTransparencia(venda));
         infNFe.setInfAdic(infAdic);
-
         nfe.setInfNFe(infNFe);
 
-        // 5. Envio ou Contingência
-        String status = "";
-        String motivo = "";
-        String protocolo = "";
-        String xmlFinal = "";
+        String status = ""; String motivo = ""; String protocolo = ""; String xmlFinal = "";
 
         if (tipoEmissao == TipoEmissao.OFFLINE) {
-            // Lógica de Contingência (Não envia, só assina e salva)
-            status = "100";
-            motivo = "Emitida em Contingência Offline";
-            // Nota: Em produção real, deve-se assinar o XML aqui usando AssinaturaDigital.assinar(...)
+            status = "100"; motivo = "Emitida em Contingência Offline";
             xmlFinal = "XML ASSINADO PENDENTE DE ENVIO (SIMULADO)";
-
             venda.setStatusNfce(StatusFiscal.CONTINGENCIA);
             venda.setMensagemRejeicao("Aguardando internet para transmissão.");
             vendaRepository.save(venda);
         } else {
-            // Lógica Normal (Envia para SEFAZ)
             TEnviNFe enviNFe = new TEnviNFe();
-            enviNFe.setVersao("4.00");
-            enviNFe.setIdLote("1");
-            enviNFe.setIndSinc("1");
-            enviNFe.getNFe().add(nfe);
+            enviNFe.setVersao("4.00"); enviNFe.setIdLote("1"); enviNFe.setIndSinc("1"); enviNFe.getNFe().add(nfe);
 
             TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFe, DocumentoEnum.NFCE);
-
             status = retorno.getProtNFe().getInfProt().getCStat();
             motivo = retorno.getProtNFe().getInfProt().getXMotivo();
-
-            if (retorno.getProtNFe().getInfProt().getNProt() != null) {
-                protocolo = retorno.getProtNFe().getInfProt().getNProt();
-            }
-
+            if (retorno.getProtNFe().getInfProt().getNProt() != null) protocolo = retorno.getProtNFe().getInfProt().getNProt();
             xmlFinal = XmlNfeUtil.criaNfeProc(enviNFe, retorno.getProtNFe());
 
-            if (!status.equals("100")) {
-                throw new ValidationException("Rejeição SEFAZ: " + status + " - " + motivo);
-            }
-
+            if (!status.equals("100")) throw new ValidationException("Rejeição SEFAZ: " + status + " - " + motivo);
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             vendaRepository.save(venda);
         }
 
-        // 6. Gerar URL do QR Code
-        String cscId;
-        if ("PRODUCAO".equalsIgnoreCase(configLoja.getFiscal().getAmbiente())) {
-            cscId = configLoja.getFiscal().getCscIdProducao();
-        } else {
-            cscId = configLoja.getFiscal().getCscIdHomologacao();
-        }
-
-        // Em produção, isso precisa incluir o Hash SHA-1
+        String cscId = "PRODUCAO".equalsIgnoreCase(configLoja.getFiscal().getAmbiente()) ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
         String urlQrCode = "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=" + chaveAcesso + "|2|1|1|" + cscId;
 
-        return new NfceResponseDTO(
-                venda.getIdVenda(),
-                status,
-                motivo,
-                chaveAcesso,
-                protocolo,
-                xmlFinal,
-                urlQrCode
-        );
+        return new NfceResponseDTO(venda.getIdVenda(), status, motivo, chaveAcesso, protocolo, xmlFinal, urlQrCode);
     }
 
-    // ================= MÉTODOS PRIVADOS DE MONTAGEM =================
+    private ConfiguracoesNfe iniciarConfiguracoesNfe(ConfiguracaoLoja loja) throws Exception {
+        byte[] certificadoBytes = loja.getFiscal().getArquivoCertificado();
+        String senha = loja.getFiscal().getSenhaCert();
+        Certificado certificado = CertificadoService.certificadoPfxBytes(certificadoBytes, senha);
+        EstadosEnum estado = EstadosEnum.valueOf(loja.getEndereco().getUf());
+        AmbienteEnum ambiente = "PRODUCAO".equalsIgnoreCase(loja.getFiscal().getAmbiente()) ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO;
+        return ConfiguracoesNfe.criarConfiguracoes(estado, ambiente, certificado, "schemas");
+    }
 
     private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itensVenda) {
         List<TNFe.InfNFe.Det> detalhes = new ArrayList<>();
-        // Instancia a fábrica de objetos do schema para criar os JAXBElements
         ObjectFactory factory = new ObjectFactory();
         int numeroItem = 1;
 
@@ -231,77 +185,40 @@ public class NfceService {
             TNFe.InfNFe.Det det = new TNFe.InfNFe.Det();
             det.setNItem(String.valueOf(numeroItem));
 
-            // 1. Produto
             TNFe.InfNFe.Det.Prod prod = new TNFe.InfNFe.Det.Prod();
             prod.setCProd(item.getProduto().getId().toString());
             prod.setCEAN("SEM GTIN");
             prod.setXProd(item.getProduto().getDescricao());
-
-            String ncm = (item.getProduto().getNcm() != null) ? item.getProduto().getNcm().replaceAll("\\D", "") : "00000000";
-            prod.setNCM(ncm);
-
-            if (item.getProduto().getCest() != null) {
-                prod.setCEST(item.getProduto().getCest().replaceAll("\\D", ""));
-            }
-
+            prod.setNCM((item.getProduto().getNcm() != null) ? item.getProduto().getNcm().replaceAll("\\D", "") : "00000000");
+            if (item.getProduto().getCest() != null) prod.setCEST(item.getProduto().getCest().replaceAll("\\D", ""));
             prod.setCFOP("5102");
-
             String uCom = item.getProduto().getUnidade() != null ? item.getProduto().getUnidade() : "UN";
             prod.setUCom(uCom);
-
             prod.setQCom(item.getQuantidade().setScale(4, RoundingMode.HALF_UP).toString());
             prod.setVUnCom(item.getPrecoUnitario().setScale(2, RoundingMode.HALF_UP).toString());
             prod.setVProd(item.getPrecoUnitario().multiply(item.getQuantidade()).setScale(2, RoundingMode.HALF_UP).toString());
-
-            prod.setCEANTrib("SEM GTIN");
-            prod.setUTrib(uCom);
-            prod.setQTrib(prod.getQCom());
-            prod.setVUnTrib(prod.getVUnCom());
-            prod.setIndTot("1");
+            prod.setCEANTrib("SEM GTIN"); prod.setUTrib(uCom); prod.setQTrib(prod.getQCom()); prod.setVUnTrib(prod.getVUnCom()); prod.setIndTot("1");
             det.setProd(prod);
 
-            // 2. Impostos
             TNFe.InfNFe.Det.Imposto imposto = new TNFe.InfNFe.Det.Imposto();
 
-            // --- ICMS (Simples Nacional 102) ---
             TNFe.InfNFe.Det.Imposto.ICMS icmsWrapper = new TNFe.InfNFe.Det.Imposto.ICMS();
             TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 icms102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
-            icms102.setOrig("0");
-            icms102.setCSOSN("102");
-
+            icms102.setOrig("0"); icms102.setCSOSN("102");
             icmsWrapper.setICMSSN102(icms102);
+            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoICMS(icmsWrapper));
 
-            // CORREÇÃO CRÍTICA AQUI: Embrulhar com JAXBElement usando a Factory
-            javax.xml.bind.JAXBElement<TNFe.InfNFe.Det.Imposto.ICMS> icmsElement = factory.createTNFeInfNFeDetImpostoICMS(icmsWrapper);
-            imposto.getContent().add(icmsElement);
-
-            // --- PIS ---
             TNFe.InfNFe.Det.Imposto.PIS pisWrapper = new TNFe.InfNFe.Det.Imposto.PIS();
             TNFe.InfNFe.Det.Imposto.PIS.PISOutr pisOutr = new TNFe.InfNFe.Det.Imposto.PIS.PISOutr();
-            pisOutr.setCST("99");
-            pisOutr.setVBC("0.00");
-            pisOutr.setPPIS("0.00");
-            pisOutr.setVPIS("0.00");
-
+            pisOutr.setCST("99"); pisOutr.setVBC("0.00"); pisOutr.setPPIS("0.00"); pisOutr.setVPIS("0.00");
             pisWrapper.setPISOutr(pisOutr);
+            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoPIS(pisWrapper));
 
-            // CORREÇÃO CRÍTICA AQUI
-            javax.xml.bind.JAXBElement<TNFe.InfNFe.Det.Imposto.PIS> pisElement = factory.createTNFeInfNFeDetImpostoPIS(pisWrapper);
-            imposto.getContent().add(pisElement);
-
-            // --- COFINS ---
             TNFe.InfNFe.Det.Imposto.COFINS cofinsWrapper = new TNFe.InfNFe.Det.Imposto.COFINS();
             TNFe.InfNFe.Det.Imposto.COFINS.COFINSOutr cofinsOutr = new TNFe.InfNFe.Det.Imposto.COFINS.COFINSOutr();
-            cofinsOutr.setCST("99");
-            cofinsOutr.setVBC("0.00");
-            cofinsOutr.setPCOFINS("0.00");
-            cofinsOutr.setVCOFINS("0.00");
-
+            cofinsOutr.setCST("99"); cofinsOutr.setVBC("0.00"); cofinsOutr.setPCOFINS("0.00"); cofinsOutr.setVCOFINS("0.00");
             cofinsWrapper.setCOFINSOutr(cofinsOutr);
-
-            // CORREÇÃO CRÍTICA AQUI
-            javax.xml.bind.JAXBElement<TNFe.InfNFe.Det.Imposto.COFINS> cofinsElement = factory.createTNFeInfNFeDetImpostoCOFINS(cofinsWrapper);
-            imposto.getContent().add(cofinsElement);
+            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoCOFINS(cofinsWrapper));
 
             det.setImposto(imposto);
             detalhes.add(det);
@@ -325,21 +242,9 @@ public class NfceService {
         return total;
     }
 
-    private ConfiguracoesNfe iniciarConfiguracoesNfe(ConfiguracaoLoja loja) throws Exception {
-        byte[] certificadoBytes = loja.getFiscal().getArquivoCertificado();
-        String senha = loja.getFiscal().getSenhaCert();
-        Certificado certificado = CertificadoService.certificadoPfxBytes(certificadoBytes, senha);
-        EstadosEnum estado = EstadosEnum.valueOf(loja.getEndereco().getUf());
-        boolean isProducao = "PRODUCAO".equalsIgnoreCase(loja.getFiscal().getAmbiente());
-        AmbienteEnum ambiente = isProducao ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO;
-        return ConfiguracoesNfe.criarConfiguracoes(estado, ambiente, certificado, "schemas");
-    }
-
     private NfceResponseDTO simularEmissaoEmDev(Venda venda, ConfiguracaoLoja config) {
         String cnpj = "00000000000000";
-        if (config.getLoja() != null && config.getLoja().getCnpj() != null) {
-            cnpj = config.getLoja().getCnpj().replaceAll("\\D", "");
-        }
+        if (config.getLoja() != null && config.getLoja().getCnpj() != null) cnpj = config.getLoja().getCnpj().replaceAll("\\D", "");
         String chaveFake = "352309" + cnpj + "650010000000011" + String.format("%09d", venda.getIdVenda());
         return new NfceResponseDTO(venda.getIdVenda(), "100", "EMISSAO SIMULADA", chaveFake, "1234567890", "<xml>Simulacao</xml>", "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx");
     }
@@ -351,26 +256,11 @@ public class NfceService {
 
     private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe config, String cnf, String nNF, String dv, String modelo, String serie, String tpEmis) {
         TNFe.InfNFe.Ide ide = new TNFe.InfNFe.Ide();
-        ide.setCUF(config.getEstado().getCodigoUF());
-        ide.setCNF(cnf);
-        ide.setNatOp("VENDA CONSUMIDOR");
-        ide.setMod(modelo);
-        ide.setSerie(serie);
-        ide.setNNF(nNF);
-        ide.setDhEmi(XmlNfeUtil.dataNfe(LocalDateTime.now()));
-        ide.setTpNF("1");
-        ide.setIdDest("1");
-        ide.setCMunFG("2611606");
-        ide.setTpImp("4");
-        ide.setTpEmis(tpEmis);
-        ide.setCDV(dv);
-        ide.setTpAmb(config.getAmbiente().getCodigo());
-        ide.setFinNFe("1");
-        ide.setIndFinal("1");
-        ide.setIndPres("1");
-        ide.setProcEmi("0");
-        ide.setVerProc("1.0");
-        // Se for contingência (9), adiciona data e justificativa
+        ide.setCUF(config.getEstado().getCodigoUF()); ide.setCNF(cnf); ide.setNatOp("VENDA CONSUMIDOR");
+        ide.setMod(modelo); ide.setSerie(serie); ide.setNNF(nNF); ide.setDhEmi(XmlNfeUtil.dataNfe(LocalDateTime.now()));
+        ide.setTpNF("1"); ide.setIdDest("1"); ide.setCMunFG("2611606"); ide.setTpImp("4");
+        ide.setTpEmis(tpEmis); ide.setCDV(dv); ide.setTpAmb(config.getAmbiente().getCodigo());
+        ide.setFinNFe("1"); ide.setIndFinal("1"); ide.setIndPres("1"); ide.setProcEmi("0"); ide.setVerProc("1.0");
         if (tpEmis.equals("9")) {
             ide.setDhCont(XmlNfeUtil.dataNfe(LocalDateTime.now()));
             ide.setXJust("Falha de conexao com a internet");
@@ -396,9 +286,7 @@ public class NfceService {
             ender.setUF(TUfEmi.PE);
             ender.setCEP(config.getEndereco().getCep() != null ? config.getEndereco().getCep().replaceAll("\\D", "") : "00000000");
         }
-        ender.setCPais("1058");
-        ender.setXPais("BRASIL");
-        emit.setEnderEmit(ender);
+        ender.setCPais("1058"); ender.setXPais("BRASIL"); emit.setEnderEmit(ender);
         return emit;
     }
 
@@ -422,8 +310,7 @@ public class NfceService {
     private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pags, BigDecimal total) {
         TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
         TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
-        det.setTPag("01");
-        det.setVPag(total != null ? total.toString() : "0.00");
+        det.setTPag("01"); det.setVPag(total != null ? total.toString() : "0.00");
         pag.getDetPag().add(det);
         return pag;
     }
@@ -432,21 +319,17 @@ public class NfceService {
         StringBuilder chave = new StringBuilder();
         chave.append(String.format("%02d", Integer.parseInt(cuf)));
         chave.append(data.format(DateTimeFormatter.ofPattern("yyMM")));
-        chave.append(cnpj);
-        chave.append(mod);
+        chave.append(cnpj); chave.append(mod);
         chave.append(String.format("%03d", Integer.parseInt(serie)));
         chave.append(String.format("%09d", Long.parseLong(nnf)));
-        chave.append(tpEmis);
-        chave.append(cnf);
+        chave.append(tpEmis); chave.append(cnf);
         return chave.toString();
     }
 
     private String calcularDV(String chave) {
-        int soma = 0;
-        int peso = 2;
+        int soma = 0; int peso = 2;
         for (int i = chave.length() - 1; i >= 0; i--) {
-            int num = Character.getNumericValue(chave.charAt(i));
-            soma += num * peso;
+            soma += Character.getNumericValue(chave.charAt(i)) * peso;
             peso++;
             if (peso > 9) peso = 2;
         }
@@ -455,27 +338,15 @@ public class NfceService {
         return (dv >= 10) ? "0" : String.valueOf(dv);
     }
 
-    /**
-     * Método chamado pelo Robô (Scheduler) para tentar enviar notas paradas na contingência.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transmitirNotaContingencia(Venda venda) {
         try {
             log.info("📡 SCHEDULER: Tentando transmitir nota de contingência ID: {}", venda.getIdVenda());
-
-            ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L)
-                    .orElseThrow(() -> new ValidationException("Loja não configurada."));
-
-            // Tenta processar novamente como Emissão NORMAL (agora que supomos ter internet)
-            // Isso vai gerar um novo XML online e tentar autorizar na SEFAZ
+            ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
             processarEmissao(venda, configLoja, TipoEmissao.NORMAL);
-
             log.info("✅ Nota ID {} recuperada da contingência e autorizada com sucesso!", venda.getIdVenda());
-
         } catch (Exception e) {
             log.error("❌ Falha ao transmitir nota de contingência {}: {}", venda.getIdVenda(), e.getMessage());
-            // Mantém no status CONTINGENCIA para tentar novamente no próximo ciclo (5 min)
-            // Se for erro definitivo (ex: erro de cadastro), poderia mudar status para ERRO_CONTINGENCIA
         }
     }
 }

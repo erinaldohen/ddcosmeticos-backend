@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfiguracaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.BackupService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ConfiguracaoLojaService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -16,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.file.Path;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/configuracoes")
 public class ConfiguracaoLojaController {
@@ -26,21 +28,18 @@ public class ConfiguracaoLojaController {
     @Autowired
     private BackupService backupService;
 
-    // 1. GET - Buscar
     @GetMapping
     public ResponseEntity<ConfiguracaoDTO> buscar() {
         ConfiguracaoDTO config = service.buscarConfiguracaoDTO();
         return ResponseEntity.ok(config);
     }
 
-    // 2. PUT - Atualizar
     @PutMapping
     public ResponseEntity<ConfiguracaoDTO> atualizar(@RequestBody ConfiguracaoDTO dto) {
         ConfiguracaoDTO atualizada = service.salvar(dto);
         return ResponseEntity.ok(atualizada);
     }
 
-    // 3. Upload Logo
     @PostMapping("/logo")
     public ResponseEntity<String> uploadLogo(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) return ResponseEntity.badRequest().body("Arquivo vazio.");
@@ -48,7 +47,6 @@ public class ConfiguracaoLojaController {
         return ResponseEntity.ok(logoUrl);
     }
 
-    // 4. Upload Certificado (CORRIGIDO PARA RETORNAR A VALIDADE)
     @PostMapping("/certificado")
     public ResponseEntity<?> uploadCertificado(
             @RequestParam("file") MultipartFile file,
@@ -59,24 +57,21 @@ public class ConfiguracaoLojaController {
         }
 
         try {
-            // Repassa para o service e captura as datas de validade
             Map<String, Object> resposta = service.salvarCertificado(file, senha);
             return ResponseEntity.ok(resposta);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Erro ao processar certificado PFX: ", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("message", "Erro ao validar certificado PFX: " + e.getMessage()));
         }
     }
 
-    // 5. Manutenção: Otimizar Banco
     @PostMapping("/manutencao/otimizar")
     public ResponseEntity<Void> otimizarBanco() {
         System.gc();
         return ResponseEntity.ok().build();
     }
 
-    // 6. Manutenção: Download de Backup
     @GetMapping("/manutencao/backup")
     public ResponseEntity<Resource> baixarBackup() {
         try {
@@ -92,7 +87,7 @@ public class ConfiguracaoLojaController {
                 return ResponseEntity.notFound().build();
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Erro ao gerar backup: ", e);
             return ResponseEntity.internalServerError().build();
         }
     }

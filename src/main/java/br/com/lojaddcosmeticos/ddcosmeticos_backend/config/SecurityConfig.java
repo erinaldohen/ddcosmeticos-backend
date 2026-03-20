@@ -82,11 +82,8 @@ public class SecurityConfig {
                         // Operações de Venda e Caixa
                         .requestMatchers(HttpMethod.POST, "/api/v1/vendas/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").authenticated()
-                        // No SecurityConfig.java
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/caixas/**").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").authenticated()
 
                         // 3. RESTRITO A ADMIN (Escrita e Gestão)
                         // CORREÇÃO APLICADA: Substituído hasRole por hasAuthority para evitar o prefixo duplo "ROLE_ROLE_ADMIN"
@@ -129,14 +126,24 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // CORREÇÃO DE SEGURANÇA APLICADA:
-        // Como 'allowCredentials' está ativo (necessário para cookies/sessões seguras),
-        // o Spring Security não permite origens curinga (*). O porto exato do React foi configurado.
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+        // ATUALIZAÇÃO CIRÚRGICA: Permite o acesso via Localhost e via IP (Mobile) simultaneamente,
+        // mantendo a compatibilidade com 'allowCredentials = true'.
+        configuration.setAllowedOriginPatterns(Arrays.asList(
+                "http://localhost:[*]",
+                "http://127.0.0.1:[*]",
+                "http://192.168.*:[*]", // Permite rede local para acesso Mobile
+                "http://10.0.*:[*]",
+                "http://172.16.*:[*]",
+                "https://*.trycloudflare.com", // Liberta os túneis da Cloudflare
+                "https://*.loca.lt"
+        ));
 
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"));
-        configuration.setExposedHeaders(List.of("Authorization"));
+
+        // ATUALIZAÇÃO: Expor o Content-Disposition para que o PDF da NFC-e baixe no telemóvel
+        configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Disposition"));
+
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

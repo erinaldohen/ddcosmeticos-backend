@@ -129,12 +129,12 @@ public class SecurityConfig {
         // ATUALIZAÇÃO CIRÚRGICA: Permite o acesso via Localhost e via IP (Mobile) simultaneamente,
         // mantendo a compatibilidade com 'allowCredentials = true'.
         configuration.setAllowedOriginPatterns(Arrays.asList(
-                "http://localhost:[*]",
-                "http://127.0.0.1:[*]",
-                "http://192.168.*:[*]", // Permite rede local para acesso Mobile
-                "http://10.0.*:[*]",
-                "http://172.16.*:[*]",
-                "https://*.trycloudflare.com", // Liberta os túneis da Cloudflare
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "http://192.168.*:*", // Permite rede local para acesso Mobile
+                "http://10.0.*:*",
+                "http://172.16.*:*",
+                "https://*.trycloudflare.com",
                 "https://*.loca.lt"
         ));
 

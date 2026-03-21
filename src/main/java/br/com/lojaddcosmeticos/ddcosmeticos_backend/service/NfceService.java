@@ -4,10 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoEmissao;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PagamentoVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 
 import br.com.swconsultoria.certificado.Certificado;
@@ -19,7 +16,6 @@ import br.com.swconsultoria.nfe.dom.enuns.EstadosEnum;
 import br.com.swconsultoria.nfe.dom.enuns.AmbienteEnum;
 import br.com.swconsultoria.nfe.schema_4.consStatServ.TRetConsStatServ;
 import br.com.swconsultoria.nfe.util.XmlNfeUtil;
-
 import br.com.swconsultoria.nfe.schema_4.enviNFe.*;
 
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -40,41 +37,25 @@ import java.util.Random;
 @Slf4j
 public class NfceService {
 
-    @Autowired
-    private VendaRepository vendaRepository;
+    @Autowired private VendaRepository vendaRepository;
+    @Autowired private ConfiguracaoLojaService configuracaoLojaService;
+    @Autowired private TributacaoService tributacaoService;
 
-    @Autowired
-    private ConfiguracaoLojaService configuracaoLojaService; // A FONTE ÚNICA DE VERDADE
-
-    @Autowired
-    private TributacaoService tributacaoService;
-
-    // =========================================================================
-    // STATUS SEFAZ (PING NFC-e)
-    // =========================================================================
+    /**
+     * Consulta o status do serviço na SEFAZ (SVRS para PE)
+     */
     public String consultarStatusSefaz() throws Exception {
-        // Agora busca a configuração exata que foi salva, independente do ID no banco
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
+        if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) return "SIMULACAO";
 
-        if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
-            log.warn("Certificado não encontrado na base de dados para a NFC-e.");
-            return "Ambiente: SIMULACAO (Sem Certificado) | Status: 107 - Serviço em Operação (Simulado)";
-        }
-
-        try {
-            ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
-            TRetConsStatServ retorno = Nfe.statusServico(configNfe, DocumentoEnum.NFCE);
-
-            return "Ambiente: " + configNfe.getAmbiente() +
-                    " | Status: " + retorno.getCStat() +
-                    " - " + retorno.getXMotivo();
-
-        } catch (Exception e) {
-            log.error("Erro ao consultar Status SEFAZ NFC-e: ", e);
-            throw new ValidationException("Falha de comunicação com a SEFAZ: " + e.getMessage());
-        }
+        ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
+        TRetConsStatServ retorno = Nfe.statusServico(configNfe, DocumentoEnum.NFCE);
+        return "Status: " + retorno.getCStat() + " - " + retorno.getXMotivo();
     }
 
+    /**
+     * Ponto de entrada para emissão da NFC-e
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
@@ -82,223 +63,246 @@ public class NfceService {
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
             return simularEmissaoEmDev(venda, configLoja);
         }
-
         try {
             return processarEmissao(venda, configLoja, TipoEmissao.NORMAL);
         } catch (Exception e) {
-            log.error("🔴 Falha na emissão Online. Tentando Contingência Offline. Erro: {}", e.getMessage());
-            if (isErroDeConexao(e)) {
-                try {
-                    return processarEmissao(venda, configLoja, TipoEmissao.OFFLINE);
-                } catch (Exception exContingencia) {
-                    log.error("💀 Falha crítica até na contingência!", exContingencia);
-                    throw new ValidationException("Erro Crítico na Contingência: " + exContingencia.getMessage());
-                }
-            } else {
-                throw new ValidationException("Erro na emissão NFC-e: " + e.getMessage());
-            }
+            log.error("Falha na emissão NFC-e: {}", e.getMessage());
+            throw new ValidationException("Erro na emissão NFC-e: " + e.getMessage());
         }
     }
 
     private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja, TipoEmissao tipoEmissao) throws Exception {
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
-
         String modelo = "65";
-        String serie = String.valueOf(configLoja.getFiscal().getSerieProducao());
-        if (!configNfe.getAmbiente().equals(AmbienteEnum.PRODUCAO)) {
-            serie = String.valueOf(configLoja.getFiscal().getSerieHomologacao());
-        }
+
+        // Uso da lógica centralizada na entidade para evitar erro de símbolo
+        String serie = String.valueOf(configLoja.isProducao() ?
+                configLoja.getFiscal().getSerieProducao() : configLoja.getFiscal().getSerieHomologacao());
 
         String nNF = String.valueOf(venda.getIdVenda() + 1000);
         String cnf = String.format("%08d", new Random().nextInt(99999999));
-        String cnpjEmitente = (configLoja.getLoja() != null && configLoja.getLoja().getCnpj() != null) ? configLoja.getLoja().getCnpj().replaceAll("\\D", "") : "00000000000000";
-        String tpEmisStr = tipoEmissao.getCodigo();
+        String cnpjEmitente = configLoja.getCnpjLimpo();
 
-        String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, modelo, serie, nNF, tpEmisStr, cnf);
+        String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, modelo, serie, nNF, tipoEmissao.getCodigo(), cnf);
         String dv = calcularDV(chaveSemDigito);
         String chaveAcesso = chaveSemDigito + dv;
 
+        // Montagem do Objeto NFe
         TNFe nfe = new TNFe();
         TNFe.InfNFe infNFe = new TNFe.InfNFe();
         infNFe.setId("NFe" + chaveAcesso);
         infNFe.setVersao("4.00");
-
-        infNFe.setIde(montarIde(configNfe, cnf, nNF, dv, modelo, serie, tpEmisStr));
+        infNFe.setIde(montarIde(configNfe, cnf, nNF, dv, modelo, serie, tipoEmissao.getCodigo()));
         infNFe.setEmit(montarEmit(configLoja));
-
         if (venda.getCliente() != null) infNFe.setDest(montarDest(venda.getCliente()));
-
-        infNFe.getDet().addAll(montarDetalhes(venda.getItens()));
+        infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja));
         infNFe.setTotal(montarTotal(venda));
         infNFe.setTransp(montarTransp());
-        infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal()));
+        infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal(), venda.getTroco()));
 
         TNFe.InfNFe.InfAdic infAdic = new TNFe.InfNFe.InfAdic();
         infAdic.setInfCpl(tributacaoService.calcularTextoTransparencia(venda));
         infNFe.setInfAdic(infAdic);
+        infNFe.setInfRespTec(montarRespTec());
+
         nfe.setInfNFe(infNFe);
 
-        String status = ""; String motivo = ""; String protocolo = ""; String xmlFinal = "";
+        TEnviNFe enviNFe = new TEnviNFe();
+        enviNFe.setVersao("4.00"); enviNFe.setIdLote("1"); enviNFe.setIndSinc("1"); enviNFe.getNFe().add(nfe);
 
-        if (tipoEmissao == TipoEmissao.OFFLINE) {
-            status = "100"; motivo = "Emitida em Contingência Offline";
-            xmlFinal = "XML ASSINADO PENDENTE DE ENVIO (SIMULADO)";
-            venda.setStatusNfce(StatusFiscal.CONTINGENCIA);
-            venda.setMensagemRejeicao("Aguardando internet para transmissão.");
-            vendaRepository.save(venda);
-        } else {
-            TEnviNFe enviNFe = new TEnviNFe();
-            enviNFe.setVersao("4.00"); enviNFe.setIdLote("1"); enviNFe.setIndSinc("1"); enviNFe.getNFe().add(nfe);
-
-            TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFe, DocumentoEnum.NFCE);
-            status = retorno.getProtNFe().getInfProt().getCStat();
-            motivo = retorno.getProtNFe().getInfProt().getXMotivo();
-            if (retorno.getProtNFe().getInfProt().getNProt() != null) protocolo = retorno.getProtNFe().getInfProt().getNProt();
-            xmlFinal = XmlNfeUtil.criaNfeProc(enviNFe, retorno.getProtNFe());
-
-            if (!status.equals("100")) throw new ValidationException("Rejeição SEFAZ: " + status + " - " + motivo);
-            venda.setStatusNfce(StatusFiscal.AUTORIZADA);
-            vendaRepository.save(venda);
+        // 1º PASSO: ASSINAR O XML (Necessário para o QR Code)
+        try {
+            String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
+            String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
+            enviNFe = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
+            nfe = enviNFe.getNFe().get(0);
+        } catch (Exception e) {
+            log.error("Erro fatal ao assinar XML: {}", e.getMessage());
+            throw new ValidationException("Falha na Assinatura Digital do XML.");
         }
 
-        String cscId = "PRODUCAO".equalsIgnoreCase(configLoja.getFiscal().getAmbiente()) ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
-        String urlQrCode = "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=" + chaveAcesso + "|2|1|1|" + cscId;
+        // =========================================================
+        // 2º PASSO: CONSTRUÇÃO QR CODE (REGRAS SVRS / PE)
+        // =========================================================
+        String cscIdRaw = configLoja.isProducao() ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
+        String cscTokenRaw = configLoja.isProducao() ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
 
-        return new NfceResponseDTO(venda.getIdVenda(), status, motivo, chaveAcesso, protocolo, xmlFinal, urlQrCode);
+        if (cscIdRaw != null && !cscIdRaw.trim().isEmpty() && cscTokenRaw != null && !cscTokenRaw.trim().isEmpty()) {
+            try {
+                String tokenLimpo = cscTokenRaw.trim().replaceAll("\\s+", "");
+                String cscIdFormatado = String.format("%06d", Integer.parseInt(cscIdRaw.trim().replaceAll("\\D", "")));
+                String ambiente = configNfe.getAmbiente().getCodigo();
+
+                // Pernambuco exige URLs específicas
+                String urlQrCode = configLoja.isProducao()
+                        ? "http://nfce.sefaz.pe.gov.br/nfce-web/consultarNFCe"
+                        : "http://nfcehomolog.sefaz.pe.gov.br/nfce-web/consultarNFCe";
+
+                String urlChave = configLoja.isProducao()
+                        ? "http://nfce.sefaz.pe.gov.br/nfce/consulta"
+                        : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
+
+                // Cálculo do Hash SHA-1
+                String parametros = chaveAcesso + "|2|" + ambiente + "|" + cscIdFormatado;
+                String hashInput = parametros + tokenLimpo;
+
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+                byte[] hashResult = md.digest(hashInput.getBytes(StandardCharsets.UTF_8));
+                StringBuilder hexFinal = new StringBuilder();
+                for (byte b : hashResult) hexFinal.append(String.format("%02x", b));
+                String hashFinalStr = hexFinal.toString().toUpperCase();
+
+                String qrCodeCompleto = urlQrCode + "?p=" + parametros + "|" + hashFinalStr;
+
+                TNFe.InfNFeSupl supl = new TNFe.InfNFeSupl();
+                supl.setQrCode(qrCodeCompleto);
+                supl.setUrlChave(urlChave);
+                nfe.setInfNFeSupl(supl);
+
+                // Recria o objeto final para garantir a integridade do XML
+                TEnviNFe enviFinal = new TEnviNFe();
+                enviFinal.setVersao("4.00"); enviFinal.setIdLote("1"); enviFinal.setIndSinc("1"); enviFinal.getNFe().add(nfe);
+                String xmlFinal = XmlNfeUtil.objectToXml(enviFinal);
+                enviNFe = XmlNfeUtil.xmlToObject(xmlFinal, TEnviNFe.class);
+
+            } catch (Exception e) {
+                log.error("Falha ao gerar QR Code: ", e);
+            }
+        }
+
+        // =========================================================
+        // 3º PASSO: ENVIAR PARA A SEFAZ
+        // =========================================================
+        TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFe, DocumentoEnum.NFCE);
+
+        if (retorno.getProtNFe() != null && "100".equals(retorno.getProtNFe().getInfProt().getCStat())) {
+            venda.setStatusNfce(StatusFiscal.AUTORIZADA);
+            venda.setChaveAcessoNfce(chaveAcesso);
+            venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFe, retorno.getProtNFe()));
+            vendaRepository.save(venda);
+        } else {
+            String erro = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
+            throw new ValidationException("Sefaz: " + erro);
+        }
+
+        String linkFront = (nfe.getInfNFeSupl() != null) ? nfe.getInfNFeSupl().getQrCode() : "";
+        return new NfceResponseDTO(venda.getIdVenda(), "100", "Sucesso", chaveAcesso, "", venda.getXmlNota(), linkFront);
     }
 
     private ConfiguracoesNfe iniciarConfiguracoesNfe(ConfiguracaoLoja loja) throws Exception {
-        byte[] certificadoBytes = loja.getFiscal().getArquivoCertificado();
-        String senha = loja.getFiscal().getSenhaCert();
-        Certificado certificado = CertificadoService.certificadoPfxBytes(certificadoBytes, senha);
-        EstadosEnum estado = EstadosEnum.valueOf(loja.getEndereco().getUf());
-        AmbienteEnum ambiente = "PRODUCAO".equalsIgnoreCase(loja.getFiscal().getAmbiente()) ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO;
-        return ConfiguracoesNfe.criarConfiguracoes(estado, ambiente, certificado, "schemas");
+        Certificado cert = CertificadoService.certificadoPfxBytes(loja.getFiscal().getArquivoCertificado(), loja.getFiscal().getSenhaCert());
+        AmbienteEnum ambiente = loja.isProducao() ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO;
+        return ConfiguracoesNfe.criarConfiguracoes(EstadosEnum.valueOf(loja.getEndereco().getUf()), ambiente, cert, "schemas");
     }
 
-    private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itensVenda) {
+    private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itensVenda, ConfiguracaoLoja configLoja) {
         List<TNFe.InfNFe.Det> detalhes = new ArrayList<>();
         ObjectFactory factory = new ObjectFactory();
-        int numeroItem = 1;
+        int i = 1;
 
         for (ItemVenda item : itensVenda) {
             TNFe.InfNFe.Det det = new TNFe.InfNFe.Det();
-            det.setNItem(String.valueOf(numeroItem));
+            det.setNItem(String.valueOf(i));
 
             TNFe.InfNFe.Det.Prod prod = new TNFe.InfNFe.Det.Prod();
             prod.setCProd(item.getProduto().getId().toString());
             prod.setCEAN("SEM GTIN");
-            prod.setXProd(item.getProduto().getDescricao());
-            prod.setNCM((item.getProduto().getNcm() != null) ? item.getProduto().getNcm().replaceAll("\\D", "") : "00000000");
-            if (item.getProduto().getCest() != null) prod.setCEST(item.getProduto().getCest().replaceAll("\\D", ""));
-            prod.setCFOP("5102");
-            String uCom = item.getProduto().getUnidade() != null ? item.getProduto().getUnidade() : "UN";
-            prod.setUCom(uCom);
+
+            // Mensagem obrigatória de homologação
+            if (i == 1 && !configLoja.isProducao()) {
+                prod.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
+            } else {
+                prod.setXProd(item.getProduto().getDescricao());
+            }
+
+            prod.setNCM(item.getProduto().getNcm() != null ? item.getProduto().getNcm().replaceAll("\\D", "") : "00000000");
+            if (item.getProduto().getCest() != null && !item.getProduto().getCest().isBlank())
+                prod.setCEST(item.getProduto().getCest().replaceAll("\\D", ""));
+
+            // Define o CFOP baseado na configuração fiscal da loja
+            prod.setCFOP(configLoja.getFiscal().getNaturezaPadrao().contains("5.405") ? "5405" : "5102");
+
+            String u = item.getProduto().getUnidade();
+            prod.setUCom(u != null && u.length() <= 6 ? u : "UN");
             prod.setQCom(item.getQuantidade().setScale(4, RoundingMode.HALF_UP).toString());
             prod.setVUnCom(item.getPrecoUnitario().setScale(2, RoundingMode.HALF_UP).toString());
             prod.setVProd(item.getPrecoUnitario().multiply(item.getQuantidade()).setScale(2, RoundingMode.HALF_UP).toString());
-            prod.setCEANTrib("SEM GTIN"); prod.setUTrib(uCom); prod.setQTrib(prod.getQCom()); prod.setVUnTrib(prod.getVUnCom()); prod.setIndTot("1");
+            prod.setCEANTrib("SEM GTIN");
+            prod.setUTrib(prod.getUCom());
+            prod.setQTrib(prod.getQCom());
+            prod.setVUnTrib(prod.getVUnCom());
+            prod.setIndTot("1");
             det.setProd(prod);
 
-            TNFe.InfNFe.Det.Imposto imposto = new TNFe.InfNFe.Det.Imposto();
+            // Tributação Simples Nacional (CSOSN 102/400)
+            TNFe.InfNFe.Det.Imposto imp = new TNFe.InfNFe.Det.Imposto();
+            TNFe.InfNFe.Det.Imposto.ICMS icms = new TNFe.InfNFe.Det.Imposto.ICMS();
+            TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 s102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
+            s102.setOrig("0");
+            s102.setCSOSN("102");
+            icms.setICMSSN102(s102);
+            imp.getContent().add(factory.createTNFeInfNFeDetImpostoICMS(icms));
+            det.setImposto(imp);
 
-            TNFe.InfNFe.Det.Imposto.ICMS icmsWrapper = new TNFe.InfNFe.Det.Imposto.ICMS();
-            TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 icms102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
-            icms102.setOrig("0"); icms102.setCSOSN("102");
-            icmsWrapper.setICMSSN102(icms102);
-            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoICMS(icmsWrapper));
-
-            TNFe.InfNFe.Det.Imposto.PIS pisWrapper = new TNFe.InfNFe.Det.Imposto.PIS();
-            TNFe.InfNFe.Det.Imposto.PIS.PISOutr pisOutr = new TNFe.InfNFe.Det.Imposto.PIS.PISOutr();
-            pisOutr.setCST("99"); pisOutr.setVBC("0.00"); pisOutr.setPPIS("0.00"); pisOutr.setVPIS("0.00");
-            pisWrapper.setPISOutr(pisOutr);
-            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoPIS(pisWrapper));
-
-            TNFe.InfNFe.Det.Imposto.COFINS cofinsWrapper = new TNFe.InfNFe.Det.Imposto.COFINS();
-            TNFe.InfNFe.Det.Imposto.COFINS.COFINSOutr cofinsOutr = new TNFe.InfNFe.Det.Imposto.COFINS.COFINSOutr();
-            cofinsOutr.setCST("99"); cofinsOutr.setVBC("0.00"); cofinsOutr.setPCOFINS("0.00"); cofinsOutr.setVCOFINS("0.00");
-            cofinsWrapper.setCOFINSOutr(cofinsOutr);
-            imposto.getContent().add(factory.createTNFeInfNFeDetImpostoCOFINS(cofinsWrapper));
-
-            det.setImposto(imposto);
             detalhes.add(det);
-            numeroItem++;
+            i++;
         }
         return detalhes;
     }
 
     private TNFe.InfNFe.Total montarTotal(Venda venda) {
-        String totalStr = venda.getValorTotal().setScale(2, RoundingMode.HALF_UP).toString();
-        TNFe.InfNFe.Total total = new TNFe.InfNFe.Total();
-        TNFe.InfNFe.Total.ICMSTot icmsTot = new TNFe.InfNFe.Total.ICMSTot();
-        icmsTot.setVBC("0.00"); icmsTot.setVICMS("0.00"); icmsTot.setVICMSDeson("0.00");
-        icmsTot.setVFCP("0.00"); icmsTot.setVBCST("0.00"); icmsTot.setVST("0.00");
-        icmsTot.setVFCPST("0.00"); icmsTot.setVFCPSTRet("0.00"); icmsTot.setVProd(totalStr);
-        icmsTot.setVFrete("0.00"); icmsTot.setVSeg("0.00"); icmsTot.setVDesc("0.00");
-        icmsTot.setVII("0.00"); icmsTot.setVIPI("0.00"); icmsTot.setVIPIDevol("0.00");
-        icmsTot.setVPIS("0.00"); icmsTot.setVCOFINS("0.00"); icmsTot.setVOutro("0.00");
-        icmsTot.setVNF(totalStr);
-        total.setICMSTot(icmsTot);
-        return total;
+        TNFe.InfNFe.Total t = new TNFe.InfNFe.Total();
+        TNFe.InfNFe.Total.ICMSTot icms = new TNFe.InfNFe.Total.ICMSTot();
+        String v = venda.getValorTotal().setScale(2, RoundingMode.HALF_UP).toString();
+        icms.setVBC("0.00"); icms.setVICMS("0.00"); icms.setVProd(v); icms.setVNF(v);
+        icms.setVICMSDeson("0.00"); icms.setVFCP("0.00"); icms.setVBCST("0.00"); icms.setVST("0.00");
+        icms.setVFCPST("0.00"); icms.setVFCPSTRet("0.00"); icms.setVFrete("0.00"); icms.setVSeg("0.00");
+        icms.setVDesc("0.00"); icms.setVII("0.00"); icms.setVIPI("0.00"); icms.setVIPIDevol("0.00");
+        icms.setVPIS("0.00"); icms.setVCOFINS("0.00"); icms.setVOutro("0.00");
+        t.setICMSTot(icms);
+        return t;
     }
 
-    private NfceResponseDTO simularEmissaoEmDev(Venda venda, ConfiguracaoLoja config) {
-        String cnpj = "00000000000000";
-        if (config.getLoja() != null && config.getLoja().getCnpj() != null) cnpj = config.getLoja().getCnpj().replaceAll("\\D", "");
-        String chaveFake = "352309" + cnpj + "650010000000011" + String.format("%09d", venda.getIdVenda());
-        return new NfceResponseDTO(venda.getIdVenda(), "100", "EMISSAO SIMULADA", chaveFake, "1234567890", "<xml>Simulacao</xml>", "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx");
+    private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pags, BigDecimal tot, BigDecimal troco) {
+        TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
+        TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
+        det.setTPag("01"); // Dinheiro por padrão (ajustar conforme necessidade)
+        det.setVPag(tot.setScale(2, RoundingMode.HALF_UP).toString());
+        pag.getDetPag().add(det);
+        pag.setVTroco(troco != null ? troco.setScale(2, RoundingMode.HALF_UP).toString() : "0.00");
+        return pag;
     }
 
-    private boolean isErroDeConexao(Exception e) {
-        String msg = e.getMessage().toLowerCase();
-        return msg.contains("timeout") || msg.contains("refused") || msg.contains("host") || msg.contains("network") || msg.contains("conexão");
-    }
-
-    private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe config, String cnf, String nNF, String dv, String modelo, String serie, String tpEmis) {
+    private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe cfg, String cnf, String nNF, String dv, String mod, String ser, String tp) {
         TNFe.InfNFe.Ide ide = new TNFe.InfNFe.Ide();
-        ide.setCUF(config.getEstado().getCodigoUF()); ide.setCNF(cnf); ide.setNatOp("VENDA CONSUMIDOR");
-        ide.setMod(modelo); ide.setSerie(serie); ide.setNNF(nNF); ide.setDhEmi(XmlNfeUtil.dataNfe(LocalDateTime.now()));
+        ide.setCUF(cfg.getEstado().getCodigoUF()); ide.setCNF(cnf); ide.setNatOp("VENDA CONSUMIDOR");
+        ide.setMod(mod); ide.setSerie(ser); ide.setNNF(nNF); ide.setDhEmi(XmlNfeUtil.dataNfe(LocalDateTime.now()));
         ide.setTpNF("1"); ide.setIdDest("1"); ide.setCMunFG("2611606"); ide.setTpImp("4");
-        ide.setTpEmis(tpEmis); ide.setCDV(dv); ide.setTpAmb(config.getAmbiente().getCodigo());
+        ide.setTpEmis(tp); ide.setCDV(dv); ide.setTpAmb(cfg.getAmbiente().getCodigo());
         ide.setFinNFe("1"); ide.setIndFinal("1"); ide.setIndPres("1"); ide.setProcEmi("0"); ide.setVerProc("1.0");
-        if (tpEmis.equals("9")) {
-            ide.setDhCont(XmlNfeUtil.dataNfe(LocalDateTime.now()));
-            ide.setXJust("Falha de conexao com a internet");
-        }
         return ide;
     }
 
-    private TNFe.InfNFe.Emit montarEmit(ConfiguracaoLoja config) {
-        TNFe.InfNFe.Emit emit = new TNFe.InfNFe.Emit();
-        if (config.getLoja() != null) {
-            emit.setCNPJ(config.getLoja().getCnpj().replaceAll("\\D", ""));
-            emit.setXNome(config.getLoja().getRazaoSocial());
-            emit.setIE(config.getLoja().getIe() != null ? config.getLoja().getIe().replaceAll("\\D", "") : "");
-        }
-        emit.setCRT("1");
-        TEnderEmi ender = new TEnderEmi();
-        if (config.getEndereco() != null) {
-            ender.setXLgr(config.getEndereco().getLogradouro());
-            ender.setNro(config.getEndereco().getNumero());
-            ender.setXBairro(config.getEndereco().getBairro());
-            ender.setCMun("2611606");
-            ender.setXMun("RECIFE");
-            ender.setUF(TUfEmi.PE);
-            ender.setCEP(config.getEndereco().getCep() != null ? config.getEndereco().getCep().replaceAll("\\D", "") : "00000000");
-        }
-        ender.setCPais("1058"); ender.setXPais("BRASIL"); emit.setEnderEmit(ender);
-        return emit;
+    private TNFe.InfNFe.Emit montarEmit(ConfiguracaoLoja cfg) {
+        TNFe.InfNFe.Emit e = new TNFe.InfNFe.Emit();
+        e.setCNPJ(cfg.getCnpjLimpo());
+        e.setXNome(cfg.getLoja().getRazaoSocial());
+        e.setIE(cfg.getLoja().getIe().replaceAll("\\D", ""));
+        e.setCRT("1");
+        TEnderEmi end = new TEnderEmi();
+        end.setXLgr(cfg.getEndereco().getLogradouro()); end.setNro(cfg.getEndereco().getNumero());
+        end.setXBairro(cfg.getEndereco().getBairro()); end.setCMun("2611606"); end.setXMun("RECIFE");
+        end.setUF(TUfEmi.valueOf(cfg.getEndereco().getUf())); end.setCEP(cfg.getEndereco().getCep().replaceAll("\\D", ""));
+        end.setCPais("1058"); end.setXPais("BRASIL"); e.setEnderEmit(end);
+        return e;
     }
 
-    private TNFe.InfNFe.Dest montarDest(br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Cliente cliente) {
-        TNFe.InfNFe.Dest dest = new TNFe.InfNFe.Dest();
-        dest.setXNome(cliente.getNome());
-        if (cliente.getDocumento() != null) {
-            String doc = cliente.getDocumento().replaceAll("\\D", "");
-            if (doc.length() == 11) dest.setCPF(doc);
-            else if (doc.length() == 14) dest.setCNPJ(doc);
-        }
-        return dest;
+    private TNFe.InfNFe.Dest montarDest(Cliente c) {
+        TNFe.InfNFe.Dest d = new TNFe.InfNFe.Dest();
+        d.setXNome(c.getNome());
+        String doc = c.getDocumento().replaceAll("\\D", "");
+        if (doc.length() == 11) d.setCPF(doc); else d.setCNPJ(doc);
+        return d;
     }
 
     private TNFe.InfNFe.Transp montarTransp() {
@@ -307,46 +311,41 @@ public class NfceService {
         return t;
     }
 
-    private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pags, BigDecimal total) {
-        TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
-        TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
-        det.setTPag("01"); det.setVPag(total != null ? total.toString() : "0.00");
-        pag.getDetPag().add(det);
-        return pag;
+    private TInfRespTec montarRespTec() {
+        TInfRespTec respTec = new TInfRespTec();
+        respTec.setCNPJ("57648950000144");
+        respTec.setXContato("Suporte Tecnico");
+        respTec.setEmail("suporte@empresa.com.br");
+        respTec.setFone("81999999999");
+        return respTec;
     }
 
-    private String gerarChaveAcesso(String cuf, LocalDateTime data, String cnpj, String mod, String serie, String nnf, String tpEmis, String cnf) {
-        StringBuilder chave = new StringBuilder();
-        chave.append(String.format("%02d", Integer.parseInt(cuf)));
-        chave.append(data.format(DateTimeFormatter.ofPattern("yyMM")));
-        chave.append(cnpj); chave.append(mod);
-        chave.append(String.format("%03d", Integer.parseInt(serie)));
-        chave.append(String.format("%09d", Long.parseLong(nnf)));
-        chave.append(tpEmis); chave.append(cnf);
-        return chave.toString();
+    private String gerarChaveAcesso(String cuf, LocalDateTime d, String cnpj, String mod, String ser, String nnf, String tp, String cnf) {
+        return String.format("%02d%s%s%s%03d%09d%s%s", Integer.parseInt(cuf), d.format(DateTimeFormatter.ofPattern("yyMM")), cnpj, mod, Integer.parseInt(ser), Long.parseLong(nnf), tp, cnf);
     }
 
     private String calcularDV(String chave) {
-        int soma = 0; int peso = 2;
+        int soma = 0, peso = 2;
         for (int i = chave.length() - 1; i >= 0; i--) {
             soma += Character.getNumericValue(chave.charAt(i)) * peso;
-            peso++;
-            if (peso > 9) peso = 2;
+            if (++peso > 9) peso = 2;
         }
         int resto = soma % 11;
-        int dv = 11 - resto;
-        return (dv >= 10) ? "0" : String.valueOf(dv);
+        return (resto == 0 || resto == 1) ? "0" : String.valueOf(11 - resto);
     }
 
+    private NfceResponseDTO simularEmissaoEmDev(Venda v, ConfiguracaoLoja c) {
+        return new NfceResponseDTO(v.getIdVenda(), "100", "Simulado", "35230900000000000000650010000000011000000001", "123", "", "");
+    }
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transmitirNotaContingencia(Venda venda) {
         try {
-            log.info("📡 SCHEDULER: Tentando transmitir nota de contingência ID: {}", venda.getIdVenda());
+            log.info("📡 Tentando transmitir nota pendente/contingência ID: {}", venda.getIdVenda());
             ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
+            // Tenta processar a emissão novamente
             processarEmissao(venda, configLoja, TipoEmissao.NORMAL);
-            log.info("✅ Nota ID {} recuperada da contingência e autorizada com sucesso!", venda.getIdVenda());
         } catch (Exception e) {
-            log.error("❌ Falha ao transmitir nota de contingência {}: {}", venda.getIdVenda(), e.getMessage());
+            log.error("❌ Falha na transmissão automática da venda {}: {}", venda.getIdVenda(), e.getMessage());
         }
     }
 }

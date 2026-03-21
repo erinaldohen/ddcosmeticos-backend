@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -20,27 +19,21 @@ public class NfceScheduler {
     private final VendaRepository vendaRepository;
     private final NfceService nfceService;
 
-    // Roda a cada 1 minuto (60000 ms) para atuar como Fila de Recuperação (DLQ)
+    // Executa a cada 60 segundos APÓS o término da última execução
     @Scheduled(fixedDelay = 60000)
     public void processarNotasPendentesEContingencia() {
+        // Busca notas que não foram autorizadas online
         List<Venda> notasParaProcessar = vendaRepository.findByStatusNfceIn(
-                Arrays.asList(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
+                List.of(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
         );
 
-        if (!notasParaProcessar.isEmpty()) {
-            log.info("🔄 SCHEDULER: Encontradas {} notas pendentes/contingência. A iniciar transmissão de recuperação...", notasParaProcessar.size());
+        if (notasParaProcessar.isEmpty()) return;
 
-            for (Venda venda : notasParaProcessar) {
-                try {
-                    if (venda.getStatusNfce() == StatusFiscal.CONTINGENCIA) {
-                        nfceService.transmitirNotaContingencia(venda);
-                    } else {
-                        nfceService.emitirNfce(venda); // Tenta emitir a pendente que ficou presa
-                    }
-                } catch (Exception e) {
-                    log.error("❌ Erro no Scheduler ao processar nota da venda {}: {}", venda.getIdVenda(), e.getMessage());
-                }
-            }
+        log.info("🔄 SCHEDULER: Processando {} notas pendentes ou em contingência...", notasParaProcessar.size());
+
+        for (Venda venda : notasParaProcessar) {
+            // Agora ambos os casos usam o mesmo fluxo de re-transmissão
+            nfceService.transmitirNotaContingencia(venda);
         }
     }
 }

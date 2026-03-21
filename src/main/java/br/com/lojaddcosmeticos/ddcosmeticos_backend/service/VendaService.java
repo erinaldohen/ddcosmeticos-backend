@@ -1,13 +1,13 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
-import org.hibernate.Hibernate;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.hibernate.Hibernate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
@@ -22,38 +22,40 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor // Otimização: Injeção de dependência pelo construtor (Mais rápido e seguro que @Autowired em campos)
 public class VendaService {
 
-    @Autowired private VendaRepository vendaRepository;
-    @Autowired private ProdutoRepository produtoRepository;
-    @Autowired private UsuarioRepository usuarioRepository;
-    @Autowired private ClienteRepository clienteRepository;
-    @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ConfiguracaoLojaService configuracaoLojaService;
-    @Autowired private RegraTributariaRepository regraTributariaRepository;
-    @Autowired private CaixaDiarioRepository caixaRepository;
-    @Autowired private EstoqueService estoqueService;
-    @Autowired private FinanceiroService financeiroService;
-    @Autowired private NfceService nfceService;
-    @Autowired private CalculadoraFiscalService calculadoraFiscalService;
-    @Autowired private AuditoriaService auditoriaService;
-    @Autowired private FiscalComplianceService fiscalComplianceService;
+    private final VendaRepository vendaRepository;
+    private final ProdutoRepository produtoRepository;
+    private final UsuarioRepository usuarioRepository;
+    private final ClienteRepository clienteRepository;
+    private final ContaReceberRepository contaReceberRepository;
+    private final ConfiguracaoLojaService configuracaoLojaService;
+    private final RegraTributariaRepository regraTributariaRepository;
+    private final CaixaDiarioRepository caixaRepository;
+    private final EstoqueService estoqueService;
+    private final FinanceiroService financeiroService;
+    private final NfceService nfceService;
+    private final CalculadoraFiscalService calculadoraFiscalService;
+    private final AuditoriaService auditoriaService;
+    private final FiscalComplianceService fiscalComplianceService;
 
     // =========================================================================
     // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO)
     // =========================================================================
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class) // Proteção ACID: Reverte a transação caso ocorra QUALQUER erro
     public VendaResponseDTO realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
         if (usuarioLogado == null) throw new ValidationException("Sessão inválida ou expirada.");
 
-        // TRAVA DE CAIXA: Garante que o operador só venda com caixa aberto no nome dele
+        // TRAVA DE CAIXA
         CaixaDiario caixa = validarCaixaAberto(usuarioLogado);
 
         if (dto.pagamentos() == null || dto.pagamentos().isEmpty()) {
@@ -65,9 +67,7 @@ public class VendaService {
         venda.setDataVenda(LocalDateTime.now());
         venda.setCaixa(caixa);
 
-        // =====================================================================
-        // CORREÇÃO: MAPEAMENTO COMPLETO DE CLIENTE (COM TELEFONE/WHATSAPP)
-        // =====================================================================
+        // MAPEAMENTO DO CLIENTE
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -78,17 +78,21 @@ public class VendaService {
         } else {
             venda.setClienteNome(dto.clienteNome() != null ? dto.clienteNome() : "Consumidor Final");
             venda.setClienteDocumento(dto.clienteDocumento());
-            // A LINHA QUE FALTAVA: Agora o telefone do modal do PDV é guardado!
             venda.setClienteTelefone(dto.clienteTelefone());
         }
 
         venda.setDescontoTotal(nvl(dto.descontoTotal()));
         RegraTributaria regra = buscarRegraVigente();
 
-        // Processamento dos Itens e Inteligência Fiscal (Escudo Fiscal)
+        // OTIMIZAÇÃO DE BANCO DE DADOS: Evitar N+1 Queries ao buscar produtos
+        List<Long> idsProdutos = dto.itens().stream().map(ItemVendaDTO::produtoId).collect(Collectors.toList());
+        Map<Long, Produto> mapProdutos = produtoRepository.findAllById(idsProdutos).stream()
+                .collect(Collectors.toMap(Produto::getId, p -> p));
+
+        // Processamento dos Itens
         List<ItemVenda> itens = dto.itens().stream().map(itemDto -> {
-            Produto produto = produtoRepository.findById(itemDto.produtoId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.produtoId()));
+            Produto produto = mapProdutos.get(itemDto.produtoId());
+            if (produto == null) throw new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.produtoId());
 
             processarSaidaEstoqueComAuditoria(produto, itemDto.quantidade().intValue());
 
@@ -99,18 +103,17 @@ public class VendaService {
             item.setPrecoUnitario(nvl(itemDto.precoUnitario()));
             item.setDesconto(nvl(itemDto.desconto()));
 
-            // Fixa o custo histórico para cálculo correto da Margem Limpa no Dashboard
             item.setCustoUnitarioHistorico(nvl(produto.getPrecoCusto()));
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
             item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
 
             fiscalComplianceService.aplicarComplianceNoItemVenda(item);
-
             return item;
         }).collect(Collectors.toList());
 
         venda.setItens(itens);
 
+        // Cálculos Financeiros
         BigDecimal subtotalItens = itens.stream()
                 .map(i -> nvl(i.getPrecoUnitario()).multiply(new BigDecimal(i.getQuantidade().toString())).subtract(nvl(i.getDesconto())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -145,9 +148,23 @@ public class VendaService {
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
         aplicarDadosFiscais(venda, itens);
 
+        // GRAVAÇÃO DA VENDA NO BANCO
         vendaRepository.save(venda);
         atualizarFinanceiro(caixa, venda, pagamentos);
 
+        // =====================================================================
+        // TRILHA DE AUDITORIA (ANTI-FRAUDE)
+        // =====================================================================
+        if (dto.logAuditoria() != null && !dto.logAuditoria().isEmpty()) {
+            for (VendaRequestDTO.LogAuditoriaPDVDTO logPDV : dto.logAuditoria()) {
+                String mensagemFormatada = String.format("[Ação: %s] %s | Marcador: %s | Venda ID: %d",
+                        logPDV.acao(), logPDV.detalhes(), logPDV.hora(), venda.getIdVenda());
+                auditoriaService.registrar("ALERTA_PDV", mensagemFormatada);
+            }
+        }
+        // =====================================================================
+
+        // PROCESSAMENTO ASSÍNCRONO DA NFC-e
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
             CompletableFuture.runAsync(() -> {
                 try { nfceService.emitirNfce(venda); }
@@ -158,13 +175,13 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 2. GESTÃO DE ESTADOS (MANTIDOS ORIGINAIS)
+    // 2. GESTÃO DE ESTADOS (SUSPENDER, CANCELAR, EFETIVAR)
     // =========================================================================
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Venda suspenderVenda(VendaRequestDTO dto) {
         Usuario usuario = capturarUsuarioLogado();
-        CaixaDiario caixa = caixaRepository.findFirstByUsuarioAberturaAndStatus(usuario, StatusCaixa.ABERTO).orElse(null);
+        CaixaDiario caixa = validarCaixaAberto(usuario);
 
         Venda venda = new Venda();
         venda.setUsuario(usuario);
@@ -176,7 +193,6 @@ public class VendaService {
         if (dto.clienteId() != null) {
             clienteRepository.findById(dto.clienteId()).ifPresent(venda::setCliente);
         } else {
-            // Garante que o telefone do cliente não se perca se ele pedir para suspender a venda
             venda.setClienteDocumento(dto.clienteDocumento());
             venda.setClienteTelefone(dto.clienteTelefone());
         }
@@ -196,7 +212,7 @@ public class VendaService {
         return vendaRepository.save(venda);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void cancelarVenda(Long idVenda, String motivo) {
         Venda venda = buscarVendaComItens(idVenda);
         if (venda.getStatusNfce() == StatusFiscal.CANCELADA) throw new ValidationException("Esta venda já está cancelada.");
@@ -206,6 +222,7 @@ public class VendaService {
             return;
         }
 
+        // DEVOLVE ITENS AO ESTOQUE
         venda.getItens().forEach(item -> {
             AjusteEstoqueDTO ajuste = new AjusteEstoqueDTO();
             ajuste.setCodigoBarras(item.getProduto().getCodigoBarras());
@@ -221,7 +238,7 @@ public class VendaService {
         auditoriaService.registrar("CANCELAMENTO_VENDA", "Venda #" + idVenda + " cancelada. Motivo: " + motivo);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Venda efetivarVenda(Long idVendaPrevia) {
         Venda venda = buscarVendaComItens(idVendaPrevia);
         if (venda.getStatusNfce() != StatusFiscal.ORCAMENTO && venda.getStatusNfce() != StatusFiscal.EM_ESPERA) {
@@ -243,7 +260,6 @@ public class VendaService {
         financeiroService.lancarReceitaDeVenda(venda.getIdVenda(), venda.getValorTotal(), venda.getFormaDePagamento().name(), venda.getQuantidadeParcelas(), buscarIdClientePorDocumento(venda.getClienteDocumento()));
 
         atualizarFinanceiro(caixa, venda, venda.getPagamentos());
-        caixaRepository.save(caixa);
 
         CompletableFuture.runAsync(() -> {
             try { nfceService.emitirNfce(venda); }
@@ -254,7 +270,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 3. CONSULTAS (MANTIDAS ORIGINAIS)
+    // 3. CONSULTAS
     // =========================================================================
 
     @Transactional(readOnly = true)
@@ -277,7 +293,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 4. ATUALIZAÇÃO FINANCEIRA (SINCRONIZADA COM CAIXA)
+    // 4. ATUALIZAÇÃO FINANCEIRA DE CAIXA
     // =========================================================================
 
     private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoVenda> pagamentos) {
@@ -286,6 +302,8 @@ public class VendaService {
 
         for (PagamentoVenda pg : pagamentos) {
             BigDecimal valorReal = nvl(pg.getValor());
+
+            // Lógica de Abatimento de Troco (Somente deduzido do dinheiro em espécie)
             if (pg.getFormaPagamento() == FormaDePagamento.DINHEIRO && trocoRestante.compareTo(BigDecimal.ZERO) > 0) {
                 if (valorReal.compareTo(trocoRestante) >= 0) {
                     valorReal = valorReal.subtract(trocoRestante);
@@ -295,52 +313,38 @@ public class VendaService {
                     valorReal = BigDecimal.ZERO;
                 }
             }
-            atualizarSaldoCaixaUnico(caixa, valorReal, pg.getFormaPagamento());
+
+            // Só contabiliza no caixa se ainda houver valor após deduzir o troco
+            if (valorReal.compareTo(BigDecimal.ZERO) > 0) {
+                switch (pg.getFormaPagamento()) {
+                    case DINHEIRO -> {
+                        caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(valorReal));
+                        caixa.setSaldoAtual(nvl(caixa.getSaldoAtual()).add(valorReal));
+                    }
+                    case PIX -> caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(valorReal));
+                    case CREDITO, CARTAO_CREDITO -> {
+                        caixa.setTotalVendasCredito(nvl(caixa.getTotalVendasCredito()).add(valorReal));
+                        caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valorReal));
+                    }
+                    case DEBITO, CARTAO_DEBITO -> {
+                        caixa.setTotalVendasDebito(nvl(caixa.getTotalVendasDebito()).add(valorReal));
+                        caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valorReal));
+                    }
+                    default -> log.warn("Forma não mapeada no caixa: {}", pg.getFormaPagamento());
+                }
+            }
         }
         caixaRepository.save(caixa);
     }
 
-    private void atualizarSaldoCaixaUnico(CaixaDiario caixa, BigDecimal valor, FormaDePagamento forma) {
-        if (valor.compareTo(BigDecimal.ZERO) <= 0) return;
-
-        switch (forma) {
-            case DINHEIRO:
-                caixa.setTotalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()).add(valor));
-                caixa.setSaldoAtual(nvl(caixa.getSaldoAtual()).add(valor)); // Sincroniza gaveta física
-                break;
-            case PIX:
-                caixa.setTotalVendasPix(nvl(caixa.getTotalVendasPix()).add(valor));
-                break;
-            case CREDITO:
-            case CARTAO_CREDITO:
-                caixa.setTotalVendasCredito(nvl(caixa.getTotalVendasCredito()).add(valor));
-                caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor));
-                break;
-            case DEBITO:
-            case CARTAO_DEBITO:
-                caixa.setTotalVendasDebito(nvl(caixa.getTotalVendasDebito()).add(valor));
-                caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valor));
-                break;
-            default:
-                log.warn("Forma não mapeada no caixa: {}", forma);
-                break;
-        }
-    }
-
     // =========================================================================
-    // 5. AUXILIARES E VALIDAÇÕES (ESTRUTURA ORIGINAL GARANTIDA)
+    // 5. AUXILIARES E VALIDAÇÕES (LÓGICA BLINDADA)
     // =========================================================================
 
-    /**
-     * Se o valor for nulo, retorna BigDecimal.ZERO
-     */
     private BigDecimal nvl(BigDecimal val) {
         return val == null ? BigDecimal.ZERO : val;
     }
 
-    /**
-     * Se o valor for nulo, retorna o valor padrão informado
-     */
     private BigDecimal nvl(BigDecimal val, BigDecimal padrao) {
         return val == null ? padrao : val;
     }
@@ -373,8 +377,15 @@ public class VendaService {
 
     private BigDecimal processarItensParaOrcamento(Venda venda, List<ItemVendaDTO> dtos) {
         BigDecimal total = BigDecimal.ZERO;
+
+        List<Long> idsProdutos = dtos.stream().map(ItemVendaDTO::produtoId).collect(Collectors.toList());
+        Map<Long, Produto> mapProdutos = produtoRepository.findAllById(idsProdutos).stream()
+                .collect(Collectors.toMap(Produto::getId, p -> p));
+
         for (ItemVendaDTO dto : dtos) {
-            Produto p = produtoRepository.findById(dto.produtoId()).orElseThrow();
+            Produto p = mapProdutos.get(dto.produtoId());
+            if (p == null) throw new ResourceNotFoundException("Produto não encontrado: " + dto.produtoId());
+
             ItemVenda i = new ItemVenda(); i.setVenda(venda); i.setProduto(p); i.setQuantidade(dto.quantidade()); i.setPrecoUnitario(nvl(dto.precoUnitario())); i.setDesconto(nvl(dto.desconto()));
             if (venda.getItens() == null) venda.setItens(new ArrayList<>());
             venda.getItens().add(i);

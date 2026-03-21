@@ -31,5 +31,15 @@ public record VendaRequestDTO(
         // ----------------------------------
 
         Boolean ehOrcamento,
-        Integer quantidadeParcelas
-) {}
+        Integer quantidadeParcelas,
+
+        // --- NOVO: RECEBENDO O LOG DO PDV ANTI-FRAUDE ---
+        List<LogAuditoriaPDVDTO> logAuditoria
+) {
+        // Record interno para mapear o JSON do React: { acao: '...', detalhes: '...', hora: '...' }
+        public record LogAuditoriaPDVDTO(
+                String acao,
+                String detalhes,
+                String hora
+        ) {}
+}

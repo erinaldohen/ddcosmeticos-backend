@@ -51,6 +51,15 @@ public class ConfiguracaoLoja implements Serializable {
     @Column(name = "meta_faturamento_mensal", precision = 15, scale = 2)
     private BigDecimal metaFaturamentoMensal = BigDecimal.ZERO;
 
+    public boolean isProducao() {
+        return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
+    }
+
+    // Retorna o código numérico esperado pela SEFAZ: 1 para Produção, 2 para Homologação
+    public String getAmbienteSefazCodigo() {
+        return isProducao() ? "1" : "2";
+    }
+
     // 🛡️ GARANTIA ABSOLUTA CONTRA NULL POINTER 🛡️
     @PostLoad
     @PrePersist
@@ -216,7 +225,4 @@ public class ConfiguracaoLoja implements Serializable {
         return (loja != null && loja.getCnpj() != null) ? loja.getCnpj().replaceAll("\\D", "") : "";
     }
 
-    public boolean isProducao() {
-        return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
-    }
 }

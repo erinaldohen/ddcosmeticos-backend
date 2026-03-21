@@ -4,30 +4,27 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-// Se estiver usando Java Records (recomendado para DTOs no Java 17+), não precisa de @Data ou Serializable
-// Mas mantendo seu estilo atual com classe e Lombok:
-import lombok.Data;
 
-import java.io.Serializable;
+/**
+ * DTO de Registro convertido para Java Record.
+ * Records são imutáveis e ideais para o trânsito de dados (DTOs).
+ * Substitui o uso do Lombok (@Data) e do Serializable tradicional.
+ */
+public record RegisterDTO(
 
-@Data
-public class RegisterDTO implements Serializable {
-    private static final long serialVersionUID = 1L;
+        @NotBlank(message = "Matrícula é obrigatória")
+        String matricula,
 
-    @NotBlank(message = "Matrícula é obrigatória")
-    private String matricula;
+        @NotBlank(message = "Nome é obrigatório")
+        String nome,
 
-    @NotBlank(message = "Nome é obrigatório")
-    private String nome;
+        @NotBlank(message = "E-mail é obrigatório")
+        @Email(message = "Formato de e-mail inválido")
+        String email,
 
-    // --- NOVO CAMPO OBRIGATÓRIO ---
-    @NotBlank(message = "E-mail é obrigatório")
-    @Email(message = "Formato de e-mail inválido")
-    private String email;
+        @NotBlank(message = "Senha é obrigatória")
+        String senha,
 
-    @NotBlank(message = "Senha é obrigatória")
-    private String senha;
-
-    @NotNull(message = "Perfil é obrigatório")
-    private PerfilDoUsuario perfil; // Ex: ROLE_ADMIN, ROLE_USUARIO
-}
+        @NotNull(message = "Perfil é obrigatório")
+        PerfilDoUsuario perfil
+) {}

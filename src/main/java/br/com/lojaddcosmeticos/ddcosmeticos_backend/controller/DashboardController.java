@@ -42,11 +42,21 @@ public class DashboardController {
         return ResponseEntity.ok(dashboardService.obterResumoGeral());
     }
 
-    // 3. Alertas
+    // 3. Alertas Padrão
     @GetMapping("/alertas")
     @Operation(summary = "Alertas de Auditoria")
     public ResponseEntity<List<AuditoriaRequestDTO>> getAlertasRecentes() {
         return ResponseEntity.ok(dashboardService.buscarAlertasRecentes());
+    }
+
+    // =========================================================================
+    // 3.1 ALERTA DE PRODUTOS PENDENTES DE REVISÃO (DO PDV)
+    // =========================================================================
+    @GetMapping("/alertas/pendentes-revisao")
+    @Operation(summary = "Contagem de produtos vindos do PDV que precisam de revisão")
+    @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
+    public ResponseEntity<Long> contarProdutosPendentesDeRevisao() {
+        return ResponseEntity.ok(dashboardService.contarProdutosPendentesDeRevisao());
     }
 
     // 4. Modal de Risco (Drill-Down do Estoque)

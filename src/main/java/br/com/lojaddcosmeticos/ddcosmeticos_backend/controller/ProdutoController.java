@@ -4,6 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,9 +31,13 @@ public class ProdutoController {
     @Autowired
     private ProdutoService produtoService;
 
+    @Autowired
+    private ProdutoRepository produtoRepository;
+
     // --- LEITURA (MÉTODO UNIFICADO) ---
 
     @GetMapping
+    @Operation(summary = "Lista produtos com filtros avançados")
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String marca,
@@ -41,12 +46,15 @@ public class ProdutoController {
             @RequestParam(required = false) Boolean semImagem,
             @RequestParam(required = false) Boolean semNcm,
             @RequestParam(required = false) Boolean precoZero,
+            @RequestParam(required = false) Boolean revisaoPendente, // 🚩 PARÂMETRO ADICIONADO PARA O FILTRO DO ALERTA
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("descricao"));
+
+        // Passa todos os 8 parâmetros de filtro para o Service
         return ResponseEntity.ok(produtoService.listarResumo(
-                termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, pageable
+                termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, revisaoPendente, pageable
         ));
     }
 
@@ -79,8 +87,9 @@ public class ProdutoController {
     public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
             @RequestParam(required = false) String termo,
             Pageable pageable) {
+        // Para a busca do PDV, a flag de revisaoPendente é 'false' ou irrelevante (por isso passamos null/false no final)
         return ResponseEntity.ok(produtoService.listarResumo(
-                termo, null, null, null, false, false, false, pageable
+                termo, null, null, null, false, false, false, false, pageable
         ));
     }
 
@@ -133,6 +142,13 @@ public class ProdutoController {
 
     // --- FISCAL & INTELIGÊNCIA ---
 
+    // 🚩 NOVO: Endpoint para o React enviar a descrição do produto para a IA analisar
+    @PostMapping("/analisar-ia")
+    @Operation(summary = "Pede à IA para deduzir NCM e Categoria do Produto")
+    public ResponseEntity<Map<String, String>> analisarProdutoIA(@RequestBody Map<String, String> payload) {
+        return ResponseEntity.ok(produtoService.analisarProdutoComIA(payload));
+    }
+
     @PostMapping("/saneamento-fiscal")
     @Operation(summary = "Recalcula tributos e SALVA no banco")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
@@ -184,5 +200,12 @@ public class ProdutoController {
     public ResponseEntity<String> obterProximoSequencial() {
         String proximoEan = produtoService.gerarProximoEanInterno();
         return ResponseEntity.ok(proximoEan);
+    }
+
+    @GetMapping("/alertas/pendentes-revisao")
+    @Operation(summary = "Conta os produtos que precisam de revisão")
+    public ResponseEntity<Long> contarProdutosPendentes() {
+        long pendentes = produtoRepository.countProdutosPendentesDeRevisao();
+        return ResponseEntity.ok(pendentes);
     }
 }

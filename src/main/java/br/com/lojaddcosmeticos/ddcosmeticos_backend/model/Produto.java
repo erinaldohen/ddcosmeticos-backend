@@ -45,6 +45,9 @@ public class Produto {
     @Column(length = 100)
     private String marca;
 
+    @Column(name = "revisao_pendente")
+    private Boolean revisaoPendente = false;
+
     @Column(length = 100)
     private String categoria; // Utilizado pelo Dashboard para o Top Categorias
 

@@ -39,6 +39,20 @@ public class DashboardService {
     private final PrecificacaoService precificacaoService;
     private final AuditoriaService auditoriaService;
 
+    // =========================================================================
+    // ALERTA: PRODUTOS PENDENTES DE REVISÃO DO PDV
+    // =========================================================================
+    @Transactional(readOnly = true)
+    public Long contarProdutosPendentesDeRevisao() {
+        try {
+            // Nota: O método countByRevisaoPendenteTrueAndAtivoTrue deve existir no ProdutoRepository
+            return produtoRepository.countByRevisaoPendenteTrueAndAtivoTrue();
+        } catch (Exception e) {
+            log.error("Erro ao contar produtos pendentes de revisão. O método countByRevisaoPendenteTrueAndAtivoTrue() foi adicionado no repositório?", e);
+            return 0L;
+        }
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> obterDadosDoDashboard(String periodo) {
         LocalDateTime agora = LocalDateTime.now();
@@ -73,7 +87,6 @@ public class DashboardService {
 
         // =========================================================================
         // DADOS REAIS BASEADOS NO PERÍODO SELECIONADO
-        // A lista vendasDoPeriodo vai alimentar TODOS os cards
         // =========================================================================
         List<Venda> vendasDoPeriodo = vendaRepository.buscarVendasPorPeriodo(inicioRef, fimRef);
 
@@ -93,7 +106,6 @@ public class DashboardService {
             faturamentoPeriodo = faturamentoPeriodo.add(totalVenda);
             descontosPeriodo = descontosPeriodo.add(safeBigDecimal(v.getDescontoTotal()));
 
-            // Agrupamento para os Gráficos
             agrupadoPorHora.computeIfAbsent(v.getDataVenda().getHour(), k -> new ArrayList<>()).add(v);
             mapaDias.merge(v.getDataVenda().format(fmtDia), totalVenda, BigDecimal::add);
 
@@ -127,7 +139,7 @@ public class DashboardService {
                     Map<String, Object> m = new HashMap<>();
                     m.put("name", e.getKey());
                     m.put("value", e.getValue());
-                    return m; // Cores geridas no Front
+                    return m;
                 }).collect(Collectors.toList());
 
         List<Map<String, Object>> topCategorias = faturamentoPorCategoria.entrySet().stream()
@@ -189,7 +201,7 @@ public class DashboardService {
                 : 0.0;
 
         // =========================================================================
-        // O NOVO CÁLCULO REAL DE FLUXO DE 7 DIAS (A partir de Hoje, não do filtro)
+        // FLUXO DE 7 DIAS (A partir de Hoje, não do filtro)
         // =========================================================================
         int diasPassados = Math.max(1, ("hoje".equals(periodo) ? 1 : agora.getDayOfMonth()));
         int diasNoMes = YearMonth.from(inicioRef).lengthOfMonth();
@@ -198,7 +210,6 @@ public class DashboardService {
         LocalDate diaAtual = agora.toLocalDate();
         LocalDate daquiA7Dias = diaAtual.plusDays(7);
 
-        // A Receber: Boletos de Clientes (Crediário)
         BigDecimal totalReceitasPrevistas = BigDecimal.ZERO;
         try {
             totalReceitasPrevistas = contaReceberRepository.findAll().stream()
@@ -207,10 +218,9 @@ public class DashboardService {
                     .map(c -> safeBigDecimal(c.getValor()))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         } catch (Exception e) {
-            log.warn("Repositório ContaReceber vazio ou sem dados pendentes.");
+            log.warn("Repositório ContaReceber vazio.");
         }
 
-        // A Pagar: Faturas de Fornecedores, Despesas e Boletos
         BigDecimal totalDespesasPrevistas = BigDecimal.ZERO;
         try {
             totalDespesasPrevistas = contaPagarRepository.findAll().stream()
@@ -219,7 +229,7 @@ public class DashboardService {
                     .map(c -> safeBigDecimal(c.getValorTotal()))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         } catch (Exception e) {
-            log.warn("Repositório ContaPagar vazio ou sem dados pendentes.");
+            log.warn("Repositório ContaPagar vazio.");
         }
 
         Map<String, Object> fluxo7Dias = new HashMap<>();
@@ -227,13 +237,11 @@ public class DashboardService {
         fluxo7Dias.put("despesasPrevistas", totalDespesasPrevistas);
         fluxo7Dias.put("saldoProjetado", totalReceitasPrevistas.subtract(totalDespesasPrevistas));
 
-        // Vendas Perdidas
         Long qtdVendasPerdidas = vendaPerdidaRepository.contarRupturasNoPeriodo(inicioRef, fimRef);
         Map<String, Object> vendasPerdidas = new HashMap<>();
         vendasPerdidas.put("quantidade", qtdVendasPerdidas != null ? qtdVendasPerdidas : 0);
         vendasPerdidas.put("valorEstimado", ticketMedio.multiply(new BigDecimal(qtdVendasPerdidas != null ? qtdVendasPerdidas : 0)));
 
-        // Crescimento MoM
         LocalDateTime inicioMesAnterior = inicioRef.minusMonths(1);
         LocalDateTime fimMesAnteriorAgra = fimRef.minusMonths(1);
         BigDecimal faturamentoMesAnteriorParcial = vendaRepository.somarFaturamento(inicioMesAnterior, fimMesAnteriorAgra);
@@ -246,7 +254,6 @@ public class DashboardService {
             crescimentoMoM = 100.0;
         }
 
-        // ROI da IA
         BigDecimal roiIAValor = vendaRepository.calcularFaturamentoInfluenciaIA(inicioRef, fimRef);
         Long roiIAItens = vendaRepository.contarItensInfluenciaIA(inicioRef, fimRef);
         inteligenciaVendas.put("roiValor", roiIAValor != null ? roiIAValor : BigDecimal.ZERO);
@@ -259,13 +266,11 @@ public class DashboardService {
         inventarioNode.put("vendasPerdidas", vendasPerdidas);
 
         Map<String, Object> financeiro = new HashMap<>();
-        // O NOME DAS VARIÁVEIS AQUI NÃO MUDA PARA NÃO QUEBRAR O FRONTEND, MAS OS DADOS RESPEITAM O FILTRO
         financeiro.put("faturamentoHoje", faturamentoPeriodo);
         financeiro.put("descontosHoje", descontosPeriodo);
         financeiro.put("custoTotalReposicaoHoje", custoTotalPeriodo);
         financeiro.put("lucroBrutoHoje", faturamentoPeriodo.subtract(custoTotalPeriodo));
         financeiro.put("vendasHoje", quantidadeVendas);
-
         financeiro.put("ticketMedio", ticketMedio);
         financeiro.put("produtosDistintosPorVenda", mixProdutos);
         financeiro.put("impostoProvisorioMes", impostoMes);
@@ -274,7 +279,7 @@ public class DashboardService {
         financeiro.put("graficoVendas", graficoVendas);
         financeiro.put("origemVendas", origemVendas);
         financeiro.put("taxaRecorrencia", taxaRecorrencia);
-        financeiro.put("fluxoCaixa7Dias", fluxo7Dias); // Fluxo real de Contas
+        financeiro.put("fluxoCaixa7Dias", fluxo7Dias);
         financeiro.put("crescimentoMoM", crescimentoMoM);
         financeiro.put("runRate", runRate);
 

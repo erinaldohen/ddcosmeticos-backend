@@ -52,13 +52,16 @@ public record ProdutoDTO(
 
         // ESTOQUE
         Integer quantidadeEmEstoque, // Saldo total
-        Integer estoqueFiscal,       // NOVO: Com Nota
-        Integer estoqueNaoFiscal,    // NOVO: Sem Nota
+        Integer estoqueFiscal,       // Com Nota
+        Integer estoqueNaoFiscal,    // Sem Nota
         Integer estoqueMinimo,
         Integer diasParaReposicao,
 
         String urlImagem,
-        boolean ativo
+        boolean ativo,
+
+        // 🚩 NOVO: Flag de revisão para produtos cadastrados rapidamente no PDV
+        Boolean revisaoPendente
 ) {
     public ProdutoDTO(Produto p) {
         this(
@@ -82,12 +85,13 @@ public record ProdutoDTO(
                 p.getPrecoVenda(),
                 p.getPrecoCusto(),
                 p.getQuantidadeEmEstoque(),
-                p.getEstoqueFiscal(),       // Mapeando do Banco
-                p.getEstoqueNaoFiscal(),    // Mapeando do Banco
+                p.getEstoqueFiscal(),
+                p.getEstoqueNaoFiscal(),
                 p.getEstoqueMinimo(),
                 p.getDiasParaReposicao(),
                 p.getUrlImagem(),
-                p.isAtivo()
+                p.isAtivo(),
+                p.getRevisaoPendente() // 🚩 Mapeamento da nova flag
         );
     }
 }

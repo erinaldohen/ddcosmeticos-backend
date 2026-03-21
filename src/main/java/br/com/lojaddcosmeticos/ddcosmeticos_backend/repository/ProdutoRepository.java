@@ -22,18 +22,20 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
     List<Produto> findByNcm(String ncm);
 
-    // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE) ---
-    // CORREÇÃO APLICADA: CAST(:termo AS text) impede que o Postgres interprete o parâmetro como bytea.
+    // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE & CORRIGIDA PARA POSTGRES) ---
+    // A lógica condicional verifica se o parâmetro foi passado (is null ou = false).
+    // Se foi passado (true) ativa a cláusula do filtro correspondente.
     @Query("SELECT p FROM Produto p WHERE p.ativo = true " +
-            "AND (:termo IS NULL OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%')) " +
-            "AND (:marca IS NULL OR p.marca = :marca) " +
-            "AND (:categoria IS NULL OR p.categoria = :categoria) " +
-            "AND (:statusEstoque IS NULL " +
+            "AND (:termo IS NULL OR :termo = '' OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS string), '%')) " +
+            "AND (:marca IS NULL OR :marca = '' OR p.marca = :marca) " +
+            "AND (:categoria IS NULL OR :categoria = '' OR p.categoria = :categoria) " +
+            "AND (:statusEstoque IS NULL OR :statusEstoque = '' " +
             "     OR (:statusEstoque = 'baixo' AND p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 5)) " +
             "     OR (:statusEstoque = 'ok' AND p.quantidadeEmEstoque > COALESCE(p.estoqueMinimo, 5))) " +
             "AND (:semImagem = false OR (:semImagem = true AND (p.urlImagem IS NULL OR p.urlImagem = ''))) " +
             "AND (:semNcm = false OR (:semNcm = true AND (p.ncm IS NULL OR p.ncm = '00000000' OR p.ncm = ''))) " +
-            "AND (:precoZero = false OR (:precoZero = true AND p.precoVenda = 0))")
+            "AND (:precoZero = false OR (:precoZero = true AND (p.precoVenda IS NULL OR p.precoVenda <= 0))) " +
+            "AND (:revisaoPendente = false OR (:revisaoPendente = true AND p.revisaoPendente = true))")
     Page<Produto> buscarComFiltros(
             @Param("termo") String termo,
             @Param("marca") String marca,
@@ -42,25 +44,21 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             @Param("semImagem") Boolean semImagem,
             @Param("semNcm") Boolean semNcm,
             @Param("precoZero") Boolean precoZero,
+            @Param("revisaoPendente") Boolean revisaoPendente,
             Pageable pageable);
 
     // --- MÉTODOS LEGADOS ---
-
-    // CORREÇÃO APLICADA: CAST(:termo AS text)
-    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%'))")
+    @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS string), '%'))")
     Page<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(@Param("termo") String termo, Pageable pageable);
 
-    // Sobrecarga (Spring Data resolve esta automaticamente pela assinatura do método)
     List<Produto> findByDescricaoContainingIgnoreCaseOrCodigoBarras(String descricao, String codigoBarras);
 
     // --- OUTROS MÉTODOS DE NEGÓCIO ---
-
-    // CORREÇÃO APLICADA: CAST(:termo AS text)
     @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (" +
-            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
-            "(LOWER(p.marca) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
-            "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', CAST(:termo AS text), '%'))) OR " +
-            "(p.codigoBarras LIKE CONCAT('%', CAST(:termo AS text), '%')))")
+            "(LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%'))) OR " +
+            "(LOWER(p.marca) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%'))) OR " +
+            "(LOWER(p.categoria) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%'))) OR " +
+            "(p.codigoBarras LIKE CONCAT('%', CAST(:termo AS string), '%')))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
@@ -77,7 +75,7 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
     BigDecimal calcularValorTotalEstoque();
 
-    @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.cest IS NULL) AND p.ativo = true")
+    @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.ncm = '' OR p.cest IS NULL OR p.cest = '') AND p.ativo = true")
     long contarProdutosSemFiscal();
 
     @Query("""
@@ -128,13 +126,14 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Modifying
     @Query("UPDATE Produto p SET p.ativo = true WHERE p.id = :id")
-    void reativarProduto(Long id);
+    void reativarProduto(@Param("id") Long id);
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.validade < CURRENT_DATE AND p.ativo = true")
     long countVencidos();
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEmEstoque <= p.estoqueMinimo AND p.ativo = true")
     long countBaixoEstoque();
+
     @Query("SELECT COALESCE(SUM(p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
     Long calcularQuantidadeTotalEstoque();
 
@@ -157,4 +156,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "(p.dataUltimaVenda IS NULL OR p.dataUltimaVenda <= :dataLimiteGiro)")
     RiscoEstoqueProjection calcularEstoqueParado(@Param("dataLimiteGiro") LocalDate dataLimiteGiro);
 
+    // --- CONTADOR DO DASHBOARD (ALERTA DE PRODUTOS PENDENTES DO PDV) ---
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.revisaoPendente = true AND p.ativo = true")
+    long countByRevisaoPendenteTrueAndAtivoTrue();
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.revisaoPendente = true AND p.ativo = true")
+    long countProdutosPendentesDeRevisao();
 }

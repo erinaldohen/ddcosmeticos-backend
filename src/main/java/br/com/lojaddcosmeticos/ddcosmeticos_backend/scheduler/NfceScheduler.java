@@ -19,21 +19,35 @@ public class NfceScheduler {
     private final VendaRepository vendaRepository;
     private final NfceService nfceService;
 
-    // Executa a cada 60 segundos APÓS o término da última execução
-    @Scheduled(fixedDelay = 60000)
+    // Aumentado para 3 minutos (180000 ms). Evita bloqueio da SEFAZ por "Consumo Indevido"
+    @Scheduled(fixedDelay = 180000)
     public void processarNotasPendentesEContingencia() {
-        // Busca notas que não foram autorizadas online
-        List<Venda> notasParaProcessar = vendaRepository.findByStatusNfceIn(
-                List.of(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
-        );
+        try {
+            // Busca notas que não foram autorizadas online
+            List<Venda> notasParaProcessar = vendaRepository.findByStatusNfceIn(
+                    List.of(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
+            );
 
-        if (notasParaProcessar.isEmpty()) return;
+            if (notasParaProcessar.isEmpty()) return;
 
-        log.info("🔄 SCHEDULER: Processando {} notas pendentes ou em contingência...", notasParaProcessar.size());
+            // Segurança: Processar no máximo 30 notas por ciclo para não sobrecarregar a memória nem a SEFAZ
+            List<Venda> lote = notasParaProcessar.stream().limit(30).toList();
 
-        for (Venda venda : notasParaProcessar) {
-            // Agora ambos os casos usam o mesmo fluxo de re-transmissão
-            nfceService.transmitirNotaContingencia(venda);
+            log.info("🔄 SCHEDULER: Encontradas {} notas pendentes. Processando lote de {} notas...",
+                    notasParaProcessar.size(), lote.size());
+
+            for (Venda venda : lote) {
+                // Tenta retransmitir
+                nfceService.transmitirNotaContingencia(venda);
+
+                // Micropausa de 1 segundo entre envios para respeitar o limite de requisições da SEFAZ
+                Thread.sleep(1000);
+            }
+
+            log.info("✅ SCHEDULER: Lote de retransmissão finalizado.");
+
+        } catch (Exception e) {
+            log.error("❌ SCHEDULER: Erro crítico durante a execução do lote de NFC-e: {}", e.getMessage());
         }
     }
 }

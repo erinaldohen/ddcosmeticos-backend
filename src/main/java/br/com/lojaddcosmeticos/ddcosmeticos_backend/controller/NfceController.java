@@ -1,5 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.NfceResponseDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ImpressaoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.NfceService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +13,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -22,6 +27,9 @@ public class NfceController {
 
     @Autowired
     private ImpressaoService impressaoService;
+
+    @Autowired
+    private VendaRepository vendaRepository; // Injetado para podermos buscar vendas falhadas
 
     // ==================================================================================
     // STATUS SEFAZ (PING NFC-e - MODELO 65)
@@ -50,5 +58,30 @@ public class NfceController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=cupom_" + idVenda + ".pdf")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
+    }
+
+    // ==================================================================================
+    // RETRANSMISSÃO MANUAL DE NFC-E (CONTINGÊNCIA / REJEIÇÃO)
+    // ==================================================================================
+    @PostMapping("/retransmitir/{idVenda}")
+    @Operation(summary = "Retransmitir NFC-e", description = "Tenta reemitir uma nota fiscal que ficou em contingência ou foi rejeitada pela SEFAZ.")
+    public ResponseEntity<?> retransmitirNfce(@PathVariable Long idVenda) {
+        try {
+            Optional<Venda> vendaOpt = vendaRepository.findById(idVenda);
+            if (vendaOpt.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            Venda venda = vendaOpt.get();
+
+            // Tenta processar a emissão novamente
+            NfceResponseDTO resposta = nfceService.emitirNfce(venda);
+
+            return ResponseEntity.ok(resposta);
+
+        } catch (Exception e) {
+            log.error("Erro ao retransmitir NFC-e da venda {}: {}", idVenda, e.getMessage());
+            return ResponseEntity.badRequest().body("Falha na retransmissão: " + e.getMessage());
+        }
     }
 }

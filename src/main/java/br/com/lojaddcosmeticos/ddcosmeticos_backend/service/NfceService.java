@@ -41,6 +41,9 @@ public class NfceService {
     @Autowired private ConfiguracaoLojaService configuracaoLojaService;
     @Autowired private TributacaoService tributacaoService;
 
+    // ==================================================================================
+    // CONSULTA STATUS SEFAZ (PING)
+    // ==================================================================================
     public String consultarStatusSefaz() throws Exception {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
@@ -52,6 +55,9 @@ public class NfceService {
         return "Status: " + retorno.getCStat() + " - " + retorno.getXMotivo();
     }
 
+    // ==================================================================================
+    // EMISSÃO PRINCIPAL DE NFC-E
+    // ==================================================================================
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
@@ -70,12 +76,16 @@ public class NfceService {
     private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja) throws Exception {
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
 
+        // 💥 O GRANDE TRUQUE: Desligamos a validação de Schema XSD Local para confiar apenas na SEFAZ.
+        configNfe.setValidacaoDocumento(false);
+
         boolean isProducao = AmbienteEnum.PRODUCAO.equals(configNfe.getAmbiente());
         String serie = String.valueOf(isProducao ? configLoja.getFiscal().getSerieProducao() : configLoja.getFiscal().getSerieHomologacao());
         String nNF = String.valueOf(venda.getIdVenda() + 1000);
         String cNF = String.format("%08d", new Random().nextInt(99999999));
         String cnpjEmitente = configLoja.getLoja().getCnpj().replaceAll("\\D", "");
 
+        // 1. Geração da Chave de Acesso
         String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, "65", serie, nNF, "1", cNF);
         String dv = calcularDV(chaveSemDigito);
         String chaveAcesso = chaveSemDigito + dv;
@@ -107,40 +117,56 @@ public class NfceService {
         infNFe.setInfRespTec(montarRespTec(cnpjEmitente));
 
         nfe.setInfNFe(infNFe);
+        enviNFe.getNFe().add(nfe);
 
-        // 1º PASSO: INJEÇÃO DO QR CODE *ANTES* DA ASSINATURA (Solução Final para a SVRS)
+        // 2. ASSINATURA OBRIGATÓRIA DA NFE (Sem QR Code para garantir a integridade da Assinatura)
+        String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
+        String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
+
+        // O Java converte o XML assinado de volta num Objeto TEnviNFe
+        TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
+
+        // ====================================================================================
+        // 3. MONTAGEM DO QR CODE 2.0 (NT 2018.005)
+        // ====================================================================================
         String cscId = isProducao ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
         String cscToken = isProducao ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
-        String linkFront = "";
+        String qrCodeFront = "";
 
-        if (cscId != null && cscToken != null) {
+        if (cscId != null && !cscId.isBlank() && cscToken != null && !cscToken.isBlank()) {
             String cIdToken = String.format("%06d", Integer.parseInt(cscId.replaceAll("\\D", "")));
-            String urlConsulta = isProducao ? "http://nfce.sefaz.pe.gov.br/nfce-web/consultarNFCe" : "http://nfcehomolog.sefaz.pe.gov.br/nfce-web/consultarNFCe";
+
+            // URLs Oficiais de Pernambuco - HTTP é exigido em Homologação
+            String urlQrCode = isProducao
+                    ? "http://nfce.sefaz.pe.gov.br/nfce/consulta"
+                    : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
+
+            String urlChave = "www.sefaz.pe.gov.br/nfce/consulta";
 
             String pSemHash = chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdToken;
+
+            // A Hash gerada
             String hash = gerarHashSHA1(pSemHash + cscToken.trim());
 
-            // O segredo está aqui: A SEFAZ SVRS espera a string sem CDATA e sem escapes quando inserida ANTES de assinar
-            linkFront = urlConsulta + "?p=" + pSemHash + "|" + hash;
+            qrCodeFront = urlQrCode + "?p=" + pSemHash + "|" + hash;
 
             TNFe.InfNFeSupl supl = new TNFe.InfNFeSupl();
-            supl.setQrCode(linkFront);
-            supl.setUrlChave(urlConsulta);
-            nfe.setInfNFeSupl(supl);
+
+            // Atribuímos diretamente o CDATA no objeto (o JAXB preserva isso)
+            supl.setQrCode("<![CDATA[" + qrCodeFront + "]]>");
+            supl.setUrlChave(urlChave);
+
+            enviNFeAssinado.getNFe().get(0).setInfNFeSupl(supl);
         } else {
             log.warn("⚠️ CSC ID ou Token não configurados. A SEFAZ rejeitará a nota sem QR Code.");
         }
 
-        enviNFe.getNFe().add(nfe);
-
-        // 2º PASSO: ASSINATURA OBRIGATÓRIA (Já com o QR Code no Objeto)
-        String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
-        String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
-
-        // ENVIO PARA A SEFAZ COMO STRING PURA (Para garantir que o Jaxb não estraga o QR Code no meio do caminho)
+        // ====================================================================================
+        // 4. ENVIO PARA A SEFAZ (O compilador agora aprova porque passamos o TEnviNFe)
+        // ====================================================================================
         TRetEnviNFe retorno;
         try {
-            retorno = Nfe.enviarNfe(configNfe, xmlAssinado, DocumentoEnum.NFCE);
+            retorno = Nfe.enviarNfe(configNfe, enviNFeAssinado, DocumentoEnum.NFCE);
         } catch (Exception e) {
             log.error("Erro interno do envio SEFAZ: {}", e.getMessage());
             throw new ValidationException("Erro SEFAZ: " + e.getMessage());
@@ -150,11 +176,10 @@ public class NfceService {
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             venda.setChaveAcessoNfce(chaveAcesso);
 
-            TEnviNFe envFinalObject = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
-            venda.setXmlNota(XmlNfeUtil.criaNfeProc(envFinalObject, retorno.getProtNFe()));
+            venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFeAssinado, retorno.getProtNFe()));
             vendaRepository.save(venda);
 
-            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), linkFront);
+            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), qrCodeFront);
         } else {
             String msg = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
             log.error("Rejeição SEFAZ: {}", msg);
@@ -166,13 +191,13 @@ public class NfceService {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
         byte[] result = md.digest(input.getBytes(StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
-        for (byte b : result) sb.append(String.format("%02x", b));
-        return sb.toString().toUpperCase();
+        for (byte b : result) sb.append(String.format("%02X", b));
+
+        return sb.toString();
     }
 
     private String gerarChaveAcesso(String cuf, LocalDateTime d, String cnpj, String mod, String ser, String nnf, String tp, String cnf) {
-        return String.format("%02d%s%s%s%03d%09d%s%s",
-                Integer.parseInt(cuf), d.format(DateTimeFormatter.ofPattern("yyMM")), cnpj, mod, Integer.parseInt(ser), Long.parseLong(nnf), tp, cnf);
+        return String.format("%02d%s%s%s%03d%09d%s%s", Integer.parseInt(cuf), d.format(DateTimeFormatter.ofPattern("yyMM")), cnpj, mod, Integer.parseInt(ser), Long.parseLong(nnf), tp, cnf);
     }
 
     private String calcularDV(String chave) {
@@ -342,15 +367,7 @@ public class NfceService {
     }
 
     private NfceResponseDTO simularEmissaoEmDev(Venda v) {
-        return new NfceResponseDTO(
-                v.getIdVenda(),
-                "100",
-                "Simulado",
-                "35230900000000000000650010000000011000000001",
-                "123",
-                "",
-                ""
-        );
+        return new NfceResponseDTO(v.getIdVenda(), "100", "Simulado", "35230900000000000000650010000000011000000001", "123", "", "");
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

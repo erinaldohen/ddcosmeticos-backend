@@ -26,41 +26,18 @@ public class ConfiguracaoLoja implements Serializable {
     @ToString.Include
     private Long id;
 
-    @Embedded
-    private DadosLoja loja = new DadosLoja();
-
-    @Embedded
-    private EnderecoLoja endereco = new EnderecoLoja();
-
-    @Embedded
-    private DadosFiscal fiscal = new DadosFiscal();
-
-    @Embedded
-    private DadosFinanceiro financeiro = new DadosFinanceiro();
-
-    @Embedded
-    private DadosVendas vendas = new DadosVendas();
-
-    @Embedded
-    private DadosSistema sistema = new DadosSistema();
-
-    // --- NOVA SESSÃO DE COMISSÕES ADICIONADA ---
-    @Embedded
-    private DadosComissoes comissoes = new DadosComissoes();
-
-    @Column(name = "meta_faturamento_mensal", precision = 15, scale = 2)
-    private BigDecimal metaFaturamentoMensal = BigDecimal.ZERO;
+    @Embedded private DadosLoja loja = new DadosLoja();
+    @Embedded private EnderecoLoja endereco = new EnderecoLoja();
+    @Embedded private DadosFiscal fiscal = new DadosFiscal();
+    @Embedded private DadosFinanceiro financeiro = new DadosFinanceiro();
+    @Embedded private DadosVendas vendas = new DadosVendas();
+    @Embedded private DadosSistema sistema = new DadosSistema();
+    @Embedded private DadosComissoes comissoes = new DadosComissoes();
 
     public boolean isProducao() {
         return fiscal != null && "PRODUCAO".equalsIgnoreCase(fiscal.getAmbiente());
     }
 
-    // Retorna o código numérico esperado pela SEFAZ: 1 para Produção, 2 para Homologação
-    public String getAmbienteSefazCodigo() {
-        return isProducao() ? "1" : "2";
-    }
-
-    // 🛡️ GARANTIA ABSOLUTA CONTRA NULL POINTER 🛡️
     @PostLoad
     @PrePersist
     @PreUpdate
@@ -71,7 +48,7 @@ public class ConfiguracaoLoja implements Serializable {
         if (this.financeiro == null) this.financeiro = new DadosFinanceiro();
         if (this.vendas == null) this.vendas = new DadosVendas();
         if (this.sistema == null) this.sistema = new DadosSistema();
-        if (this.comissoes == null) this.comissoes = new DadosComissoes(); // Proteção para a nova classe
+        if (this.comissoes == null) this.comissoes = new DadosComissoes();
     }
 
     // ==================================================================================
@@ -120,7 +97,7 @@ public class ConfiguracaoLoja implements Serializable {
     @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosFiscal {
         @Column(length = 20) private String ambiente = "HOMOLOGACAO";
-        @Column(length = 20) private String regime = "1"; // 1=Simples Nacional
+        @Column(length = 20) private String regime = "1";
         @Column(length = 100) private String tokenHomologacao;
         @Column(length = 50) private String cscIdHomologacao;
         private Integer serieHomologacao = 1;
@@ -131,9 +108,15 @@ public class ConfiguracaoLoja implements Serializable {
         private Integer nfeProducao = 1;
         private String caminhoCertificado;
         private byte[] arquivoCertificado;
-        @Convert(converter = CryptoConverter.class) @Column(length = 500) private String senhaCert;
+
+        @Convert(converter = CryptoConverter.class)
+        @Column(length = 500) private String senhaCert;
+
         @Column(length = 50) private String csrtId;
-        @Convert(converter = CryptoConverter.class) @Column(length = 500) private String csrtHash;
+
+        @Convert(converter = CryptoConverter.class)
+        @Column(length = 500) private String csrtHash;
+
         private String ibptToken;
         private String naturezaPadrao = "VENDA DE MERCADORIA";
         private String emailContabil;
@@ -142,6 +125,15 @@ public class ConfiguracaoLoja implements Serializable {
         private Boolean modoContingencia = false;
         private Boolean priorizarMonofasico = true;
         @Column(length = 500) private String obsPadraoCupom;
+
+        public String getCscIdAtivo() {
+            String id = "PRODUCAO".equalsIgnoreCase(ambiente) ? cscIdProducao : cscIdHomologacao;
+            return (id != null) ? id.replaceAll("^0+", "") : "1";
+        }
+
+        public String getTokenAtivo() {
+            return "PRODUCAO".equalsIgnoreCase(ambiente) ? tokenProducao : tokenHomologacao;
+        }
     }
 
     @Embeddable
@@ -154,11 +146,8 @@ public class ConfiguracaoLoja implements Serializable {
         @Column(precision = 15, scale = 2) private BigDecimal metaDiaria = BigDecimal.ZERO;
         @Column(precision = 10, scale = 2) private BigDecimal taxaDebito = BigDecimal.ZERO;
         @Column(precision = 10, scale = 2) private BigDecimal taxaCredito = BigDecimal.ZERO;
-
-        // Limites de Desconto para o VendaService
         @Column(precision = 15, scale = 2) private BigDecimal descCaixa = new BigDecimal("5.00");
         @Column(precision = 15, scale = 2) private BigDecimal descGerente = new BigDecimal("20.00");
-
         private Boolean descExtraPix = false;
         private Boolean bloquearAbaixoCusto = true;
         @Column(length = 50) private String pixTipo;
@@ -175,9 +164,7 @@ public class ConfiguracaoLoja implements Serializable {
     }
 
     @Embeddable
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor // <-- Alterado de @Data
     public static class DadosVendas {
         private String comportamentoCpf = "PERGUNTAR";
         private Boolean bloquearEstoque = true;
@@ -186,10 +173,10 @@ public class ConfiguracaoLoja implements Serializable {
         private Boolean imprimirTicketTroca;
         private Boolean autoEnterScanner;
         private Boolean fidelidadeAtiva;
-        private BigDecimal pontosPorReal;
+        @Column(precision = 15, scale = 2) private BigDecimal pontosPorReal = BigDecimal.ONE;
         private Boolean usarBalanca;
         private Boolean agruparItens;
-        private BigDecimal metaMensal = BigDecimal.ZERO;
+        @Column(precision = 15, scale = 2) private BigDecimal metaMensal = BigDecimal.ZERO;
     }
 
     @Embeddable
@@ -207,22 +194,16 @@ public class ConfiguracaoLoja implements Serializable {
         private Boolean imprimirLogoCupom = true;
     }
 
-    // --- NOVA CLASSE EMBEDDABLE PARA O MOTOR DE COMISSÕES ---
     @Embeddable
     @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosComissoes {
-        @Column(length = 20) private String tipoCalculo = "GERAL"; // GERAL ou CATEGORIA
+        @Column(length = 20) private String tipoCalculo = "GERAL";
         @Column(precision = 5, scale = 2) private BigDecimal percentualGeral = BigDecimal.ZERO;
-        @Column(length = 20) private String comissionarSobre = "LUCRO"; // LUCRO ou TOTAL_VENDA
+        @Column(length = 20) private String comissionarSobre = "LUCRO";
         private Boolean descontarTaxasCartao = false;
     }
-
-    // ==================================================================================
-    // MÉTODOS DE CONVENIÊNCIA (EVITAM LOGICA REPETIDA NO SERVICE)
-    // ==================================================================================
 
     public String getCnpjLimpo() {
         return (loja != null && loja.getCnpj() != null) ? loja.getCnpj().replaceAll("\\D", "") : "";
     }
-
 }

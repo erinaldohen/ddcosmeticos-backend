@@ -112,7 +112,7 @@ public class ConfiguracaoLojaService {
         // SALVA OS DADOS BINÁRIOS NA BASE DE DADOS E O CAMINHO
         config.getFiscal().setCaminhoCertificado(fileName);
         config.getFiscal().setSenhaCert(senha);
-        config.getFiscal().setArquivoCertificado(file.getBytes()); // <--- CRÍTICO PARA A EMISSÃO NFC-e
+        config.getFiscal().setArquivoCertificado(file.getBytes());
 
         repository.save(config);
         log.info("Certificado salvo com sucesso. Validade: {} dias.", diasRestantes);
@@ -150,9 +150,6 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
-    // =========================================================================
-    // CORREÇÃO CRÍTICA: ATUALIZAÇÃO BLINDADA (PREVINE JSON DATA WIPING)
-    // =========================================================================
     private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
         c.garantirInstancias();
 
@@ -172,7 +169,6 @@ public class ConfiguracaoLojaService {
 
         ConfiguracaoLoja.DadosFiscal f = c.getFiscal();
 
-        // Backup dos dados sensíveis do certificado ANTES de processar o DTO
         String senhaCertAtual = f.getSenhaCert();
         String caminhoCertAtual = f.getCaminhoCertificado();
         byte[] arquivoCertAtual = f.getArquivoCertificado();
@@ -180,34 +176,29 @@ public class ConfiguracaoLojaService {
         f.setAmbiente(d.fiscal().ambiente());
         f.setRegime(d.fiscal().regime());
 
-        if (d.fiscal().homologacao() != null) {
-            f.setTokenHomologacao(d.fiscal().homologacao().token());
-            f.setCscIdHomologacao(d.fiscal().homologacao().cscId());
-            f.setSerieHomologacao(d.fiscal().homologacao().serie());
-            f.setNfeHomologacao(d.fiscal().homologacao().nfe());
-        }
-        if (d.fiscal().producao() != null) {
-            f.setTokenProducao(d.fiscal().producao().token());
-            f.setCscIdProducao(d.fiscal().producao().cscId());
-            f.setSerieProducao(d.fiscal().producao().serie());
-            f.setNfeProducao(d.fiscal().producao().nfe());
-        }
+        // A MÁGICA: Mapeamento plano sem intermediários
+        f.setTokenHomologacao(d.fiscal().tokenHomologacao());
+        f.setCscIdHomologacao(d.fiscal().cscIdHomologacao());
+        f.setSerieHomologacao(d.fiscal().serieHomologacao() != null ? d.fiscal().serieHomologacao() : 1);
+        f.setNfeHomologacao(d.fiscal().nfeHomologacao() != null ? d.fiscal().nfeHomologacao() : 1);
 
-        // SE O FRONTEND NÃO MANDOU A SENHA, MANTÉM A ANTIGA
+        f.setTokenProducao(d.fiscal().tokenProducao());
+        f.setCscIdProducao(d.fiscal().cscIdProducao());
+        f.setSerieProducao(d.fiscal().serieProducao() != null ? d.fiscal().serieProducao() : 1);
+        f.setNfeProducao(d.fiscal().nfeProducao() != null ? d.fiscal().nfeProducao() : 1);
+
         if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) {
             f.setSenhaCert(d.fiscal().senhaCert());
         } else {
             f.setSenhaCert(senhaCertAtual);
         }
 
-        // SE O FRONTEND NÃO MANDOU O CAMINHO, MANTÉM O ANTIGO
         if (d.fiscal().caminhoCertificado() != null && !d.fiscal().caminhoCertificado().isEmpty()) {
             f.setCaminhoCertificado(d.fiscal().caminhoCertificado());
         } else {
             f.setCaminhoCertificado(caminhoCertAtual);
         }
 
-        // GARANTE QUE O BINÁRIO DO CERTIFICADO NÃO SE PERCA
         f.setArquivoCertificado(arquivoCertAtual);
 
         f.setCsrtId(d.fiscal().csrtId());
@@ -274,9 +265,15 @@ public class ConfiguracaoLojaService {
                 ),
                 new ConfiguracaoDTO.FiscalDTO(
                         c.getFiscal().getAmbiente(), c.getFiscal().getRegime(),
-                        new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(), c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao()),
-                        new ConfiguracaoDTO.FiscalAmbienteDTO(c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(), c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao()),
-                        c.getFiscal().getCaminhoCertificado(), "", // SEGURANÇA: NUNCA DEVOLVE A SENHA PARA O REACT
+
+                        // Retorna os dados planos perfeitamente preenchidos para o React
+                        c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(),
+                        c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao(),
+
+                        c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(),
+                        c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao(),
+
+                        c.getFiscal().getCaminhoCertificado(), "", // SEGURANÇA: NÃO DEVOLVE A SENHA
                         c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
                         c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
                         c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),

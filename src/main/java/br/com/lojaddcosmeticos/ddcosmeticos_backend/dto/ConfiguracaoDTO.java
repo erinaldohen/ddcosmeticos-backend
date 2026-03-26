@@ -29,15 +29,16 @@ public record ConfiguracaoDTO(
 
     public record FiscalDTO(
             String ambiente, String regime,
-            FiscalAmbienteDTO homologacao,
-            FiscalAmbienteDTO producao,
+
+            // Campos planos (Flat) alinhados com o Frontend
+            String tokenHomologacao, String cscIdHomologacao, Integer serieHomologacao, Integer nfeHomologacao,
+            String tokenProducao, String cscIdProducao, Integer serieProducao, Integer nfeProducao,
+
             String caminhoCertificado, String senhaCert,
             String csrtId, String csrtHash, String ibptToken, String naturezaPadrao,
             String emailContabil, Boolean enviarXmlAutomatico, BigDecimal aliquotaInterna,
             Boolean modoContingencia, Boolean priorizarMonofasico, String obsPadraoCupom
     ) {}
-
-    public record FiscalAmbienteDTO(String token, String cscId, Integer serie, Integer nfe) {}
 
     public record FinanceiroDTO(
             BigDecimal comissaoProdutos, BigDecimal comissaoServicos, BigDecimal alertaSangria,
@@ -52,9 +53,7 @@ public record ConfiguracaoDTO(
     public record VendasDTO(
             String comportamentoCpf, Boolean bloquearEstoque, String layoutCupom, Boolean imprimirVendedor,
             Boolean imprimirTicketTroca, Boolean autoEnterScanner, Boolean fidelidadeAtiva, BigDecimal pontosPorReal,
-            Boolean usarBalanca, Boolean agruparItens,
-            // [LIBERDADE PARA O ADMIN]: Campo adicionado para receber a meta do Frontend
-            BigDecimal metaMensal
+            Boolean usarBalanca, Boolean agruparItens, BigDecimal metaMensal
     ) {}
 
     public record SistemaDTO(

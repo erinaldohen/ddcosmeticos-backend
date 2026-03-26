@@ -42,7 +42,7 @@ public class NfceService {
     @Autowired private TributacaoService tributacaoService;
 
     // ==================================================================================
-    // CONSULTA STATUS SEFAZ (PING)
+    // CONSULTA STATUS SEFAZ
     // ==================================================================================
     public String consultarStatusSefaz() throws Exception {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
@@ -76,7 +76,7 @@ public class NfceService {
     private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja) throws Exception {
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
 
-        // 💥 O GRANDE TRUQUE: Desligamos a validação de Schema XSD Local para confiar apenas na SEFAZ.
+        // Desligamos a validação de Schema local para deixar a SEFAZ validar
         configNfe.setValidacaoDocumento(false);
 
         boolean isProducao = AmbienteEnum.PRODUCAO.equals(configNfe.getAmbiente());
@@ -117,55 +117,56 @@ public class NfceService {
         infNFe.setInfRespTec(montarRespTec(cnpjEmitente));
 
         nfe.setInfNFe(infNFe);
-        enviNFe.getNFe().add(nfe);
-
-        // 2. ASSINATURA OBRIGATÓRIA DA NFE (Sem QR Code para garantir a integridade da Assinatura)
-        String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
-        String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
-
-        // O Java converte o XML assinado de volta num Objeto TEnviNFe
-        TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
 
         // ====================================================================================
-        // 3. MONTAGEM DO QR CODE 2.0 (NT 2018.005)
+        // 3. A COMBINAÇÃO FINAL (Baseada na Documentação Oficial SEFAZ-PE)
         // ====================================================================================
         String cscId = isProducao ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
         String cscToken = isProducao ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
         String qrCodeFront = "";
 
         if (cscId != null && !cscId.isBlank() && cscToken != null && !cscToken.isBlank()) {
-            String cIdToken = String.format("%06d", Integer.parseInt(cscId.replaceAll("\\D", "")));
+            String cIdTokenSemZeros = String.valueOf(Integer.parseInt(cscId.replaceAll("\\D", "")));
 
-            // URLs Oficiais de Pernambuco - HTTP é exigido em Homologação
+            // O link clicável do QR Code muda conforme o ambiente (Com Http)
             String urlQrCode = isProducao
                     ? "http://nfce.sefaz.pe.gov.br/nfce/consulta"
                     : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
 
-            String urlChave = "www.sefaz.pe.gov.br/nfce/consulta";
+            // 🚨 A PEGADINHA DA SEFAZ: A urlChave É IGUAL PARA HOMOLOGAÇÃO E PRODUÇÃO!
+            String urlChave = "nfce.sefaz.pe.gov.br/nfce/consulta";
 
-            String pSemHash = chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdToken;
+            // Hash com Pipes e Minúsculo
+            String pParaHash = chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + cscToken.trim();
+            String hash = gerarHashSHA1(pParaHash).toLowerCase();
 
-            // A Hash gerada
-            String hash = gerarHashSHA1(pSemHash + cscToken.trim());
-
-            qrCodeFront = urlQrCode + "?p=" + pSemHash + "|" + hash;
+            // String do QR Code COM Pipes
+            qrCodeFront = urlQrCode + "?p=" + chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + "|" + hash;
 
             TNFe.InfNFeSupl supl = new TNFe.InfNFeSupl();
 
-            // Atribuímos diretamente o CDATA no objeto (o JAXB preserva isso)
+            // INJETAMOS O CDATA (Isto resolve o erro 225 de schema)
             supl.setQrCode("<![CDATA[" + qrCodeFront + "]]>");
-            supl.setUrlChave(urlChave);
+            supl.setUrlChave(urlChave); // A urlChave fixa resolve o erro 878
 
-            enviNFeAssinado.getNFe().get(0).setInfNFeSupl(supl);
+            nfe.setInfNFeSupl(supl);
         } else {
-            log.warn("⚠️ CSC ID ou Token não configurados. A SEFAZ rejeitará a nota sem QR Code.");
+            log.warn("⚠️ CSC ID ou Token não configurados.");
         }
 
+        enviNFe.getNFe().add(nfe);
+
         // ====================================================================================
-        // 4. ENVIO PARA A SEFAZ (O compilador agora aprova porque passamos o TEnviNFe)
+        // 4. ASSINATURA E ENVIO NATIVO (O MÉTODO PÚBLICO E CORRETO)
         // ====================================================================================
+        String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
+        String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
+
+        TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
+
         TRetEnviNFe retorno;
         try {
+            // O método oficial que resolve o erro vermelho de compilação!
             retorno = Nfe.enviarNfe(configNfe, enviNFeAssinado, DocumentoEnum.NFCE);
         } catch (Exception e) {
             log.error("Erro interno do envio SEFAZ: {}", e.getMessage());
@@ -187,12 +188,17 @@ public class NfceService {
         }
     }
 
+    /**
+     * GERAÇÃO DO HASH SHA-1
+     * O `%02x` formata o hexadecimal em LETRAS MINÚSCULAS (Regra Sefaz SVRS)
+     */
     private String gerarHashSHA1(String input) throws Exception {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
         byte[] result = md.digest(input.getBytes(StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
-        for (byte b : result) sb.append(String.format("%02X", b));
-
+        for (byte b : result) {
+            sb.append(String.format("%02x", b)); // Tem de ser %02x minúsculo!
+        }
         return sb.toString();
     }
 
@@ -264,14 +270,22 @@ public class NfceService {
     private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itens, ConfiguracaoLoja config) {
         List<TNFe.InfNFe.Det> details = new ArrayList<>();
         boolean isST = config.getFiscal().getNaturezaPadrao() != null && config.getFiscal().getNaturezaPadrao().contains("5.405");
+        boolean isHomologacao = "HOMOLOGACAO".equalsIgnoreCase(config.getFiscal().getAmbiente());
+
         int i = 1;
         for (ItemVenda item : itens) {
             TNFe.InfNFe.Det det = new TNFe.InfNFe.Det();
-            det.setNItem(String.valueOf(i++));
+            det.setNItem(String.valueOf(i));
             TNFe.InfNFe.Det.Prod p = new TNFe.InfNFe.Det.Prod();
             p.setCProd(item.getProduto().getId().toString());
             p.setCEAN("SEM GTIN");
-            p.setXProd(item.getProduto().getDescricao());
+
+            // Solução do Erro 373: Nome padrão no Item 1 em Ambiente de Homologação
+            if (isHomologacao && i == 1) {
+                p.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
+            } else {
+                p.setXProd(item.getProduto().getDescricao());
+            }
 
             String ncm = item.getProduto().getNcm() != null ? item.getProduto().getNcm().replaceAll("\\D", "") : "33049990";
             if (ncm.length() != 8) ncm = "33049990";
@@ -311,6 +325,8 @@ public class NfceService {
             imp.getContent().add(new ObjectFactory().createTNFeInfNFeDetImpostoICMS(icms));
             det.setImposto(imp);
             details.add(det);
+
+            i++;
         }
         return details;
     }

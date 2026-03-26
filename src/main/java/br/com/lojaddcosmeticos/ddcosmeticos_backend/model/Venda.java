@@ -4,11 +4,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.CanalOrigem;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.NoArgsConstructor;
-import lombok.EqualsAndHashCode;
-import lombok.ToString;
+import lombok.*;
 import org.hibernate.envers.Audited;
 import org.hibernate.envers.RelationTargetAuditMode;
 
@@ -17,7 +13,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-// DBA/Performance: Substituído @Data por Getter, Setter e Equals baseado apenas na chave primária
 @Getter
 @Setter
 @NoArgsConstructor
@@ -25,10 +20,11 @@ import java.util.List;
 @Audited
 @Table(name = "tb_venda", indexes = {
         @Index(name = "idx_venda_data", columnList = "dataVenda"),
+        @Index(name = "idx_venda_status", columnList = "statusNfce"),
         @Index(name = "idx_venda_cliente", columnList = "id_cliente")
 })
-@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de ouro do JPA
-@ToString(onlyExplicitlyIncluded = true) // Impede que o log dispare N+1 queries nas listas LAZY
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@ToString(onlyExplicitlyIncluded = true)
 public class Venda {
 
     @Id
@@ -41,7 +37,8 @@ public class Venda {
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
-    private BigDecimal troco;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal troco = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50)
@@ -60,18 +57,20 @@ public class Venda {
     private LocalDateTime dataVenda;
 
     @ToString.Include
-    private BigDecimal valorTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal valorTotal = BigDecimal.ZERO;
 
-    // --- NOVO: Necessário para o Relatório de Lucro e Comissões ---
     @Column(precision = 15, scale = 2)
     private BigDecimal custoTotal = BigDecimal.ZERO;
 
-    private BigDecimal descontoTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal descontoTotal = BigDecimal.ZERO;
 
+    // Regra de negócio nativa: Valor padrão para emissão sem identificação
     @Column(length = 100)
-    private String clienteNome;
+    private String clienteNome = "Consumidor Não Identificado";
 
-    @Column(name = "cliente_telefone")
+    @Column(name = "cliente_telefone", length = 20)
     private String clienteTelefone;
 
     @Column(length = 20)
@@ -81,81 +80,77 @@ public class Venda {
     @Column(length = 50)
     private FormaDePagamento formaDePagamento;
 
-    private Integer quantidadeParcelas;
+    private Integer quantidadeParcelas = 1;
 
-    // Relacionamentos mantidos LAZY e blindados pelo lombok otimizado acima
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<ItemVenda> itens = new ArrayList<>();
 
     @OneToMany(mappedBy = "venda", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<PagamentoVenda> pagamentos = new ArrayList<>();
 
-    private BigDecimal valorIbs;
-    private BigDecimal valorCbs;
-    private BigDecimal valorIs;
-    private BigDecimal valorLiquido;
+    @Column(precision = 15, scale = 2) private BigDecimal valorIbs = BigDecimal.ZERO;
+    @Column(precision = 15, scale = 2) private BigDecimal valorCbs = BigDecimal.ZERO;
+    @Column(precision = 15, scale = 2) private BigDecimal valorIs = BigDecimal.ZERO;
+    @Column(precision = 15, scale = 2) private BigDecimal valorLiquido = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50)
     private StatusFiscal statusNfce;
 
-    @Column(length = 50)
-    private String chaveAcessoNfce;
+    @Column(length = 50) private String chaveAcessoNfce;
+    @Column(length = 20) private String protocoloAutorizacao;
 
-    @Column(length = 20)
-    private String protocoloAutorizacao;
-
-    // FIX POSTGRESQL: O @Lob foi removido. Apenas columnDefinition="TEXT" é necessário
-    // e suficiente para que o Postgres crie um campo de texto ilimitado.
-    @Column(columnDefinition = "TEXT")
-    private String xmlNota;
-
-    @Column(columnDefinition = "TEXT")
-    private String mensagemRejeicao;
+    @Column(columnDefinition = "TEXT") private String xmlNota;
+    @Column(columnDefinition = "TEXT") private String mensagemRejeicao;
 
     private LocalDateTime dataAutorizacao;
-
-    @Column(length = 255)
-    private String motivoDoCancelamento;
-
-    @Column(columnDefinition = "TEXT") // Transformado em texto longo caso a observação seja gigante
-    private String observacao;
+    @Column(length = 255) private String motivoDoCancelamento;
+    @Column(columnDefinition = "TEXT") private String observacao;
 
     // =========================================================================
-    // MÉTODOS DE CONVENIÊNCIA (INTEGRAÇÃO COM O MOTOR DE COMISSÕES)
+    // MÉTODOS DE SINCRONIZAÇÃO JPA (BEST PRACTICES)
     // =========================================================================
 
-    /**
-     * O motor de relatórios procura por "getVendedor()".
-     * Como o modelo chama "usuario", criamos esta ponte.
-     */
+    public void addItem(ItemVenda item) {
+        this.itens.add(item);
+        item.setVenda(this);
+    }
+
+    public void addPagamento(PagamentoVenda pagamento) {
+        this.pagamentos.add(pagamento);
+        pagamento.setVenda(this);
+    }
+
+    // =========================================================================
+    // MÉTODOS DE CONVENIÊNCIA
+    // =========================================================================
+
     public Usuario getVendedor() {
         return this.usuario;
     }
 
-    /**
-     * O motor procura pela forma de pagamento em formato de texto ("CREDITO", "DEBITO").
-     */
     public String getFormaPagamento() {
         return this.formaDePagamento != null ? this.formaDePagamento.name() : "";
     }
 
-    /**
-     * Sobrescrita inteligente: Se a venda antiga não tiver "custoTotal" salvo na base de dados,
-     * ele calcula na hora a partir dos itens. Isso impede que vendas antigas mostrem 100% de lucro.
-     */
+    public BigDecimal getLucroBruto() {
+        BigDecimal totalSeguro = this.valorTotal != null ? this.valorTotal : BigDecimal.ZERO;
+        return totalSeguro.subtract(getCustoTotal());
+    }
+
     public BigDecimal getCustoTotal() {
         if (this.custoTotal != null && this.custoTotal.compareTo(BigDecimal.ZERO) > 0) {
             return this.custoTotal;
         }
-
-        // Fallback dinâmico para vendas antigas, usando o método limpo do ItemVenda
         if (this.itens != null && !this.itens.isEmpty()) {
             return this.itens.stream()
-                    .map(ItemVenda::getCustoTotalItem)
+                    .map(item -> {
+                        BigDecimal custoUni = item.getCustoUnitarioHistorico() != null ? item.getCustoUnitarioHistorico() : BigDecimal.ZERO;
+                        BigDecimal qtd = item.getQuantidade() != null ? item.getQuantidade() : BigDecimal.ZERO;
+                        return custoUni.multiply(qtd);
+                    })
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
-
         return BigDecimal.ZERO;
     }
 }

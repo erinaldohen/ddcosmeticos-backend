@@ -238,4 +238,6 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     // Procura vendas de UM vendedor específico num período
     List<Venda> findByDataVendaBetweenAndUsuarioIdAndStatusNfce(LocalDateTime inicio, LocalDateTime fim, Long usuarioId, StatusFiscal statusNfce);
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = 'AUTORIZADA'")
+    List<Venda> findVendasAutorizadasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

@@ -21,6 +21,7 @@ import com.lowagie.text.pdf.PdfWriter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +47,8 @@ public class RelatorioService {
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
     @Autowired private ConfiguracaoRepository configuracaoRepository;
+    @Autowired private CaixaDiarioRepository caixaRepository; // <-- NOVO
+    @Autowired private EmailService emailService; // <-- NOVO
 
     // =========================================================================
     // 1. BI COMERCIAL (VENDAS)
@@ -731,5 +734,213 @@ public class RelatorioService {
         c2.setPadding(8);
         table.addCell(c1);
         table.addCell(c2);
+    }
+
+    // =========================================================================
+    // 9. RELATÓRIO MENSAL AUTOMATIZADO: CONSULTORIA IA & DOSSIÊ EXECUTIVO
+    // =========================================================================
+
+    @Scheduled(cron = "0 0 8 1 * *")
+    public void dispararRelatorioMensalAgendado() {
+        log.info("⏰ Iniciando geração automática do Relatório Mensal com Consultoria IA...");
+        LocalDate mesAnterior = LocalDate.now().minusMonths(1);
+        LocalDateTime inicio = mesAnterior.withDayOfMonth(1).atStartOfDay();
+        LocalDateTime fim = mesAnterior.withDayOfMonth(mesAnterior.lengthOfMonth()).atTime(LocalTime.MAX);
+        String nomeMes = mesAnterior.format(DateTimeFormatter.ofPattern("MMMM/yyyy", new Locale("pt", "BR")));
+        gerarEEnviarRelatorioMensal(inicio, fim, nomeMes.toUpperCase());
+    }
+
+    public void dispararRelatorioMensalTeste() {
+        LocalDateTime inicio = LocalDate.now().withDayOfMonth(1).atStartOfDay();
+        LocalDateTime fim = LocalDateTime.now();
+        gerarEEnviarRelatorioMensal(inicio, fim, "TESTE ATUAL (" + inicio.format(DateTimeFormatter.ofPattern("MMM/yyyy", new Locale("pt", "BR"))) + ")");
+    }
+
+    private void gerarEEnviarRelatorioMensal(LocalDateTime inicio, LocalDateTime fim, String mesReferencia) {
+        try {
+            ConfiguracaoLoja config = configuracaoRepository.findFirstByOrderByIdAsc();
+            String emailAdmin = (config != null && config.getLoja() != null && config.getLoja().getEmail() != null && !config.getLoja().getEmail().isBlank())
+                    ? config.getLoja().getEmail().trim() : "lojaddcosmeticos@gmail.com";
+
+            // Coleta Rica de Dados (Usando o seu BI já existente)
+            RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio.toLocalDate(), fim.toLocalDate());
+            Map<String, Object> estoque = gerarRelatorioEstoque(inicio.toLocalDate(), fim.toLocalDate());
+            Map<String, Object> fiscal = gerarRelatorioFiscal(inicio.toLocalDate(), fim.toLocalDate());
+
+            // Cálculos
+            BigDecimal fatBruto = nvl(vendas.getTotalFaturado());
+            BigDecimal lucroBruto = nvl(vendas.getLucroBrutoEstimado());
+            BigDecimal ticketMedio = nvl(vendas.getTicketMedio());
+            String rupturaStr = estoque.get("ruptura") != null ? estoque.get("ruptura").toString().replace(",", ".") : "0.0";
+            double ruptura = Double.parseDouble(rupturaStr);
+            Long errosFiscais = fiscal.get("erros") != null ? (Long) fiscal.get("erros") : 0L;
+
+            // Geração do PDF
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Document document = new Document(PageSize.A4, 40, 40, 40, 40);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Fontes Corporativas
+            Font fTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, new Color(15, 23, 42));
+            Font fSub = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.GRAY);
+            Font fSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153)); // Rosa DD Cosméticos
+            Font fNormal = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.DARK_GRAY);
+            Font fIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246)); // Azul Consultoria
+
+            // --- CABEÇALHO COM LOGO DINÂMICA ---
+            try {
+                // 1. Buscamos o nome exato do arquivo salvo no Banco de Dados
+                String nomeArquivoLogo = config.getLoja() != null ? config.getLoja().getLogoUrl() : null;
+
+                if (nomeArquivoLogo != null && !nomeArquivoLogo.isBlank()) {
+                    // 2. Montamos o caminho correto (garantindo que aponta para a pasta uploads)
+                    String caminhoFinal = nomeArquivoLogo.contains("/") ? nomeArquivoLogo : "uploads/" + nomeArquivoLogo;
+
+                    Image logo = Image.getInstance(caminhoFinal);
+                    logo.scaleToFit(120, 120);
+                    logo.setAlignment(Element.ALIGN_CENTER);
+                    document.add(logo);
+                } else {
+                    throw new RuntimeException("Logo não configurada no banco.");
+                }
+            } catch (Exception e) {
+                // Fallback elegante: Se não achar o arquivo físico ou não tiver no banco, escreve o nome da loja
+                log.warn("⚠️ Logo física não encontrada ou não configurada. Usando texto padrão no cabeçalho.");
+                Paragraph logoText = new Paragraph("DD COSMÉTICOS", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 24, new Color(236, 72, 153)));
+                logoText.setAlignment(Element.ALIGN_CENTER);
+                document.add(logoText);
+            }
+
+            Paragraph titulo = new Paragraph("DOSSIÊ MENSAL DE INTELIGÊNCIA", fTitulo);
+            titulo.setAlignment(Element.ALIGN_CENTER);
+            titulo.setSpacingBefore(10);
+            document.add(titulo);
+
+            Paragraph periodo = new Paragraph("Período de Análise: " + mesReferencia, fSub);
+            periodo.setAlignment(Element.ALIGN_CENTER);
+            periodo.setSpacingAfter(30);
+            document.add(periodo);
+
+            // --- ANÁLISE 1: FINANCEIRO E COMERCIAL ---
+            document.add(new Paragraph("1. PERFORMANCE FINANCEIRA E COMERCIAL", fSecao));
+            document.add(new Paragraph("Faturamento Bruto: R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP) +
+                    " | Lucro Bruto: R$ " + lucroBruto.setScale(2, RoundingMode.HALF_UP) +
+                    " | Ticket Médio: R$ " + ticketMedio.setScale(2, RoundingMode.HALF_UP), fNormal));
+
+            // Motor IA: Financeiro
+            String iaFinanceiro = gerarConselhoFinanceiro(fatBruto, lucroBruto, ticketMedio);
+            Paragraph pIaFin = new Paragraph("🤖 Parecer da Consultora IA: " + iaFinanceiro, fIA);
+            pIaFin.setSpacingBefore(10); pIaFin.setSpacingAfter(20);
+            document.add(pIaFin);
+
+            // --- ANÁLISE 2: ESTOQUE E SUPPLY CHAIN ---
+            document.add(new Paragraph("2. SAÚDE DO ESTOQUE", fSecao));
+            document.add(new Paragraph("Taxa de Ruptura (Faltas): " + ruptura + "% do Mix de Produtos.", fNormal));
+
+            // Motor IA: Estoque
+            String iaEstoque = gerarConselhoEstoque(ruptura);
+            Paragraph pIaEst = new Paragraph("🤖 Parecer da Consultora IA: " + iaEstoque, fIA);
+            pIaEst.setSpacingBefore(10); pIaEst.setSpacingAfter(20);
+            document.add(pIaEst);
+
+            // --- ANÁLISE 3: FISCAL E COMPLIANCE ---
+            document.add(new Paragraph("3. RISCO FISCAL E TRIBUTÁRIO", fSecao));
+            document.add(new Paragraph("Produtos sem NCM/CEST cadastrados: " + errosFiscais, fNormal));
+
+            // Motor IA: Fiscal
+            String iaFiscal = gerarConselhoFiscal(errosFiscais);
+            Paragraph pIaFis = new Paragraph("🤖 Parecer da Consultora IA: " + iaFiscal, fIA);
+            pIaFis.setSpacingBefore(10); pIaFis.setSpacingAfter(30);
+            document.add(pIaFis);
+
+            // --- RESUMO VISUAL (TABELA) ---
+            PdfPTable tabela = new PdfPTable(2);
+            tabela.setWidthPercentage(100);
+
+            PdfPCell cellHeader = new PdfPCell(new Phrase("Métricas Chave do Período", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
+            cellHeader.setColspan(2); cellHeader.setBackgroundColor(new Color(15, 23, 42)); cellHeader.setPadding(8);
+            tabela.addCell(cellHeader);
+
+            tabela.addCell(criarCelula("Total de Vendas Realizadas", fNormal));
+            tabela.addCell(criarCelulaDireita(String.valueOf(vendas.getQuantidadeVendas()), fNormal));
+            tabela.addCell(criarCelula("Margem de Lucro Bruta", fNormal));
+
+            BigDecimal margem = fatBruto.compareTo(BigDecimal.ZERO) > 0 ? lucroBruto.divide(fatBruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")) : BigDecimal.ZERO;
+            tabela.addCell(criarCelulaDireita(margem.setScale(1, RoundingMode.HALF_UP) + "%", fNormal));
+
+            document.add(tabela);
+
+            document.add(new Paragraph("\n\nDocumento confidencial gerado automaticamente pelo Sistema DD Cosméticos.", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.LIGHT_GRAY)));
+            document.close();
+
+            // Disparo do E-mail (Manteve-se a arquitetura de sucesso)
+            String nomeArquivoPdf = "Consultoria_DDCosmeticos_" + mesReferencia.replace("/", "_") + ".pdf";
+            emailService.enviarRelatorioAdmin(out.toByteArray(), nomeArquivoPdf, emailAdmin);
+
+        } catch (Exception e) {
+            log.error("❌ Falha na geração do Relatório Mensal Automático: ", e);
+            throw new RuntimeException("Falha na geração: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // MOTORES DE INTELIGÊNCIA (HEURÍSTICA DE CONSULTORIA)
+    // =========================================================================
+
+    private String gerarConselhoFinanceiro(BigDecimal fatBruto, BigDecimal lucroBruto, BigDecimal ticketMedio) {
+        if (fatBruto.compareTo(BigDecimal.ZERO) == 0) return "Não há dados de faturamento suficientes neste período para uma análise profunda.";
+
+        BigDecimal margem = lucroBruto.divide(fatBruto, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100"));
+        StringBuilder conselho = new StringBuilder();
+
+        if (margem.compareTo(new BigDecimal("35")) > 0) {
+            conselho.append("Excelente trabalho! A sua margem de lucro operacional (").append(margem.setScale(1, RoundingMode.HALF_UP)).append("%) está acima da média do retalho de cosméticos. ");
+        } else if (margem.compareTo(new BigDecimal("20")) < 0) {
+            conselho.append("Atenção: A sua margem de lucro está espremida (").append(margem.setScale(1, RoundingMode.HALF_UP)).append("%). Sugiro rever a precificação dos produtos Curva A ou negociar custos menores com fornecedores. ");
+        } else {
+            conselho.append("A margem de lucro está saudável e dentro do padrão do mercado. ");
+        }
+
+        if (ticketMedio.compareTo(new BigDecimal("80")) < 0) {
+            conselho.append("No entanto, o Ticket Médio (R$ ").append(ticketMedio.setScale(2, RoundingMode.HALF_UP)).append(") está baixo. Treine a sua equipa para oferecer 'Cross-Sell' (ex: oferecer condicionador sempre que venderem um champô).");
+        } else {
+            conselho.append("O Ticket Médio está num patamar forte, demonstrando boa capacidade de venda agregada da equipa.");
+        }
+        return conselho.toString();
+    }
+
+    private String gerarConselhoEstoque(double ruptura) {
+        if (ruptura > 5.0) {
+            return "ALERTA CRÍTICO: " + ruptura + "% do seu catálogo ativo está com estoque zerado. Você está a perder vendas diariamente porque os clientes entram na loja e não encontram o que procuram. Acione o setor de compras imediatamente com foco nos produtos de Curva A.";
+        } else if (ruptura > 0) {
+            return "Ruptura sob controle (" + ruptura + "%), mas requer monitoramento semanal. Garanta que as marcas de alto giro (ex: Haskell, Lola) não cheguem ao estoque de segurança mínimo.";
+        } else {
+            return "Parabéns! A sua gestão de prateleira está perfeita (0% de ruptura). O cliente encontra sempre o que precisa.";
+        }
+    }
+
+    private String gerarConselhoFiscal(Long errosFiscais) {
+        if (errosFiscais > 10) {
+            return "ALTO RISCO DE AUTUAÇÃO: Você tem " + errosFiscais + " produtos sem NCM ou CEST configurados. Isto bloqueia a emissão de NFC-e e sujeita a loja a multas severas da SEFAZ de Pernambuco. Corrija o cadastro urgente na aba de Produtos.";
+        } else if (errosFiscais > 0) {
+            return "Risco Moderado: Existem " + errosFiscais + " produtos com pendências fiscais (NCM/CEST). Revise-os para evitar rejeição de notas fiscais no caixa.";
+        } else {
+            return "Compliance perfeito! 100% do seu catálogo está validado fiscalmente. Pode operar com tranquilidade.";
+        }
+    }
+
+    // Métodos auxiliares de formatação de células
+    private PdfPCell criarCelula(String texto, Font font) {
+        PdfPCell cell = new PdfPCell(new Phrase(texto, font));
+        cell.setPadding(8);
+        return cell;
+    }
+
+    private PdfPCell criarCelulaDireita(String texto, Font font) {
+        PdfPCell cell = new PdfPCell(new Phrase(texto, font));
+        cell.setPadding(8);
+        cell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        return cell;
     }
 }

@@ -104,10 +104,13 @@ public class ConfiguracaoLojaService {
         LocalDate dataValidadeLocal = dataExpiracao.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
         long diasRestantes = ChronoUnit.DAYS.between(LocalDate.now(), dataValidadeLocal);
 
+        ConfiguracaoLoja config = buscarConfiguracao();
+
+        // 🚨 GATILHO DA LIMPEZA: Apaga o certificado antigo antes de salvar o novo
+        apagarArquivoAntigo(config.getFiscal().getCaminhoCertificado());
+
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
         salvarArquivoEmDisco(file, fileName);
-
-        ConfiguracaoLoja config = buscarConfiguracao();
 
         // SALVA OS DADOS BINÁRIOS NA BASE DE DADOS E O CAMINHO
         config.getFiscal().setCaminhoCertificado(fileName);
@@ -128,6 +131,10 @@ public class ConfiguracaoLojaService {
     @Transactional
     public String salvarLogo(MultipartFile file) {
         ConfiguracaoLoja config = buscarConfiguracao();
+
+        // 🚨 GATILHO DA LIMPEZA: Apaga a logo antiga antes de salvar a nova
+        apagarArquivoAntigo(config.getLoja().getLogoUrl());
+
         String extension = getFileExtension(file.getOriginalFilename());
         String fileName = "logo_" + UUID.randomUUID() + extension;
         salvarArquivoEmDisco(file, fileName);
@@ -135,6 +142,28 @@ public class ConfiguracaoLojaService {
         config.getLoja().setLogoUrl(fileUrl);
         repository.save(config);
         return fileUrl;
+    }
+
+    /**
+     * Limpa o arquivo físico da pasta uploads se o sistema for substituí-lo
+     */
+    private void apagarArquivoAntigo(String nomeOuUrlSalvoNoBanco) {
+        if (nomeOuUrlSalvoNoBanco == null || nomeOuUrlSalvoNoBanco.isBlank()) {
+            return;
+        }
+        try {
+            // Remove o mapeamento web para sobrar apenas o nome do arquivo, ex: "logo_123.png"
+            String nomeLimpo = nomeOuUrlSalvoNoBanco.replace("/uploads/", "").replace("uploads/", "");
+
+            Path caminhoDoArquivo = this.fileStorageLocation.resolve(nomeLimpo).normalize();
+            boolean apagou = Files.deleteIfExists(caminhoDoArquivo);
+
+            if (apagou) {
+                log.info("🗑️ Arquivo antigo removido da pasta uploads: {}", nomeLimpo);
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ Aviso: Não foi possível apagar o arquivo antigo ({}). Motivo: {}", nomeOuUrlSalvoNoBanco, e.getMessage());
+        }
     }
 
     private void salvarArquivoEmDisco(MultipartFile file, String fileName) {
@@ -266,7 +295,6 @@ public class ConfiguracaoLojaService {
                 new ConfiguracaoDTO.FiscalDTO(
                         c.getFiscal().getAmbiente(), c.getFiscal().getRegime(),
 
-                        // Retorna os dados planos perfeitamente preenchidos para o React
                         c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(),
                         c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao(),
 

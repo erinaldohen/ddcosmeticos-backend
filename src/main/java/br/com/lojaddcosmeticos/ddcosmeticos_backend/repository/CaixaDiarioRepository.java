@@ -56,4 +56,6 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
     @Query(value = "SELECT c FROM CaixaDiario c LEFT JOIN FETCH c.usuarioAbertura WHERE c.dataAbertura BETWEEN :inicio AND :fim",
             countQuery = "SELECT count(c) FROM CaixaDiario c WHERE c.dataAbertura BETWEEN :inicio AND :fim")
     Page<CaixaDiario> findByDataAberturaBetweenComUsuario(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
+    @Query("SELECT c FROM CaixaDiario c WHERE c.dataAbertura >= :inicio AND c.dataAbertura <= :fim")
+    List<CaixaDiario> findCaixasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

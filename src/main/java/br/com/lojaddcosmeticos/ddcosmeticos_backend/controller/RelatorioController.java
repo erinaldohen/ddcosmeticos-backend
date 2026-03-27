@@ -192,6 +192,7 @@ public class RelatorioController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
     // =========================================================================
     // 4. BALANÇO TRIMESTRAL PARA INVESTIDORES / DIRETORIA (EARNINGS RELEASE)
     // =========================================================================
@@ -214,6 +215,20 @@ public class RelatorioController {
         } catch (Exception e) {
             log.error("Erro ao gerar Balanço Trimestral: ", e);
             return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // =========================================================================
+    // 5. TESTES E FERRAMENTAS DE ADMINISTRAÇÃO
+    // =========================================================================
+
+    @GetMapping(value = "/teste-email", produces = "text/plain;charset=UTF-8")
+    public String dispararTesteManual() {
+        try {
+            relatorioService.dispararRelatorioMensalTeste();
+            return "✅ Comando enviado com sucesso! Verifique o console do Spring Boot e a sua caixa de e-mail.";
+        } catch (Exception e) {
+            return "❌ Erro ao gerar o relatório: " + e.getMessage();
         }
     }
 }

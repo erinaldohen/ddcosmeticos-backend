@@ -7,7 +7,7 @@ public enum StatusFiscal {
     AUTORIZADA,
     REJEITADA,
     CANCELADA,
-    CONTINGENCIA, // <--- NOVO: Nota emitida offline, aguardando envio
+    CONTINGENCIA_OFFLINE, // <--- NOVO: Nota emitida offline, aguardando envio
     ERRO_CONTINGENCIA,
     ORCAMENTO,
     EM_ESPERA,

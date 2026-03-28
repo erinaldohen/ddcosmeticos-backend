@@ -3,10 +3,13 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.InsightIARepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DashboardService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.MotorInteligenciaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -21,6 +24,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "Dashboard", description = "Endpoints para dados analíticos e indicadores")
 public class DashboardController {
+
+    @Autowired
+    private MotorInteligenciaService motorIA;
+
+    @Autowired
+    private InsightIARepository insightIARepo;
 
     private final DashboardService dashboardService;
 
@@ -78,5 +87,28 @@ public class DashboardController {
         if (fim == null) fim = LocalDate.now();
 
         return ResponseEntity.ok(dashboardService.getResumoFiscal(inicio, fim));
+    }
+
+    // Retorna os alertas da IA para o Frontend
+    @GetMapping("/insights")
+    public ResponseEntity<?> getInsightsIA() {
+        return ResponseEntity.ok(insightIARepo.findByResolvidoFalseOrderByCriticidadeAscDataGeracaoDesc());
+    }
+
+    // Permite disparar o cálculo manualmente para testar agora mesmo
+    @PostMapping("/insights/forcar-analise")
+    public ResponseEntity<String> forcarAnaliseIA() {
+        motorIA.processarInsightsDiarios();
+        return ResponseEntity.ok("Análise da IA executada com sucesso!");
+    }
+
+    // Permite ao gestor dispensar um alerta
+    @PutMapping("/insights/{id}/resolver")
+    public ResponseEntity<?> resolverInsight(@PathVariable Long id) {
+        return insightIARepo.findById(id).map(insight -> {
+            insight.setResolvido(true);
+            insightIARepo.save(insight);
+            return ResponseEntity.ok().build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

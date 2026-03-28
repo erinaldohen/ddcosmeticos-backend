@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfiguracaoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -105,14 +106,11 @@ public class ConfiguracaoLojaService {
         long diasRestantes = ChronoUnit.DAYS.between(LocalDate.now(), dataValidadeLocal);
 
         ConfiguracaoLoja config = buscarConfiguracao();
-
-        // 🚨 GATILHO DA LIMPEZA: Apaga o certificado antigo antes de salvar o novo
         apagarArquivoAntigo(config.getFiscal().getCaminhoCertificado());
 
         String fileName = "cert_" + UUID.randomUUID() + ".pfx";
         salvarArquivoEmDisco(file, fileName);
 
-        // SALVA OS DADOS BINÁRIOS NA BASE DE DADOS E O CAMINHO
         config.getFiscal().setCaminhoCertificado(fileName);
         config.getFiscal().setSenhaCert(senha);
         config.getFiscal().setArquivoCertificado(file.getBytes());
@@ -130,9 +128,13 @@ public class ConfiguracaoLojaService {
 
     @Transactional
     public String salvarLogo(MultipartFile file) {
-        ConfiguracaoLoja config = buscarConfiguracao();
+        // 🚨 FASE 1: BLINDAGEM DE SEGURANÇA (Apenas Imagens)
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new ValidationException("Por questões de segurança, apenas arquivos de imagem (PNG, JPG) são permitidos.");
+        }
 
-        // 🚨 GATILHO DA LIMPEZA: Apaga a logo antiga antes de salvar a nova
+        ConfiguracaoLoja config = buscarConfiguracao();
         apagarArquivoAntigo(config.getLoja().getLogoUrl());
 
         String extension = getFileExtension(file.getOriginalFilename());
@@ -144,20 +146,14 @@ public class ConfiguracaoLojaService {
         return fileUrl;
     }
 
-    /**
-     * Limpa o arquivo físico da pasta uploads se o sistema for substituí-lo
-     */
     private void apagarArquivoAntigo(String nomeOuUrlSalvoNoBanco) {
         if (nomeOuUrlSalvoNoBanco == null || nomeOuUrlSalvoNoBanco.isBlank()) {
             return;
         }
         try {
-            // Remove o mapeamento web para sobrar apenas o nome do arquivo, ex: "logo_123.png"
             String nomeLimpo = nomeOuUrlSalvoNoBanco.replace("/uploads/", "").replace("uploads/", "");
-
             Path caminhoDoArquivo = this.fileStorageLocation.resolve(nomeLimpo).normalize();
             boolean apagou = Files.deleteIfExists(caminhoDoArquivo);
-
             if (apagou) {
                 log.info("🗑️ Arquivo antigo removido da pasta uploads: {}", nomeLimpo);
             }
@@ -205,7 +201,6 @@ public class ConfiguracaoLojaService {
         f.setAmbiente(d.fiscal().ambiente());
         f.setRegime(d.fiscal().regime());
 
-        // A MÁGICA: Mapeamento plano sem intermediários
         f.setTokenHomologacao(d.fiscal().tokenHomologacao());
         f.setCscIdHomologacao(d.fiscal().cscIdHomologacao());
         f.setSerieHomologacao(d.fiscal().serieHomologacao() != null ? d.fiscal().serieHomologacao() : 1);
@@ -294,14 +289,11 @@ public class ConfiguracaoLojaService {
                 ),
                 new ConfiguracaoDTO.FiscalDTO(
                         c.getFiscal().getAmbiente(), c.getFiscal().getRegime(),
-
                         c.getFiscal().getTokenHomologacao(), c.getFiscal().getCscIdHomologacao(),
                         c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao(),
-
                         c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(),
                         c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao(),
-
-                        c.getFiscal().getCaminhoCertificado(), "", // SEGURANÇA: NÃO DEVOLVE A SENHA
+                        c.getFiscal().getCaminhoCertificado(), "",
                         c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
                         c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
                         c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),

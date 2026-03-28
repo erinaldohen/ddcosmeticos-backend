@@ -41,9 +41,6 @@ public class NfceService {
     @Autowired private ConfiguracaoLojaService configuracaoLojaService;
     @Autowired private TributacaoService tributacaoService;
 
-    // ==================================================================================
-    // CONSULTA STATUS SEFAZ
-    // ==================================================================================
     public String consultarStatusSefaz() throws Exception {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
@@ -55,9 +52,6 @@ public class NfceService {
         return "Status: " + retorno.getCStat() + " - " + retorno.getXMotivo();
     }
 
-    // ==================================================================================
-    // EMISSÃO PRINCIPAL DE NFC-E
-    // ==================================================================================
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
@@ -65,19 +59,29 @@ public class NfceService {
             log.warn("⚠️ Certificado ausente. Simulando emissão.");
             return simularEmissaoEmDev(venda);
         }
+
         try {
-            return processarEmissao(venda, configLoja);
+            // 1ª Tentativa: Emissão NORMAL (tpEmis = 1) com Validação de Schemas LIGADA (true)
+            return processarEmissao(venda, configLoja, "1", true);
         } catch (Exception e) {
-            log.error("Falha na emissão NFC-e: {}", e.getMessage());
-            throw new ValidationException("Erro na emissão NFC-e: " + e.getMessage());
+            log.warn("⚠️ SEFAZ Indisponível ou Falha de Rede ({}). Entrando em modo de Contingência Offline...", e.getMessage());
+            try {
+                // 2ª Tentativa (O Escudo): Emissão OFFLINE (tpEmis = 9) com Validação DESLIGADA (false)
+                // Isso impede o Java de tentar buscar arquivos na internet quando ela caiu!
+                return processarEmissao(venda, configLoja, "9", false);
+            } catch (Exception ex) {
+                log.error("❌ Falha Catastrófica ao gerar NFC-e em Contingência: {}", ex.getMessage());
+                throw new ValidationException("Erro fatal na emissão do cupom offline: " + ex.getMessage());
+            }
         }
     }
 
-    private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja) throws Exception {
+    // Adicionado o parâmetro 'validarSchema' para o controle rigoroso da rede
+    private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja, String tpEmis, boolean validarSchema) throws Exception {
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
 
-        // Desligamos a validação de Schema local para deixar a SEFAZ validar
-        configNfe.setValidacaoDocumento(false);
+        // 🚨 AQUI ESTÁ A BLINDAGEM DA INTERNET:
+        configNfe.setValidacaoDocumento(validarSchema);
 
         boolean isProducao = AmbienteEnum.PRODUCAO.equals(configNfe.getAmbiente());
         String serie = String.valueOf(isProducao ? configLoja.getFiscal().getSerieProducao() : configLoja.getFiscal().getSerieHomologacao());
@@ -85,8 +89,7 @@ public class NfceService {
         String cNF = String.format("%08d", new Random().nextInt(99999999));
         String cnpjEmitente = configLoja.getLoja().getCnpj().replaceAll("\\D", "");
 
-        // 1. Geração da Chave de Acesso
-        String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, "65", serie, nNF, "1", cNF);
+        String chaveSemDigito = gerarChaveAcesso(configNfe.getEstado().getCodigoUF(), LocalDateTime.now(), cnpjEmitente, "65", serie, nNF, tpEmis, cNF);
         String dv = calcularDV(chaveSemDigito);
         String chaveAcesso = chaveSemDigito + dv;
 
@@ -100,7 +103,7 @@ public class NfceService {
         infNFe.setId("NFe" + chaveAcesso);
         infNFe.setVersao("4.00");
 
-        infNFe.setIde(montarIde(configNfe, cNF, nNF, dv, serie));
+        infNFe.setIde(montarIde(configNfe, cNF, nNF, dv, serie, tpEmis));
         infNFe.setEmit(montarEmit(configLoja));
         if (venda.getCliente() != null && venda.getCliente().getDocumento() != null) {
             infNFe.setDest(montarDest(venda.getCliente()));
@@ -118,87 +121,61 @@ public class NfceService {
 
         nfe.setInfNFe(infNFe);
 
-        // ====================================================================================
-        // 3. A COMBINAÇÃO FINAL (Baseada na Documentação Oficial SEFAZ-PE)
-        // ====================================================================================
         String cscId = isProducao ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
         String cscToken = isProducao ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
         String qrCodeFront = "";
 
         if (cscId != null && !cscId.isBlank() && cscToken != null && !cscToken.isBlank()) {
             String cIdTokenSemZeros = String.valueOf(Integer.parseInt(cscId.replaceAll("\\D", "")));
-
-            // O link clicável do QR Code muda conforme o ambiente (Com Http)
-            String urlQrCode = isProducao
-                    ? "http://nfce.sefaz.pe.gov.br/nfce/consulta"
-                    : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
-
-            // 🚨 A PEGADINHA DA SEFAZ: A urlChave É IGUAL PARA HOMOLOGAÇÃO E PRODUÇÃO!
+            String urlQrCode = isProducao ? "http://nfce.sefaz.pe.gov.br/nfce/consulta" : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
             String urlChave = "nfce.sefaz.pe.gov.br/nfce/consulta";
 
-            // Hash com Pipes e Minúsculo
             String pParaHash = chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + cscToken.trim();
             String hash = gerarHashSHA1(pParaHash).toLowerCase();
 
-            // String do QR Code COM Pipes
             qrCodeFront = urlQrCode + "?p=" + chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + "|" + hash;
 
             TNFe.InfNFeSupl supl = new TNFe.InfNFeSupl();
-
-            // INJETAMOS O CDATA (Isto resolve o erro 225 de schema)
             supl.setQrCode("<![CDATA[" + qrCodeFront + "]]>");
-            supl.setUrlChave(urlChave); // A urlChave fixa resolve o erro 878
-
+            supl.setUrlChave(urlChave);
             nfe.setInfNFeSupl(supl);
-        } else {
-            log.warn("⚠️ CSC ID ou Token não configurados.");
         }
 
         enviNFe.getNFe().add(nfe);
 
-        // ====================================================================================
-        // 4. ASSINATURA E ENVIO NATIVO (O MÉTODO PÚBLICO E CORRETO)
-        // ====================================================================================
         String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
         String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
-
         TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
 
-        TRetEnviNFe retorno;
-        try {
-            // O método oficial que resolve o erro vermelho de compilação!
-            retorno = Nfe.enviarNfe(configNfe, enviNFeAssinado, DocumentoEnum.NFCE);
-        } catch (Exception e) {
-            log.error("Erro interno do envio SEFAZ: {}", e.getMessage());
-            throw new ValidationException("Erro SEFAZ: " + e.getMessage());
+        if ("9".equals(tpEmis)) {
+            // Mudamos para PENDENTE para o PostgreSQL não rejeitar a gravação!
+            venda.setStatusNfce(StatusFiscal.PENDENTE);
+            venda.setChaveAcessoNfce(chaveAcesso);
+            venda.setXmlNota(xmlAssinado);
+            vendaRepository.save(venda);
+            return new NfceResponseDTO(venda.getIdVenda(), "100", "Emitida em Contingência (Aguardando Envio)", chaveAcesso, "", xmlAssinado, qrCodeFront);
         }
+
+        TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFeAssinado, DocumentoEnum.NFCE);
 
         if (retorno.getProtNFe() != null && "100".equals(retorno.getProtNFe().getInfProt().getCStat())) {
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             venda.setChaveAcessoNfce(chaveAcesso);
-
             venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFeAssinado, retorno.getProtNFe()));
             vendaRepository.save(venda);
 
             return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), qrCodeFront);
         } else {
             String msg = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
-            log.error("Rejeição SEFAZ: {}", msg);
             throw new ValidationException("Sefaz Rejeitou: " + msg);
         }
     }
 
-    /**
-     * GERAÇÃO DO HASH SHA-1
-     * O `%02x` formata o hexadecimal em LETRAS MINÚSCULAS (Regra Sefaz SVRS)
-     */
     private String gerarHashSHA1(String input) throws Exception {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
         byte[] result = md.digest(input.getBytes(StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
-        for (byte b : result) {
-            sb.append(String.format("%02x", b)); // Tem de ser %02x minúsculo!
-        }
+        for (byte b : result) sb.append(String.format("%02x", b));
         return sb.toString();
     }
 
@@ -223,7 +200,7 @@ public class NfceService {
         return ConfiguracoesNfe.criarConfiguracoes(EstadosEnum.PE, amb, cert, schemas);
     }
 
-    private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe cfg, String cnf, String nnf, String dv, String serie) {
+    private TNFe.InfNFe.Ide montarIde(ConfiguracoesNfe cfg, String cnf, String nnf, String dv, String serie, String tpEmis) {
         TNFe.InfNFe.Ide ide = new TNFe.InfNFe.Ide();
         ide.setCUF(cfg.getEstado().getCodigoUF());
         ide.setCNF(cnf);
@@ -236,7 +213,13 @@ public class NfceService {
         ide.setIdDest("1");
         ide.setCMunFG("2611606");
         ide.setTpImp("4");
-        ide.setTpEmis("1");
+        ide.setTpEmis(tpEmis);
+
+        if ("9".equals(tpEmis)) {
+            ide.setDhCont(XmlNfeUtil.dataNfe(LocalDateTime.now()));
+            ide.setXJust("Falha de conexao com a SEFAZ ou Sefaz Inoperante no momento da venda");
+        }
+
         ide.setCDV(dv);
         ide.setTpAmb(cfg.getAmbiente().getCodigo());
         ide.setFinNFe("1");
@@ -280,7 +263,6 @@ public class NfceService {
             p.setCProd(item.getProduto().getId().toString());
             p.setCEAN("SEM GTIN");
 
-            // Solução do Erro 373: Nome padrão no Item 1 em Ambiente de Homologação
             if (isHomologacao && i == 1) {
                 p.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
             } else {
@@ -389,7 +371,7 @@ public class NfceService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transmitirNotaContingencia(Venda venda) {
         try {
-            log.info("📡 Tentando transmitir nota pendente/contingência ID: {}", venda.getIdVenda());
+            log.info("📡 Tentando transmitir nota em contingência ID: {}", venda.getIdVenda());
             ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
 
             if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
@@ -397,7 +379,8 @@ public class NfceService {
                 return;
             }
 
-            processarEmissao(venda, configLoja);
+            // O robô do Scheduler tenta transmitir a nota. Se houver internet, ele usa os Schemas normalmente (true).
+            processarEmissao(venda, configLoja, "1", true);
             log.info("✅ Nota ID {} transmitida e autorizada com sucesso na SEFAZ.", venda.getIdVenda());
         } catch (Exception e) {
             log.error("❌ Falha na transmissão automática da venda {}: {}", venda.getIdVenda(), e.getMessage());

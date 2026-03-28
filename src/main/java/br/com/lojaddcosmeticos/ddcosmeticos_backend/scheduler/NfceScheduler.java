@@ -25,7 +25,7 @@ public class NfceScheduler {
         try {
             // Busca notas que não foram autorizadas online
             List<Venda> notasParaProcessar = vendaRepository.findByStatusNfceIn(
-                    List.of(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA)
+                    List.of(StatusFiscal.PENDENTE, StatusFiscal.CONTINGENCIA_OFFLINE)
             );
 
             if (notasParaProcessar.isEmpty()) return;

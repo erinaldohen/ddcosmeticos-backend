@@ -53,8 +53,39 @@ public class AuditoriaService {
     @Autowired private UsuarioRepository usuarioRepository;
 
     // =========================================================================
-    // 1. REGISTRO DE EVENTOS
+    // 1. REGISTRO DE EVENTOS E AUDITORIA (INCLUINDO INTEGRAÇÃO IA)
     // =========================================================================
+
+    /**
+     * MÉTODO ADICIONADO: Compatibilidade direta com as chamadas da IA
+     * @param acao O código da ação (ex: "IA_ANALYSIS")
+     * @param usuario O usuário responsável (ou "SISTEMA_IA")
+     * @param detalhes O texto detalhado do log (ex: "Fraude detetada...")
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void registrarAcao(String acao, String usuario, String detalhes) {
+        TipoEvento tipoEventoEnum;
+        try {
+            tipoEventoEnum = TipoEvento.valueOf(acao.toUpperCase());
+        } catch (Exception e) {
+            // Se o Enum TipoEvento não tiver "IA_ANALYSIS", mapeia por defeito para INFO
+            tipoEventoEnum = TipoEvento.INFO;
+        }
+
+        try {
+            Auditoria auditoria = new Auditoria();
+            auditoria.setDataHora(LocalDateTime.now());
+            auditoria.setTipoEvento(tipoEventoEnum);
+            auditoria.setMensagem(detalhes);
+            auditoria.setEntidadeAfetada(acao); // Regista o módulo que chamou (ex: IA_ANALYSIS)
+            auditoria.setUsuarioResponsavel(usuario != null ? usuario : "Sistema");
+
+            auditoriaRepository.save(auditoria);
+            log.info("Log de Auditoria guardado: [{}] {}", acao, detalhes);
+        } catch (Exception e) {
+            log.error("Falha ao registrar auditoria de ação: {}", e.getMessage());
+        }
+    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void registrar(String acao, String detalhes) {

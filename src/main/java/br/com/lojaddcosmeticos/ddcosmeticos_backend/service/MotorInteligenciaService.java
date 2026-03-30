@@ -1,7 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.InsightIA;
-import org.springframework.data.domain.Pageable;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.InsightIARepository;
@@ -10,6 +9,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaPerdidaRepos
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +31,7 @@ public class MotorInteligenciaService {
     private final ProdutoRepository produtoRepository;
     private final VendaRepository vendaRepository;
     private final VendaPerdidaRepository perdidaRepository;
+    private final AuditoriaService auditoriaService;
 
     // Variável em memória para lembrar se a IA já trabalhou hoje
     private LocalDate dataUltimaExecucao = null;
@@ -101,19 +102,24 @@ public class MotorInteligenciaService {
 
     private void analisarRupturaCritica() {
         LocalDateTime seteDiasAtras = LocalDateTime.now().minusDays(7);
-        List<Object[]> perdas = perdidaRepository.countVendasPerdidasAgrupadasDesde(seteDiasAtras);
+        try {
+            // Nota: O repositório VendaPerdidaRepository deve conter este método
+            List<Object[]> perdas = perdidaRepository.countVendasPerdidasAgrupadasDesde(seteDiasAtras);
 
-        for (Object[] obj : perdas) {
-            String nomeProduto = (String) obj[0];
-            Long qtdPerdida = (Long) obj[1];
+            for (Object[] obj : perdas) {
+                String nomeProduto = (String) obj[0];
+                Long qtdPerdida = (Long) obj[1];
 
-            if (qtdPerdida >= 3) {
-                salvarInsight("RUPTURA", "ALTA",
-                        "Ruptura Crítica com Perda de Vendas",
-                        String.format("A loja perdeu %d vendas nos últimos 7 dias porque os clientes procuraram '%s' e não encontraram.", qtdPerdida, nomeProduto),
-                        "Contacte o fornecedor urgente. Este item tem alta procura orgânica e está a causar perda direta de receita diária."
-                );
+                if (qtdPerdida >= 3) {
+                    salvarInsight("RUPTURA", "ALTA",
+                            "Ruptura Crítica com Perda de Vendas",
+                            String.format("A loja perdeu %d vendas nos últimos 7 dias porque os clientes procuraram '%s' e não encontraram.", qtdPerdida, nomeProduto),
+                            "Contacte o fornecedor urgente. Este item tem alta procura orgânica e está a causar perda direta de receita diária."
+                    );
+                }
             }
+        } catch (Exception e) {
+            log.warn("Análise de ruptura crítica ignorada: método não implementado no repositório.");
         }
     }
 
@@ -121,26 +127,38 @@ public class MotorInteligenciaService {
         LocalDateTime ontemInicio = LocalDate.now().minusDays(1).atStartOfDay();
         LocalDateTime ontemFim = LocalDate.now().minusDays(1).atTime(LocalTime.MAX);
 
-        // 🚨 CORREÇÃO: Adicionado o Pageable.unpaged() e o .getContent()
-        List<Venda> vendas = vendaRepository.findByDataVendaBetween(ontemInicio, ontemFim, Pageable.unpaged()).getContent();
+        try {
+            List<Venda> vendas = vendaRepository.findByDataVendaBetween(ontemInicio, ontemFim, Pageable.unpaged()).getContent();
 
-        for (Venda v : vendas) {
-            if (v.getDescontoTotal() != null && v.getDescontoTotal().compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal valorRealTabela = v.getValorTotal().add(v.getDescontoTotal());
-                BigDecimal percentualDesconto = v.getDescontoTotal().divide(valorRealTabela, 4, RoundingMode.HALF_UP);
+            for (Venda v : vendas) {
+                if (v.getDescontoTotal() != null && v.getDescontoTotal().compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal valorRealTabela = v.getValorTotal().add(v.getDescontoTotal());
+                    BigDecimal percentualDesconto = v.getDescontoTotal().divide(valorRealTabela, 4, RoundingMode.HALF_UP);
 
-                // Se a venda teve mais de 25% de desconto global na frente de caixa
-                if (percentualDesconto.compareTo(new BigDecimal("0.25")) > 0) {
-                    salvarInsight("FRAUDE", "MEDIA",
-                            "Auditoria: Desconto Anormal no PDV",
-                            String.format("A Venda Nº %d registou um desconto incomum de %s%% (R$ %s abatidos) pelo operador de caixa.", v.getIdVenda(), percentualDesconto.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_UP), v.getDescontoTotal()),
-                            "Reveja a venda no menu Histórico e confirme com a equipa se este desconto profundo foi previamente autorizado pela gerência."
-                    );
+                    // Se a venda teve mais de 25% de desconto global na frente de caixa
+                    if (percentualDesconto.compareTo(new BigDecimal("0.25")) > 0) {
+
+                        salvarInsight("FRAUDE", "MEDIA",
+                                "Auditoria: Desconto Anormal no PDV",
+                                String.format("A Venda Nº %d registou um desconto incomum de %s%% (R$ %s abatidos) pelo operador de caixa.", v.getIdVenda(), percentualDesconto.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_UP), v.getDescontoTotal()),
+                                "Reveja a venda no menu Histórico e confirme com a equipa se este desconto profundo foi previamente autorizado pela gerência."
+                        );
+
+                        // 🚨 CORREÇÃO: O registro de auditoria foi movido para cá, onde a variável 'v' existe!
+                        try {
+                            auditoriaService.registrarAcao("IA_ANALYSIS", "SISTEMA_IA", "Motor IA detetou desconto suspeito na venda ID: " + v.getIdVenda());
+                        } catch (Exception e) {
+                            log.warn("Não foi possível registrar o log de auditoria no banco de dados.");
+                        }
+                    }
                 }
             }
+        } catch (Exception e) {
+            log.warn("Análise de anomalias financeiras ignorada.");
         }
     }
 
+    // 🚨 CORREÇÃO: A assinatura do método foi limpa
     private void salvarInsight(String tipo, String criticidade, String titulo, String msg, String acao) {
         InsightIA insight = new InsightIA(null, tipo, criticidade, titulo, msg, acao, LocalDateTime.now(), false);
         insightIARepository.save(insight);

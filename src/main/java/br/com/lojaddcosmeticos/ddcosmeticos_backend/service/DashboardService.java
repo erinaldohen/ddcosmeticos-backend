@@ -4,14 +4,15 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,7 +52,6 @@ public class DashboardService {
     public Map<String, Object> obterDadosDoDashboard(String periodo) {
         LocalDateTime agora = LocalDateTime.now();
 
-        // 1. FILTRO TEMPORAL BLINDADO
         LocalDateTime inicioRef = agora.toLocalDate().withDayOfMonth(1).atStartOfDay();
         LocalDateTime fimRef = agora.toLocalDate().withDayOfMonth(agora.toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
 
@@ -63,7 +63,6 @@ public class DashboardService {
             fimRef = agora.minusMonths(1).toLocalDate().withDayOfMonth(agora.minusMonths(1).toLocalDate().lengthOfMonth()).atTime(LocalTime.MAX);
         }
 
-        // 2. CONFIGURAÇÕES DA LOJA
         ConfiguracaoLoja config = configuracaoRepository.findAll().stream().findFirst().orElse(null);
         BigDecimal metaMensal = BigDecimal.valueOf(50000.00);
         if (config != null && config.getVendas() != null && config.getVendas().getMetaMensal() != null) {
@@ -71,25 +70,37 @@ public class DashboardService {
         }
 
         // ==============================================================================
-        // 🚀 OTIMIZAÇÃO: CONSULTAS HQL EXTREMAMENTE RÁPIDAS E SEGURAS
+        // 🚀 OTIMIZAÇÃO MAXIMA: LÊ APENAS NÚMEROS (IGNORA ENUMS CORROMPIDOS)
         // ==============================================================================
 
-        // A. Dados Base
-        List<Venda> vendasDoPeriodo = vendaRepository.buscarVendasPorPeriodo(inicioRef, fimRef);
+        // A. Base de Vendas (Sem ler a entidade Venda inteira)
+        List<Object[]> vendasRaw = em.createQuery(
+                        "SELECT v.valorTotal, v.descontoTotal, v.dataVenda FROM Venda v " +
+                                "WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce <> :statusCancelada", Object[].class)
+                .setParameter("inicio", inicioRef)
+                .setParameter("fim", fimRef)
+                .setParameter("statusCancelada", StatusFiscal.CANCELADA)
+                .getResultList();
+
         BigDecimal faturamentoPeriodo = BigDecimal.ZERO;
         BigDecimal descontosPeriodo = BigDecimal.ZERO;
+        long quantidadeVendas = vendasRaw.size();
+
         Map<Integer, Integer> agrupadoPorHora = new HashMap<>();
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmtDia = DateTimeFormatter.ofPattern("dd/MM");
 
-        for (Venda v : vendasDoPeriodo) {
-            BigDecimal totalVenda = safeBigDecimal(v.getValorTotal());
-            faturamentoPeriodo = faturamentoPeriodo.add(totalVenda);
-            descontosPeriodo = descontosPeriodo.add(safeBigDecimal(v.getDescontoTotal()));
+        for (Object[] obj : vendasRaw) {
+            BigDecimal totalVenda = obj[0] != null ? new BigDecimal(obj[0].toString()) : BigDecimal.ZERO;
+            BigDecimal desconto = obj[1] != null ? new BigDecimal(obj[1].toString()) : BigDecimal.ZERO;
+            LocalDateTime dt = (LocalDateTime) obj[2];
 
-            if (v.getDataVenda() != null) {
-                agrupadoPorHora.merge(v.getDataVenda().getHour(), 1, Integer::sum);
-                mapaDias.merge(v.getDataVenda().format(fmtDia), totalVenda, BigDecimal::add);
+            faturamentoPeriodo = faturamentoPeriodo.add(totalVenda);
+            descontosPeriodo = descontosPeriodo.add(desconto);
+
+            if (dt != null) {
+                agrupadoPorHora.merge(dt.getHour(), 1, Integer::sum);
+                mapaDias.merge(dt.format(fmtDia), totalVenda, BigDecimal::add);
             }
         }
 
@@ -110,7 +121,7 @@ public class DashboardService {
             formasPagamentoList.add(m);
         }
 
-        // C. Curva ABC e Ticket Médio (Sem N+1)
+        // C. Itens e Curva ABC
         List<Object[]> itensRaw = em.createQuery(
                         "SELECT p.categoria, p.descricao, SUM(i.precoUnitario * i.quantidade), " +
                                 "SUM(COALESCE(i.custoUnitarioHistorico, p.precoCusto) * i.quantidade), COUNT(i.id) " +
@@ -177,9 +188,8 @@ public class DashboardService {
         fluxo7Dias.put("saldoProjetado", totalReceitas.subtract(totalDespesas));
 
         // ==============================================================================
-        // FORMATAR PARA O FRONTEND (Zero Objetos Complexos ou Proxies)
+        // FORMATAR PARA O FRONTEND
         // ==============================================================================
-        long quantidadeVendas = vendasDoPeriodo.size();
         BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoPeriodo.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensPeriodo / quantidadeVendas : 0.0;
         BigDecimal impostoMes = faturamentoPeriodo.multiply(new BigDecimal("0.04"));
@@ -189,7 +199,6 @@ public class DashboardService {
                 .map(e -> { Map<String, Object> m = new HashMap<>(); m.put("nome", e.getKey()); m.put("valor", e.getValue()); return m; })
                 .collect(Collectors.toList());
 
-        // 🚨 RANKING ABC EM MEMÓRIA (Evita chamadas paginadas ao banco)
         List<Map<String, Object>> topProdutosList = faturamentoPorProduto.entrySet().stream()
                 .sorted((a, b) -> b.getValue().compareTo(a.getValue())).limit(10)
                 .map(e -> { Map<String, Object> m = new HashMap<>(); m.put("nome", e.getKey()); m.put("valor", e.getValue()); return m; })
@@ -224,11 +233,20 @@ public class DashboardService {
 
         List<Map<String, Object>> origemVendas = new ArrayList<>();
         try {
-            origemVendas = vendaRepository.somarFaturamentoPorOrigemMes(inicioRef).stream().map(proj -> {
+            List<Object[]> origemRaw = em.createQuery(
+                            "SELECT v.canalOrigem, SUM(v.valorTotal) FROM Venda v " +
+                                    "WHERE v.dataVenda >= :inicio AND v.statusNfce <> :statusCancelada GROUP BY v.canalOrigem", Object[].class)
+                    .setParameter("inicio", inicioRef)
+                    .setParameter("statusCancelada", StatusFiscal.CANCELADA)
+                    .getResultList();
+
+            for (Object[] obj : origemRaw) {
                 Map<String, Object> m = new HashMap<>();
-                m.put("name", proj.getCanalOrigem() != null ? proj.getCanalOrigem().name().replace("_", " ") : "Loja Física");
-                m.put("value", proj.getTotal() != null ? proj.getTotal() : BigDecimal.ZERO); return m;
-            }).collect(Collectors.toList());
+                String nomeCanal = obj[0] != null ? obj[0].toString().replace("_", " ") : "Loja Física";
+                m.put("name", nomeCanal);
+                m.put("value", obj[1] != null ? new BigDecimal(obj[1].toString()) : BigDecimal.ZERO);
+                origemVendas.add(m);
+            }
         } catch (Exception e) { log.warn("Aviso na origem de vendas."); }
 
         int diasPassados = Math.max(1, ("hoje".equals(periodo) ? 1 : agora.getDayOfMonth()));
@@ -241,7 +259,6 @@ public class DashboardService {
         Map<String, Object> inteligenciaVendas = new HashMap<>();
         inteligenciaVendas.put("roiValor", safeBigDecimal(vendaRepository.calcularFaturamentoInfluenciaIA(inicioRef, fimRef)));
         inteligenciaVendas.put("roiItens", vendaRepository.contarItensInfluenciaIA(inicioRef, fimRef) != null ? vendaRepository.contarItensInfluenciaIA(inicioRef, fimRef) : 0L);
-        // 🚨 REMOVIDO "afinidadeProdutos" (O Proxy que causava o Erro 500 no Jackson)
 
         Map<String, Object> financeiro = new HashMap<>();
         financeiro.put("faturamentoHoje", faturamentoPeriodo);
@@ -261,10 +278,20 @@ public class DashboardService {
         financeiro.put("crescimentoMoM", crescimentoMoM);
         financeiro.put("runRate", runRate);
 
+        List<ProdutoRankingDTO> topProdutosLimpos = new ArrayList<>();
+        try {
+            List<ProdutoRankingDTO> resultadoBanco = vendaRepository.buscarRankingProdutos(inicioRef, fimRef, PageRequest.of(0, 10));
+            if (resultadoBanco != null) {
+                topProdutosLimpos = resultadoBanco;
+            }
+        } catch (Exception e) {
+            log.warn("Falha ao buscar ranking de produtos: {}", e.getMessage());
+        }
+
         Map<String, Object> response = new HashMap<>();
         response.put("financeiro", financeiro);
         response.put("topCategorias", topCategorias);
-        response.put("topProdutos", topProdutosList);
+        response.put("topProdutos", topProdutosLimpos);
         response.put("performanceVendedores", performanceVendedores);
         response.put("inventario", inventarioNode);
         response.put("metaDiaria", metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP));

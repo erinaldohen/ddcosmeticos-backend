@@ -44,7 +44,6 @@ public class VendaService {
     private final NfceService nfceService;
     private final CalculadoraFiscalService calculadoraFiscalService;
     private final AuditoriaService auditoriaService;
-    private final FiscalComplianceService fiscalComplianceService;
 
     // =========================================================================
     // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO)
@@ -107,7 +106,6 @@ public class VendaService {
             item.setAliquotaIbsAplicada(regra.getAliquotaIbs());
             item.setAliquotaCbsAplicada(regra.getAliquotaCbs());
 
-            fiscalComplianceService.aplicarComplianceNoItemVenda(item);
             return item;
         }).collect(Collectors.toList());
 

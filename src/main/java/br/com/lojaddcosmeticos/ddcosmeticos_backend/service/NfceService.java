@@ -161,6 +161,7 @@ public class NfceService {
         if (retorno.getProtNFe() != null && "100".equals(retorno.getProtNFe().getInfProt().getCStat())) {
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             venda.setChaveAcessoNfce(chaveAcesso);
+            venda.setUrlQrCode(qrCodeFront);
             venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFeAssinado, retorno.getProtNFe()));
             vendaRepository.save(venda);
 

@@ -23,13 +23,17 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
 
     // --- MÉTODOS CRITICOS PARA CONTAS A PAGAR/RECEBER ---
 
-    // Busca o caixa aberto da loja (independente de usuário) para lançar vendas/pagamentos
-    Optional<CaixaDiario> findByStatus(StatusCaixa status);
+    // 🚨 ATUALIZADO: Usar findFirst evita crash (NonUniqueResultException) se houver 2 caixas abertos por anomalia
+    Optional<CaixaDiario> findFirstByStatus(StatusCaixa status);
 
     // Busca o último caixa criado (útil para validações de sequência)
     Optional<CaixaDiario> findTopByOrderByIdDesc();
 
-    // --- RELATÓRIOS ---
+    // --- RELATÓRIOS E DASHBOARD ---
+
+    // 🚨 ADICIONADO: Necessário para o Dashboard calcular o saldo em tempo real sem crashar
+    @Query("SELECT SUM(c.saldoAtual) FROM CaixaDiario c WHERE c.status = 'ABERTO'")
+    BigDecimal somarSaldosAtuais();
 
     // Método para paginação (usado na listagem da tela de Histórico)
     Page<CaixaDiario> findByDataAberturaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
@@ -56,6 +60,7 @@ public interface CaixaDiarioRepository extends JpaRepository<CaixaDiario, Long> 
     @Query(value = "SELECT c FROM CaixaDiario c LEFT JOIN FETCH c.usuarioAbertura WHERE c.dataAbertura BETWEEN :inicio AND :fim",
             countQuery = "SELECT count(c) FROM CaixaDiario c WHERE c.dataAbertura BETWEEN :inicio AND :fim")
     Page<CaixaDiario> findByDataAberturaBetweenComUsuario(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
+
     @Query("SELECT c FROM CaixaDiario c WHERE c.dataAbertura >= :inicio AND c.dataAbertura <= :fim")
     List<CaixaDiario> findCaixasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

@@ -12,14 +12,13 @@ import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 
-// DBA/Performance: Substituído @Data por Getter, Setter e Equals explícito
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
 @Table(name = "tb_item_venda")
 @Audited
-@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Impede loop infinito no Hash
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @ToString(onlyExplicitlyIncluded = true)
 public class ItemVenda {
 
@@ -29,31 +28,38 @@ public class ItemVenda {
     @ToString.Include
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY) // OTIMIZAÇÃO: Não carrega a venda inteira ao listar itens
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "venda_id")
-    @JsonIgnore // Impede o loop infinito no JSON
+    @JsonIgnore
     private Venda venda;
 
-    @ManyToOne(fetch = FetchType.LAZY) // OTIMIZAÇÃO: Não faz JOIN com produto a menos que seja pedido
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "produto_id")
     private Produto produto;
 
     @ToString.Include
+    @Column(precision = 15, scale = 4) // PRECISÃO FISCAL OBRIGATÓRIA
     private BigDecimal quantidade = BigDecimal.ZERO;
 
     @ToString.Include
+    @Column(precision = 15, scale = 4) // PRECISÃO FISCAL OBRIGATÓRIA
     private BigDecimal precoUnitario = BigDecimal.ZERO;
 
+    @Column(precision = 15, scale = 4)
     private BigDecimal desconto = BigDecimal.ZERO;
 
-    // --- CUSTOS E TRIBUTAÇÃO FUTURA ---
+    @Column(precision = 15, scale = 4)
     private BigDecimal custoUnitarioHistorico = BigDecimal.ZERO;
-    private BigDecimal aliquotaIbsAplicada;
-    private BigDecimal aliquotaCbsAplicada;
 
     // =========================================================================
-    // BLINDAGEM FISCAL: Fotografia exata da tributação no momento da venda
+    // BLINDAGEM FISCAL: Fotografia exata no momento da venda (Imutável)
     // =========================================================================
+
+    @Column(length = 20)
+    private String codigoBarras; // EAN daquele exato momento
+
+    @Column(length = 10)
+    private String ncm; // NCM daquele exato momento
 
     @Column(length = 4)
     private String cfop;
@@ -64,8 +70,17 @@ public class ItemVenda {
     @Column(length = 100)
     private String naturezaOperacao;
 
+    @Column(precision = 5, scale = 2)
+    private BigDecimal aliquotaIcms; // ICMS / Tributação
+
+    @Column(precision = 5, scale = 2)
+    private BigDecimal aliquotaIbsAplicada;
+
+    @Column(precision = 5, scale = 2)
+    private BigDecimal aliquotaCbsAplicada;
+
     // =========================================================================
-    // NOVO: INTELIGÊNCIA ARTIFICIAL E RASTREIO DE SUGESTÕES NO PDV
+    // INTELIGÊNCIA ARTIFICIAL E RASTREIO DE SUGESTÕES NO PDV
     // =========================================================================
 
     @Enumerated(EnumType.STRING)
@@ -73,7 +88,7 @@ public class ItemVenda {
     private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
 
     // =========================================================================
-    // MÉTODOS DE CONVENIÊNCIA (Para Relatórios e Comissões)
+    // MÉTODOS DE CONVENIÊNCIA E MATEMÁTICA CORRIGIDA
     // =========================================================================
 
     public BigDecimal getValorTotalItem() {
@@ -81,7 +96,8 @@ public class ItemVenda {
         BigDecimal preco = this.precoUnitario != null ? this.precoUnitario : BigDecimal.ZERO;
         BigDecimal desc = this.desconto != null ? this.desconto : BigDecimal.ZERO;
 
-        return preco.subtract(desc).multiply(qtd);
+        // 🚨 CORREÇÃO MATEMÁTICA SEFAZ: (Preço * Qtd) - Desconto
+        return preco.multiply(qtd).subtract(desc).max(BigDecimal.ZERO);
     }
 
     public BigDecimal getCustoTotalItem() {

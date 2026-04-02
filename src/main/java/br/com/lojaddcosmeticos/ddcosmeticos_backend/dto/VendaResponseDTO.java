@@ -24,7 +24,8 @@ public record VendaResponseDTO(
         BigDecimal valorLiquido, // <-- Ajustado para bater com o VendaService
         StatusFiscal status,
         String chaveAcessoNfce,  // <-- Ajustado para bater com o VendaService
-        String observacao        // Adicionado como extra útil
+        String observacao,       // Adicionado como extra útil
+        String urlQrCode         // <-- CORREÇÃO: Variável que envia o link do QR Code para o React
 ) {
     // Construtor auxiliar que aceita a Entidade Venda
     public VendaResponseDTO(Venda venda) {
@@ -50,7 +51,8 @@ public record VendaResponseDTO(
                 venda.getValorLiquido() != null ? venda.getValorLiquido() : BigDecimal.ZERO,
                 venda.getStatusNfce(),
                 venda.getChaveAcessoNfce(),
-                venda.getObservacao()
+                venda.getObservacao(),
+                venda.getUrlQrCode() // <-- CORREÇÃO: Mapeia o valor do banco para o DTO
         );
     }
 }

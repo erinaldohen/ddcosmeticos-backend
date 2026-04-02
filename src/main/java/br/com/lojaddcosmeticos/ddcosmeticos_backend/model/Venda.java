@@ -97,15 +97,40 @@ public class Venda {
     @Column(length = 50)
     private StatusFiscal statusNfce;
 
-    @Column(length = 50) private String chaveAcessoNfce;
-    @Column(length = 20) private String protocoloAutorizacao;
+    // =========================================================================
+    // DADOS FISCAIS NFC-E (CORRIGIDOS PARA COMPATIBILIDADE COM DTO E SEFAZ)
+    // =========================================================================
 
-    @Column(columnDefinition = "TEXT") private String xmlNota;
-    @Column(columnDefinition = "TEXT") private String mensagemRejeicao;
+    @Column(length = 50)
+    private String chaveAcessoNfce;
+
+    @Column(length = 50)
+    private String protocolo; // Renomeado de protocoloAutorizacao para ser lido corretamente
+
+    @Column
+    private Long numeroNfce; // Adicionado: Faltava na base de dados
+
+    @Column
+    private Integer serieNfce; // Adicionado: Faltava na base de dados
+
+    @Column(columnDefinition = "TEXT")
+    private String xmlNota;
+
+    @Column(columnDefinition = "TEXT")
+    private String mensagemRejeicao;
 
     private LocalDateTime dataAutorizacao;
-    @Column(length = 255) private String motivoDoCancelamento;
-    @Column(columnDefinition = "TEXT") private String observacao;
+
+    @Column(length = 255)
+    private String motivoDoCancelamento;
+
+    @Column(columnDefinition = "TEXT")
+    private String observacao;
+
+    // AQUI ESTÁ A CORREÇÃO CRÍTICA:
+    // Mapeamento da URL gerada pela Sefaz para persistência no banco
+    @Column(columnDefinition = "TEXT")
+    private String urlQrCode;
 
     // =========================================================================
     // MÉTODOS DE SINCRONIZAÇÃO JPA (BEST PRACTICES)

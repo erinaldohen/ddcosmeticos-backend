@@ -33,11 +33,11 @@ import java.util.Optional;
 @Slf4j
 public class CaixaService {
 
-    private final CaixaDiarioRepository caixaRepository;
+    private final CaixaDiarioRepository caixaDiarioRepository;
     private final UsuarioRepository usuarioRepository;
-    private final MovimentacaoCaixaRepository movimentacaoRepository;
+    private final MovimentacaoCaixaRepository movimentacaoCaixaRepository;
     private final AuditoriaService auditoriaService;
-    private final CaixaAuditorIaService auditorIaService;
+    private final CaixaAuditorIaService caixaAuditorIaService;
 
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
@@ -46,12 +46,13 @@ public class CaixaService {
     public CaixaDiario buscarCaixaAberto() {
         try {
             Usuario operador = getUsuarioLogado();
-            Optional<CaixaDiario> caixaUser = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
+            Optional<CaixaDiario> caixaUser = caixaDiarioRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
             if (caixaUser.isPresent()) return caixaUser.get();
         } catch (Exception e) {
             // Ignora erro
         }
-        return caixaRepository.findByStatus(StatusCaixa.ABERTO).orElse(null);
+        // 🚨 CORREÇÃO: Usando findFirstByStatus para respeitar a atualização do Repository
+        return caixaDiarioRepository.findFirstByStatus(StatusCaixa.ABERTO).orElse(null);
     }
 
     @Transactional
@@ -69,10 +70,10 @@ public class CaixaService {
                     caixa.setSaldoAtual(caixa.getSaldoAtual().subtract(valor));
                     caixa.setTotalSaidas(caixa.getTotalSaidas().add(valor));
                 }
-                caixaRepository.save(caixa);
+                caixaDiarioRepository.save(caixa);
             }
         }
-        movimentacaoRepository.save(movimentacao);
+        movimentacaoCaixaRepository.save(movimentacao);
     }
 
     // ==================================================================================
@@ -80,19 +81,19 @@ public class CaixaService {
     // ==================================================================================
 
     public List<String> listarMotivosFrequentes() {
-        return movimentacaoRepository.findDistinctMotivos();
+        return movimentacaoCaixaRepository.findDistinctMotivos();
     }
 
     public List<MovimentacaoCaixa> buscarHistorico(LocalDate inicio, LocalDate fim) {
         LocalDateTime dataInicio = inicio.atStartOfDay();
         LocalDateTime dataFim = fim.atTime(23, 59, 59);
-        return movimentacaoRepository.findByDataHoraBetween(dataInicio, dataFim);
+        return movimentacaoCaixaRepository.findByDataHoraBetween(dataInicio, dataFim);
     }
 
     @Transactional(readOnly = true)
     public CaixaDiarioDTO buscarStatusAtual() {
         Usuario operador = getUsuarioLogado();
-        Optional<CaixaDiario> caixaOpt = caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
+        Optional<CaixaDiario> caixaOpt = caixaDiarioRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO);
 
         if (caixaOpt.isEmpty()) return null;
 
@@ -122,8 +123,8 @@ public class CaixaService {
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
-                null, // justificativaDiferenca (Ainda está aberto)
-                null  // analiseAuditoriaIa (Ainda está aberto)
+                null,
+                null
         );
     }
 
@@ -131,7 +132,7 @@ public class CaixaService {
     public CaixaDiarioDTO abrirCaixa(BigDecimal fundoTroco) {
         Usuario operador = getUsuarioLogado();
 
-        if (caixaRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO).isPresent()) {
+        if (caixaDiarioRepository.findFirstByUsuarioAberturaAndStatus(operador, StatusCaixa.ABERTO).isPresent()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Você já possui um caixa aberto.");
         }
 
@@ -150,7 +151,7 @@ public class CaixaService {
         caixa.setTotalEntradas(BigDecimal.ZERO);
         caixa.setTotalSaidas(BigDecimal.ZERO);
 
-        CaixaDiario caixaSalvo = caixaRepository.save(caixa);
+        CaixaDiario caixaSalvo = caixaDiarioRepository.save(caixa);
         return converterParaDTOCompleto(caixaSalvo);
     }
 
@@ -179,8 +180,8 @@ public class CaixaService {
                 caixa.getSaldoEsperadoSistema(),
                 caixa.getValorFisicoInformado(),
                 caixa.getDiferencaCaixa(),
-                caixa.getJustificativaDiferenca(), // AGORA SIM: Extrai do banco
-                caixa.getAnaliseAuditoriaIa()      // AGORA SIM: Extrai do banco
+                caixa.getJustificativaDiferenca(),
+                caixa.getAnaliseAuditoriaIa()
         );
     }
 
@@ -189,12 +190,13 @@ public class CaixaService {
         Usuario operadorLogado = getUsuarioLogado();
         CaixaDiario caixa;
 
-        Optional<CaixaDiario> caixaProprio = caixaRepository.findFirstByUsuarioAberturaAndStatus(operadorLogado, StatusCaixa.ABERTO);
+        Optional<CaixaDiario> caixaProprio = caixaDiarioRepository.findFirstByUsuarioAberturaAndStatus(operadorLogado, StatusCaixa.ABERTO);
 
         if (caixaProprio.isPresent()) {
             caixa = caixaProprio.get();
         } else if (operadorLogado.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN) {
-            caixa = caixaRepository.findByStatus(StatusCaixa.ABERTO)
+            // 🚨 CORREÇÃO: Usando findFirstByStatus para o Administrador forçar o fecho de qualquer caixa aberto
+            caixa = caixaDiarioRepository.findFirstByStatus(StatusCaixa.ABERTO)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há nenhum caixa aberto no sistema."));
         } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -221,26 +223,26 @@ public class CaixaService {
         caixa.setStatus(StatusCaixa.FECHADO);
         caixa.setDataFechamento(LocalDateTime.now());
 
-        caixaRepository.save(caixa);
+        caixaDiarioRepository.save(caixa);
 
         String msgAuditoria = String.format("Fechamento Caixa #%d. Resp: %s. Esperado: %s. Informado: %s. Dif: %s",
                 caixa.getId(), operadorLogado.getNome(), saldoEsperado, valorInformado, diferenca);
 
         if (diferenca.compareTo(BigDecimal.ZERO) != 0) {
             if (diferenca.compareTo(BigDecimal.ZERO) < 0) {
-                auditoriaService.registrar("QUEBRA_DE_CAIXA", msgAuditoria);
+                auditoriaService.registrarAcao("QUEBRA_DE_CAIXA", operadorLogado.getNome(), msgAuditoria);
                 log.warn("QUEBRA DETECTADA: {}", msgAuditoria);
             } else {
-                auditoriaService.registrar("SOBRA_DE_CAIXA", msgAuditoria);
+                auditoriaService.registrarAcao("SOBRA_DE_CAIXA", operadorLogado.getNome(), msgAuditoria);
                 log.info("SOBRA DETECTADA: {}", msgAuditoria);
             }
 
-            if (auditorIaService != null) {
-                auditorIaService.auditarQuebraDeCaixa(caixa.getId(), operadorLogado.getNome(), justificativa);
+            if (caixaAuditorIaService != null) {
+                caixaAuditorIaService.auditarQuebraDeCaixa(caixa.getId(), operadorLogado.getNome(), justificativa);
             }
 
         } else {
-            auditoriaService.registrar("FECHAMENTO_CAIXA", msgAuditoria);
+            auditoriaService.registrarAcao("FECHAMENTO_CAIXA", operadorLogado.getNome(), msgAuditoria);
         }
 
         return new ConfirmacaoFechamentoDTO(
@@ -306,13 +308,13 @@ public class CaixaService {
         Page<CaixaDiario> paginaCaixas;
 
         if (inicio != null && fim != null) {
-            paginaCaixas = caixaRepository.findByDataAberturaBetweenComUsuario(
+            paginaCaixas = caixaDiarioRepository.findByDataAberturaBetweenComUsuario(
                     inicio.atStartOfDay(),
                     fim.atTime(23, 59, 59),
                     pageable
             );
         } else {
-            paginaCaixas = caixaRepository.findAllComUsuario(pageable);
+            paginaCaixas = caixaDiarioRepository.findAllComUsuario(pageable);
         }
 
         return paginaCaixas.map(this::converterParaDTOCompleto);
@@ -322,7 +324,7 @@ public class CaixaService {
     // ==================================================================================
     @Transactional(readOnly = true)
     public List<CaixaDiarioDTO> buscarAlertasRiscoDashboard() {
-        return caixaRepository.findAll().stream()
+        return caixaDiarioRepository.findAll().stream()
                 .filter(c -> c.getAnaliseAuditoriaIa() != null &&
                         (c.getAnaliseAuditoriaIa().contains("[RISCO: ALTO]") || c.getAnaliseAuditoriaIa().contains("[RISCO: MEDIO]")))
                 .map(this::converterParaDTOCompleto)

@@ -1,4 +1,6 @@
-package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
+package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard;
+
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 
 import java.math.BigDecimal;
 import java.util.List;

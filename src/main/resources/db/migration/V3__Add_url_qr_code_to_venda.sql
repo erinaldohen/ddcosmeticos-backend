@@ -1,0 +1,1 @@
+ALTER TABLE tb_venda ADD COLUMN url_qr_code TEXT;

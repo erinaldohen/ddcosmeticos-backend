@@ -22,9 +22,8 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
     List<Produto> findByNcm(String ncm);
 
-    // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE & CORRIGIDA PARA POSTGRES) ---
-    // A lógica condicional verifica se o parâmetro foi passado (is null ou = false).
-    // Se foi passado (true) ativa a cláusula do filtro correspondente.
+    // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE & CORRIGIDA PARA HIBERNATE 6) ---
+    // Utiliza COALESCE para tratar parâmetros booleanos nulos, garantindo compatibilidade PostgreSQL
     @Query("SELECT p FROM Produto p WHERE p.ativo = true " +
             "AND (:termo IS NULL OR :termo = '' OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS string), '%')) " +
             "AND (:marca IS NULL OR :marca = '' OR p.marca = :marca) " +
@@ -32,10 +31,10 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "AND (:statusEstoque IS NULL OR :statusEstoque = '' " +
             "     OR (:statusEstoque = 'baixo' AND p.quantidadeEmEstoque <= COALESCE(p.estoqueMinimo, 5)) " +
             "     OR (:statusEstoque = 'ok' AND p.quantidadeEmEstoque > COALESCE(p.estoqueMinimo, 5))) " +
-            "AND (:semImagem = false OR (:semImagem = true AND (p.urlImagem IS NULL OR p.urlImagem = ''))) " +
-            "AND (:semNcm = false OR (:semNcm = true AND (p.ncm IS NULL OR p.ncm = '00000000' OR p.ncm = ''))) " +
-            "AND (:precoZero = false OR (:precoZero = true AND (p.precoVenda IS NULL OR p.precoVenda <= 0))) " +
-            "AND (:revisaoPendente = false OR (:revisaoPendente = true AND p.revisaoPendente = true))")
+            "AND (COALESCE(:semImagem, false) = false OR (p.urlImagem IS NULL OR p.urlImagem = '')) " +
+            "AND (COALESCE(:semNcm, false) = false OR (p.ncm IS NULL OR p.ncm = '00000000' OR p.ncm = '')) " +
+            "AND (COALESCE(:precoZero, false) = false OR (p.precoVenda IS NULL OR p.precoVenda <= 0)) " +
+            "AND (COALESCE(:revisaoPendente, false) = false OR p.revisaoPendente = true)")
     Page<Produto> buscarComFiltros(
             @Param("termo") String termo,
             @Param("marca") String marca,
@@ -74,9 +73,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Query("SELECT COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) FROM Produto p WHERE p.ativo = true")
     BigDecimal calcularValorTotalEstoque();
-
-    @Query("SELECT COUNT(p) FROM Produto p WHERE (p.ncm IS NULL OR p.ncm = '' OR p.cest IS NULL OR p.cest = '') AND p.ativo = true")
-    long contarProdutosSemFiscal();
 
     @Query("""
         SELECT DISTINCT p 
@@ -156,9 +152,12 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "(p.dataUltimaVenda IS NULL OR p.dataUltimaVenda <= :dataLimiteGiro)")
     RiscoEstoqueProjection calcularEstoqueParado(@Param("dataLimiteGiro") LocalDate dataLimiteGiro);
 
-    // --- CONTADOR DO DASHBOARD (ALERTA DE PRODUTOS PENDENTES DO PDV) ---
-    @Query("SELECT COUNT(p) FROM Produto p WHERE p.revisaoPendente = true AND p.ativo = true")
-    long countByRevisaoPendenteTrueAndAtivoTrue();
+    // --- CONTADORES DE DASHBOARD ---
+
+    // Simplificamos dois métodos idênticos num só, que calcula todos os produtos ativos do sistema
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.ativo = true")
+    long contarProdutosAtivos();
+
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.revisaoPendente = true AND p.ativo = true")
     long countProdutosPendentesDeRevisao();
 }

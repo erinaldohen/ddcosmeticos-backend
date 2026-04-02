@@ -47,8 +47,8 @@ public class RelatorioService {
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
     @Autowired private ConfiguracaoRepository configuracaoRepository;
-    @Autowired private CaixaDiarioRepository caixaRepository; // <-- NOVO
-    @Autowired private EmailService emailService; // <-- NOVO
+    @Autowired private CaixaDiarioRepository caixaRepository;
+    @Autowired private EmailService emailService;
 
     // =========================================================================
     // 1. BI COMERCIAL (VENDAS)
@@ -215,7 +215,10 @@ public class RelatorioService {
         if (faturamentoPeriodo.compareTo(new BigDecimal("15000")) > 0) aliquota = 7.3;
         if (faturamentoPeriodo.compareTo(new BigDecimal("30000")) > 0) aliquota = 9.5;
 
-        Long produtosSemNcmCest = nvl(produtoRepository.contarProdutosSemFiscal());
+        // 🚨 CORREÇÃO: Substituído o método apagado do Motor Fiscal por uma contagem básica na tabela de produtos
+        Long produtosSemNcmCest = produtoRepository.findAll().stream()
+                .filter(p -> p.isAtivo() && (p.getNcm() == null || p.getNcm().isBlank()))
+                .count();
 
         BigDecimal receitaMonofasica = faturamentoPeriodo.multiply(new BigDecimal("0.60"));
         BigDecimal receitaTributada = faturamentoPeriodo.subtract(receitaMonofasica);
@@ -241,7 +244,6 @@ public class RelatorioService {
     @Transactional(readOnly = true)
     public RelatorioComissaoDTO gerarRelatorioComissoes(LocalDateTime inicio, LocalDateTime fim, Long vendedorId) {
 
-        // Pega as configurações globais de comissão
         ConfiguracaoLoja config = configuracaoRepository.findFirstByOrderByIdAsc();
         BigDecimal percentualComissao = BigDecimal.ZERO;
         boolean sobreLucro = true;
@@ -258,12 +260,12 @@ public class RelatorioService {
             }
         }
 
-        // Busca Vendas
         List<Venda> vendas;
+        // 🚨 CORREÇÃO: Alterado de CONCLUIDA para AUTORIZADA (Enum atualizado)
         if (vendedorId != null) {
-            vendas = vendaRepository.findByDataVendaBetweenAndUsuarioIdAndStatusNfce(inicio, fim, vendedorId, StatusFiscal.CONCLUIDA);
+            vendas = vendaRepository.findByDataVendaBetweenAndUsuarioIdAndStatusNfce(inicio, fim, vendedorId, StatusFiscal.AUTORIZADA);
         } else {
-            vendas = vendaRepository.findByDataVendaBetweenAndStatusNfce(inicio, fim, StatusFiscal.CONCLUIDA);
+            vendas = vendaRepository.findByDataVendaBetweenAndStatusNfce(inicio, fim, StatusFiscal.AUTORIZADA);
         }
 
         Map<Long, ComissaoVendedorDTO> mapaComissoes = new HashMap<>();
@@ -282,7 +284,6 @@ public class RelatorioService {
                     ? nvl(venda.getValorTotal()).subtract(nvl(venda.getCustoTotal()))
                     : nvl(venda.getValorTotal());
 
-            // Garante que a base não seja negativa em caso de prejuízo e comissionamento sobre lucro
             if (valorBase.compareTo(BigDecimal.ZERO) < 0) valorBase = BigDecimal.ZERO;
 
             if (descontarTaxas && ("CREDITO".equalsIgnoreCase(venda.getFormaPagamento()) || "DEBITO".equalsIgnoreCase(venda.getFormaPagamento()))) {
@@ -302,8 +303,6 @@ public class RelatorioService {
         }
 
         relatorio.getVendedores().addAll(mapaComissoes.values());
-
-        // Ordena do que mais vendeu (em valor) para o que menos vendeu
         relatorio.getVendedores().sort((v1, v2) -> v2.getValorTotalVendido().compareTo(v1.getValorTotalVendido()));
 
         return relatorio;
@@ -398,19 +397,17 @@ public class RelatorioService {
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
     private Long nvl(Long val) { return val == null ? 0L : val; }
     private Integer nvl(Integer val) { return val == null ? 0 : val; }
+
     public byte[] gerarPdfComissoes(RelatorioComissaoDTO dados) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4);
             PdfWriter.getInstance(document, out);
             document.open();
 
-            // Fontes
             Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
             Font fontSub = FontFactory.getFont(FontFactory.HELVETICA, 10, Color.DARK_GRAY);
             Font fontHeader = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE);
-            Font fontLinha = FontFactory.getFont(FontFactory.HELVETICA, 9);
 
-            // Cabeçalho
             Paragraph titulo = new Paragraph("FECHAMENTO DE COMISSÕES - DD COSMÉTICOS", fontTitulo);
             titulo.setAlignment(Element.ALIGN_CENTER);
             document.add(titulo);
@@ -422,7 +419,6 @@ public class RelatorioService {
             document.add(periodo);
             document.add(new Paragraph(" "));
 
-            // Tabela
             PdfPTable table = new PdfPTable(4);
             table.setWidthPercentage(100);
             table.setWidths(new float[]{4f, 2f, 2.5f, 2.5f});
@@ -430,7 +426,7 @@ public class RelatorioService {
             String[] headers = {"Vendedor", "Vendas", "Total Vendido", "Comissão"};
             for (String h : headers) {
                 PdfPCell cell = new PdfPCell(new Phrase(h, fontHeader));
-                cell.setBackgroundColor(new Color(15, 23, 42)); // Azul Escuro DD
+                cell.setBackgroundColor(new Color(15, 23, 42));
                 cell.setHorizontalAlignment(Element.ALIGN_CENTER);
                 cell.setPadding(8);
                 table.addCell(cell);
@@ -444,14 +440,12 @@ public class RelatorioService {
             }
             document.add(table);
 
-            // Totais Gerais
             document.add(new Paragraph(" "));
             Paragraph total = new Paragraph(String.format("Total Geral de Comissões: R$ %s",
                     dados.getTotalComissoesGeral().setScale(2, RoundingMode.HALF_UP)), fontTitulo);
             total.setAlignment(Element.ALIGN_RIGHT);
             document.add(total);
 
-            // Rodapé com Assinatura
             document.add(new Paragraph("\n\n\n\n"));
             Paragraph pAssinatura = new Paragraph("__________________________________________\nAssinatura do Responsável", fontSub);
             pAssinatura.setAlignment(Element.ALIGN_CENTER);
@@ -464,6 +458,7 @@ public class RelatorioService {
             return new byte[0];
         }
     }
+
     // =========================================================================
     // 7. DOSSIÊ EXECUTIVO 360º COM "MOTOR DE IA" HEURÍSTICO
     // =========================================================================
@@ -473,28 +468,24 @@ public class RelatorioService {
             PdfWriter.getInstance(document, out);
             document.open();
 
-            // Estilos de Fonte
             Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Color.DARK_GRAY);
-            Font fontSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153)); // Rosa da Marca
+            Font fontSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153));
             Font fontCorpo = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.BLACK);
-            Font fontIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246)); // Azul IA
+            Font fontIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246));
 
-            // 1. DADOS DE TODAS AS ÁREAS (Cruzamento)
             RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio, fim);
             Map<String, Object> financeiro = gerarRelatorioFinanceiro(inicio, fim);
             Map<String, Object> estoque = gerarRelatorioEstoque(inicio, fim);
             Map<String, Object> fiscal = gerarRelatorioFiscal(inicio, fim);
 
-            // Cálculos Derivados
             BigDecimal fatBruto = vendas.getTotalFaturado();
             BigDecimal lucroBruto = vendas.getLucroBrutoEstimado();
             BigDecimal despPagar = (BigDecimal) financeiro.get("aPagar");
-            BigDecimal ebitda = fatBruto.subtract(fatBruto.subtract(lucroBruto)).subtract(despPagar); // Simplificação
+            BigDecimal ebitda = fatBruto.subtract(fatBruto.subtract(lucroBruto)).subtract(despPagar);
             BigDecimal custoEst = (BigDecimal) estoque.get("custoEstoque");
             BigDecimal gmroi = custoEst.compareTo(BigDecimal.ZERO) > 0 ? lucroBruto.divide(custoEst, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
             Long errosFiscais = (Long) fiscal.get("erros");
 
-            // CABEÇALHO DO DOCUMENTO
             Paragraph titulo = new Paragraph("DOSSIÊ EXECUTIVO 360º", fontTitulo);
             titulo.setAlignment(Element.ALIGN_CENTER);
             document.add(titulo);
@@ -505,9 +496,6 @@ public class RelatorioService {
             subtitulo.setAlignment(Element.ALIGN_CENTER);
             document.add(subtitulo);
 
-            // ==========================================
-            // PARECER DA INTELIGÊNCIA ARTIFICIAL (C-LEVEL)
-            // ==========================================
             document.add(new Paragraph("RESUMO EXECUTIVO (SÍNTESE IA)", fontSecao));
 
             StringBuilder analiseIA = new StringBuilder();
@@ -525,9 +513,6 @@ public class RelatorioService {
             parecerIA.setSpacingAfter(15f);
             document.add(parecerIA);
 
-            // ==========================================
-            // DEPARTAMENTO: FINANCEIRO & COMERCIAL
-            // ==========================================
             document.add(new Paragraph("1. DEPARTAMENTO FINANCEIRO E COMERCIAL", fontSecao));
 
             PdfPTable tableFin = new PdfPTable(2);
@@ -551,20 +536,13 @@ public class RelatorioService {
 
             document.add(tableFin);
 
-            // ==========================================
-            // DEPARTAMENTO: OPERAÇÕES & SUPPLY CHAIN
-            // ==========================================
             document.add(new Paragraph("2. OPERAÇÕES, ESTOQUE E SUPPLY CHAIN", fontSecao));
             Paragraph txtOperacoes = new Paragraph("O departamento de compras possui atualmente R$ " + custoEst.setScale(2, RoundingMode.HALF_UP) + " imobilizados. " +
                     "A taxa de ruptura (falta de produto na prateleira) atual é de " + estoque.get("ruptura") + "% do mix ativo.\n\n", fontCorpo);
             document.add(txtOperacoes);
 
-            // ==========================================
-            // DEPARTAMENTO: RH E PERFORMANCE
-            // ==========================================
             document.add(new Paragraph("3. RECURSOS HUMANOS (PERFORMANCE DE VENDAS)", fontSecao));
 
-            // Pega o relatório de comissões dinamicamente
             RelatorioComissaoDTO comissoes = gerarRelatorioComissoes(inicio.atStartOfDay(), fim.atTime(LocalTime.MAX), null);
             BigDecimal totalComissoes = comissoes.getTotalComissoesGeral();
 
@@ -573,16 +551,12 @@ public class RelatorioService {
                     "O Ticket Médio por cliente manteve-se em R$ " + vendas.getTicketMedio().setScale(2, RoundingMode.HALF_UP) + ".\n\n", fontCorpo);
             document.add(txtRh);
 
-            // ==========================================
-            // DEPARTAMENTO: JURÍDICO, FISCAL E COMPLIANCE
-            // ==========================================
             document.add(new Paragraph("4. JURÍDICO, FISCAL E COMPLIANCE", fontSecao));
             Paragraph txtFiscal = new Paragraph("Alíquota média Simples Nacional projetada: " + fiscal.get("aliquota") + "%. " +
                     "A segregação de produtos monofásicos permitiu uma economia Lícita (Recuperação Tributária) estimada em R$ " +
                     ((BigDecimal) fiscal.get("recuperacao")).setScale(2, RoundingMode.HALF_UP) + ".\n", fontCorpo);
             document.add(txtFiscal);
 
-            // Rodapé Oficial
             document.add(new Paragraph("\n\n"));
             Paragraph rodape = new Paragraph("Documento Confidencial DD Cosméticos. Gerado eletronicamente em " +
                     LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) + ".", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.GRAY));
@@ -597,6 +571,7 @@ public class RelatorioService {
             return null;
         }
     }
+
     // =========================================================================
     // 8. GERADOR DO BALANÇO TRIMESTRAL (EARNINGS RELEASE CORPORATIVO)
     // =========================================================================
@@ -606,7 +581,6 @@ public class RelatorioService {
             PdfWriter writer = PdfWriter.getInstance(document, out);
             document.open();
 
-            // Definição das Datas do Trimestre
             LocalDate inicio;
             LocalDate fim;
             switch (trimestre) {
@@ -617,7 +591,6 @@ public class RelatorioService {
                 default: throw new IllegalArgumentException("Trimestre inválido");
             }
 
-            // Extração Global de Dados
             RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio, fim);
             Map<String, Object> fin = gerarRelatorioFinanceiro(inicio, fim);
             Map<String, Object> est = gerarRelatorioEstoque(inicio, fim);
@@ -629,16 +602,11 @@ public class RelatorioService {
             BigDecimal custoEst = (BigDecimal) est.get("custoEstoque");
             BigDecimal gmroi = custoEst.compareTo(BigDecimal.ZERO) > 0 ? lucroBruto.divide(custoEst, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
 
-            // Fontes Corporativas
             Font fTituloLogo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 26, new Color(236, 72, 153));
             Font fSub = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.GRAY);
             Font fSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(15, 23, 42));
             Font fTexto = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.DARK_GRAY);
-            Font fDestaque = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, new Color(59, 130, 246));
 
-            // =========================================================
-            // CAPA E CABEÇALHO
-            // =========================================================
             Paragraph logo = new Paragraph("DD COSMÉTICOS S/A", fTituloLogo);
             logo.setAlignment(Element.ALIGN_CENTER);
             document.add(logo);
@@ -653,14 +621,10 @@ public class RelatorioService {
             dataBase.setSpacingAfter(30);
             document.add(dataBase);
 
-            // =========================================================
-            // PARTE I: CARTA DA ADMINISTRAÇÃO E ANÁLISE DE IA
-            // =========================================================
             Paragraph p1 = new Paragraph("PARTE I: MENSAGEM DA ADMINISTRAÇÃO (SÍNTESE INTELIGENTE)", fSecao);
             p1.setSpacingAfter(10);
             document.add(p1);
 
-            // Heurística Financeira
             String txtFin = "Durante o " + trimestre + "º trimestre, a companhia atingiu um faturamento bruto de R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP) + ". ";
             if (ebitda.compareTo(BigDecimal.ZERO) > 0) {
                 txtFin += "O EBITDA ajustado foi positivo em R$ " + ebitda.setScale(2, RoundingMode.HALF_UP) + ", demonstrando excelente capacidade de geração de caixa pelas operações diárias. A estrutura de custos fixos está alinhada com as receitas.";
@@ -670,7 +634,6 @@ public class RelatorioService {
             document.add(new Paragraph("Desempenho Financeiro:\n" + txtFin, fTexto));
             document.add(new Paragraph(" "));
 
-            // Heurística de Estoque (GMROI)
             String txtEst = "O Capital de Giro imobilizado em mercadorias fechou o trimestre em R$ " + custoEst.setScale(2, RoundingMode.HALF_UP) + ". ";
             if (gmroi.compareTo(new BigDecimal("1.5")) >= 0) {
                 txtEst += "O indicador de retorno GMROI é de " + gmroi + ", o que indica altíssima eficiência. A cada R$ 1,00 estocado, a empresa gera lucros substanciais, provando forte aderência do mix de produtos junto ao consumidor.";
@@ -680,10 +643,7 @@ public class RelatorioService {
             document.add(new Paragraph("Eficiência de Capital e Supply Chain:\n" + txtEst, fTexto));
             document.add(new Paragraph(" "));
 
-            // =========================================================
-            // PARTE II: ANÁLISE FUNDAMENTALISTA (NÚMEROS FRIOS)
-            // =========================================================
-            document.add(Chunk.NEXTPAGE); // Quebra de Página
+            document.add(Chunk.NEXTPAGE);
 
             Paragraph p2 = new Paragraph("PARTE II: INDICADORES FUNDAMENTALISTAS", fSecao);
             p2.setSpacingAfter(20);
@@ -692,14 +652,12 @@ public class RelatorioService {
             PdfPTable table = new PdfPTable(2);
             table.setWidthPercentage(100);
 
-            // Estilo do Cabeçalho da Tabela
             PdfPCell h1 = new PdfPCell(new Phrase("Métrica Operacional", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
             h1.setBackgroundColor(new Color(15, 23, 42)); h1.setPadding(8);
             PdfPCell h2 = new PdfPCell(new Phrase("Resultado Consolidado", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
             h2.setBackgroundColor(new Color(15, 23, 42)); h2.setPadding(8); h2.setHorizontalAlignment(Element.ALIGN_RIGHT);
             table.addCell(h1); table.addCell(h2);
 
-            // Linhas de Dados
             addTableRow(table, "1. Faturamento Bruto", "R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP));
             addTableRow(table, "2. Lucro Bruto (Margem)", "R$ " + lucroBruto.setScale(2, RoundingMode.HALF_UP));
             addTableRow(table, "3. Ticket Médio Trimestral", "R$ " + vendas.getTicketMedio().setScale(2, RoundingMode.HALF_UP));
@@ -711,7 +669,6 @@ public class RelatorioService {
 
             document.add(table);
 
-            // Aviso Legal
             document.add(new Paragraph("\n\n"));
             Paragraph legal = new Paragraph("DISCLAIMER: Este relatório contém projeções geradas por inteligência heurística baseadas em dados inseridos no sistema. Não serve como auditoria contábil externa com valor legal para a Receita Federal.", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.LIGHT_GRAY));
             legal.setAlignment(Element.ALIGN_JUSTIFIED);
@@ -762,12 +719,10 @@ public class RelatorioService {
             String emailAdmin = (config != null && config.getLoja() != null && config.getLoja().getEmail() != null && !config.getLoja().getEmail().isBlank())
                     ? config.getLoja().getEmail().trim() : "lojaddcosmeticos@gmail.com";
 
-            // Coleta Rica de Dados (Usando o seu BI já existente)
             RelatorioVendasDTO vendas = gerarRelatorioVendas(inicio.toLocalDate(), fim.toLocalDate());
             Map<String, Object> estoque = gerarRelatorioEstoque(inicio.toLocalDate(), fim.toLocalDate());
             Map<String, Object> fiscal = gerarRelatorioFiscal(inicio.toLocalDate(), fim.toLocalDate());
 
-            // Cálculos
             BigDecimal fatBruto = nvl(vendas.getTotalFaturado());
             BigDecimal lucroBruto = nvl(vendas.getLucroBrutoEstimado());
             BigDecimal ticketMedio = nvl(vendas.getTicketMedio());
@@ -775,26 +730,21 @@ public class RelatorioService {
             double ruptura = Double.parseDouble(rupturaStr);
             Long errosFiscais = fiscal.get("erros") != null ? (Long) fiscal.get("erros") : 0L;
 
-            // Geração do PDF
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             Document document = new Document(PageSize.A4, 40, 40, 40, 40);
             PdfWriter.getInstance(document, out);
             document.open();
 
-            // Fontes Corporativas
             Font fTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, new Color(15, 23, 42));
             Font fSub = FontFactory.getFont(FontFactory.HELVETICA, 12, Color.GRAY);
-            Font fSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153)); // Rosa DD Cosméticos
+            Font fSecao = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(236, 72, 153));
             Font fNormal = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.DARK_GRAY);
-            Font fIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246)); // Azul Consultoria
+            Font fIA = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 11, new Color(59, 130, 246));
 
-            // --- CABEÇALHO COM LOGO DINÂMICA ---
             try {
-                // 1. Buscamos o nome exato do arquivo salvo no Banco de Dados
-                String nomeArquivoLogo = config.getLoja() != null ? config.getLoja().getLogoUrl() : null;
+                String nomeArquivoLogo = config != null && config.getLoja() != null ? config.getLoja().getLogoUrl() : null;
 
                 if (nomeArquivoLogo != null && !nomeArquivoLogo.isBlank()) {
-                    // 2. Montamos o caminho correto (garantindo que aponta para a pasta uploads)
                     String caminhoFinal = nomeArquivoLogo.contains("/") ? nomeArquivoLogo : "uploads/" + nomeArquivoLogo;
 
                     Image logo = Image.getInstance(caminhoFinal);
@@ -805,7 +755,6 @@ public class RelatorioService {
                     throw new RuntimeException("Logo não configurada no banco.");
                 }
             } catch (Exception e) {
-                // Fallback elegante: Se não achar o arquivo físico ou não tiver no banco, escreve o nome da loja
                 log.warn("⚠️ Logo física não encontrada ou não configurada. Usando texto padrão no cabeçalho.");
                 Paragraph logoText = new Paragraph("DD COSMÉTICOS", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 24, new Color(236, 72, 153)));
                 logoText.setAlignment(Element.ALIGN_CENTER);
@@ -822,39 +771,32 @@ public class RelatorioService {
             periodo.setSpacingAfter(30);
             document.add(periodo);
 
-            // --- ANÁLISE 1: FINANCEIRO E COMERCIAL ---
             document.add(new Paragraph("1. PERFORMANCE FINANCEIRA E COMERCIAL", fSecao));
             document.add(new Paragraph("Faturamento Bruto: R$ " + fatBruto.setScale(2, RoundingMode.HALF_UP) +
                     " | Lucro Bruto: R$ " + lucroBruto.setScale(2, RoundingMode.HALF_UP) +
                     " | Ticket Médio: R$ " + ticketMedio.setScale(2, RoundingMode.HALF_UP), fNormal));
 
-            // Motor IA: Financeiro
             String iaFinanceiro = gerarConselhoFinanceiro(fatBruto, lucroBruto, ticketMedio);
             Paragraph pIaFin = new Paragraph("🤖 Parecer da Consultora IA: " + iaFinanceiro, fIA);
             pIaFin.setSpacingBefore(10); pIaFin.setSpacingAfter(20);
             document.add(pIaFin);
 
-            // --- ANÁLISE 2: ESTOQUE E SUPPLY CHAIN ---
             document.add(new Paragraph("2. SAÚDE DO ESTOQUE", fSecao));
             document.add(new Paragraph("Taxa de Ruptura (Faltas): " + ruptura + "% do Mix de Produtos.", fNormal));
 
-            // Motor IA: Estoque
             String iaEstoque = gerarConselhoEstoque(ruptura);
             Paragraph pIaEst = new Paragraph("🤖 Parecer da Consultora IA: " + iaEstoque, fIA);
             pIaEst.setSpacingBefore(10); pIaEst.setSpacingAfter(20);
             document.add(pIaEst);
 
-            // --- ANÁLISE 3: FISCAL E COMPLIANCE ---
             document.add(new Paragraph("3. RISCO FISCAL E TRIBUTÁRIO", fSecao));
             document.add(new Paragraph("Produtos sem NCM/CEST cadastrados: " + errosFiscais, fNormal));
 
-            // Motor IA: Fiscal
             String iaFiscal = gerarConselhoFiscal(errosFiscais);
             Paragraph pIaFis = new Paragraph("🤖 Parecer da Consultora IA: " + iaFiscal, fIA);
             pIaFis.setSpacingBefore(10); pIaFis.setSpacingAfter(30);
             document.add(pIaFis);
 
-            // --- RESUMO VISUAL (TABELA) ---
             PdfPTable tabela = new PdfPTable(2);
             tabela.setWidthPercentage(100);
 
@@ -874,7 +816,6 @@ public class RelatorioService {
             document.add(new Paragraph("\n\nDocumento confidencial gerado automaticamente pelo Sistema DD Cosméticos.", FontFactory.getFont(FontFactory.HELVETICA, 8, Color.LIGHT_GRAY)));
             document.close();
 
-            // Disparo do E-mail (Manteve-se a arquitetura de sucesso)
             String nomeArquivoPdf = "Consultoria_DDCosmeticos_" + mesReferencia.replace("/", "_") + ".pdf";
             emailService.enviarRelatorioAdmin(out.toByteArray(), nomeArquivoPdf, emailAdmin);
 
@@ -930,15 +871,14 @@ public class RelatorioService {
         }
     }
 
-    // Métodos auxiliares de formatação de células
     private PdfPCell criarCelula(String texto, Font font) {
-        PdfPCell cell = new PdfPCell(new Phrase(texto, font));
+        PdfPCell cell = new PdfPCell(new Phrase(texto != null ? texto : "", font));
         cell.setPadding(8);
         return cell;
     }
 
     private PdfPCell criarCelulaDireita(String texto, Font font) {
-        PdfPCell cell = new PdfPCell(new Phrase(texto, font));
+        PdfPCell cell = new PdfPCell(new Phrase(texto != null ? texto : "", font));
         cell.setPadding(8);
         cell.setHorizontalAlignment(Element.ALIGN_RIGHT);
         return cell;

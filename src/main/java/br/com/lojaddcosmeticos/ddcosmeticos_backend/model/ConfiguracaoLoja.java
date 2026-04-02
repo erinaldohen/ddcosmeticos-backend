@@ -51,6 +51,10 @@ public class ConfiguracaoLoja implements Serializable {
         if (this.comissoes == null) this.comissoes = new DadosComissoes();
     }
 
+    public String getCnpjLimpo() {
+        return (loja != null && loja.getCnpj() != null) ? loja.getCnpj().replaceAll("\\D", "") : "";
+    }
+
     // ==================================================================================
     // CLASSES INTERNAS (EMBEDDABLES)
     // ==================================================================================
@@ -98,14 +102,20 @@ public class ConfiguracaoLoja implements Serializable {
     public static class DadosFiscal {
         @Column(length = 20) private String ambiente = "HOMOLOGACAO";
         @Column(length = 20) private String regime = "1";
+
+        // Identificadores de Homologação
         @Column(length = 100) private String tokenHomologacao;
         @Column(length = 50) private String cscIdHomologacao;
         private Integer serieHomologacao = 1;
         private Integer nfeHomologacao = 1;
+
+        // Identificadores de Produção
         @Column(length = 100) private String tokenProducao;
         @Column(length = 50) private String cscIdProducao;
         private Integer serieProducao = 1;
         private Integer nfeProducao = 1;
+
+        // Certificado Digital
         private String caminhoCertificado;
         private byte[] arquivoCertificado;
 
@@ -117,6 +127,7 @@ public class ConfiguracaoLoja implements Serializable {
         @Convert(converter = CryptoConverter.class)
         @Column(length = 500) private String csrtHash;
 
+        // Regras Fiscais Padrão
         private String ibptToken;
         private String naturezaPadrao = "VENDA DE MERCADORIA";
         private String emailContabil;
@@ -124,7 +135,9 @@ public class ConfiguracaoLoja implements Serializable {
         @Column(precision = 10, scale = 4) private BigDecimal aliquotaInterna = new BigDecimal("18.00");
         private Boolean modoContingencia = false;
         private Boolean priorizarMonofasico = true;
-        @Column(length = 500) private String obsPadraoCupom;
+
+        // 🚨 DIRETIVA DO GESTOR: Valor padrão para NFC-e sem cadastro
+        @Column(length = 500) private String obsPadraoCupom = "Consumidor Não Identificado";
 
         public String getCscIdAtivo() {
             String id = "PRODUCAO".equalsIgnoreCase(ambiente) ? cscIdProducao : cscIdHomologacao;
@@ -164,8 +177,10 @@ public class ConfiguracaoLoja implements Serializable {
     }
 
     @Embeddable
-    @Getter @Setter @NoArgsConstructor @AllArgsConstructor // <-- Alterado de @Data
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosVendas {
+        // 🚨 REGRA DE IDENTIFICAÇÃO DO PDV: Define o momento de solicitar CPF/CNPJ
+        // "NUNCA", "PERGUNTAR", "OBRIGATORIO"
         private String comportamentoCpf = "PERGUNTAR";
         private Boolean bloquearEstoque = true;
         private String layoutCupom;
@@ -201,9 +216,5 @@ public class ConfiguracaoLoja implements Serializable {
         @Column(precision = 5, scale = 2) private BigDecimal percentualGeral = BigDecimal.ZERO;
         @Column(length = 20) private String comissionarSobre = "LUCRO";
         private Boolean descontarTaxasCartao = false;
-    }
-
-    public String getCnpjLimpo() {
-        return (loja != null && loja.getCnpj() != null) ? loja.getCnpj().replaceAll("\\D", "") : "";
     }
 }

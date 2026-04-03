@@ -66,9 +66,17 @@ public class DashboardService {
             config = configuracaoRepository.findAll().stream().findFirst().orElse(null);
         } catch (Exception e) { log.warn("Aviso ao ler Configurações."); }
 
-        BigDecimal metaMensal = BigDecimal.valueOf(50000.00);
-        if (config != null && config.getVendas() != null && config.getVendas().getMetaMensal() != null) {
-            metaMensal = config.getVendas().getMetaMensal();
+        // Inicializa com ZERO. O Dashboard só mostrará meta se estiver configurado no banco!
+        BigDecimal metaMensal = BigDecimal.ZERO;
+        BigDecimal metaDiariaConfig = BigDecimal.ZERO;
+
+        if (config != null) {
+            if (config.getVendas() != null && config.getVendas().getMetaMensal() != null) {
+                metaMensal = config.getVendas().getMetaMensal();
+            }
+            if (config.getFinanceiro() != null && config.getFinanceiro().getMetaDiaria() != null) {
+                metaDiariaConfig = config.getFinanceiro().getMetaDiaria();
+            }
         }
 
         // ==============================================================================
@@ -257,7 +265,7 @@ public class DashboardService {
         response.put("topProdutos", topProdutosList);
         response.put("performanceVendedores", performanceVendedores);
         response.put("inventario", inventarioNode);
-        response.put("metaDiaria", metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP));
+        response.put("metaDiaria", metaDiariaConfig.compareTo(BigDecimal.ZERO) > 0 ? metaDiariaConfig : metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP));
         response.put("metaMensal", metaMensal);
         response.put("inteligencia", inteligenciaVendas);
 

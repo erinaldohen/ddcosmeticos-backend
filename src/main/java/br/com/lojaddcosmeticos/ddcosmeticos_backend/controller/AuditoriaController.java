@@ -119,4 +119,24 @@ public class AuditoriaController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
     }
+    // =========================================================================
+    // 5. REGISTRO DE NOVA AUDITORIA (POST) BLINDADO
+    // =========================================================================
+    @PostMapping
+    public ResponseEntity<Void> registrarAuditoriaManual(@RequestBody java.util.Map<String, Object> payload) {
+        try {
+            // Extrai os dados exatamente como o React envia hoje, ignorando a data do frontend (que causava o erro)
+            String acao = (String) payload.getOrDefault("acao", "INFO");
+            String usuario = (String) payload.getOrDefault("operador", "Sistema");
+            String detalhes = (String) payload.getOrDefault("detalhes", "");
+
+            // Passa para o Service que já trata fallback de Enums e gera a dataHora no servidor
+            auditoriaService.registrarAcao(acao, usuario, detalhes);
+
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("Erro ao salvar log de auditoria via API: ", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }

@@ -128,10 +128,9 @@ public class ConfiguracaoLojaService {
 
     @Transactional
     public String salvarLogo(MultipartFile file) {
-        // 🚨 FASE 1: BLINDAGEM DE SEGURANÇA (Apenas Imagens)
         String contentType = file.getContentType();
         if (contentType == null || !contentType.startsWith("image/")) {
-            throw new ValidationException("Por questões de segurança, apenas arquivos de imagem (PNG, JPG) são permitidos.");
+            throw new ValidationException("Apenas arquivos de imagem são permitidos.");
         }
 
         ConfiguracaoLoja config = buscarConfiguracao();
@@ -147,18 +146,13 @@ public class ConfiguracaoLojaService {
     }
 
     private void apagarArquivoAntigo(String nomeOuUrlSalvoNoBanco) {
-        if (nomeOuUrlSalvoNoBanco == null || nomeOuUrlSalvoNoBanco.isBlank()) {
-            return;
-        }
+        if (nomeOuUrlSalvoNoBanco == null || nomeOuUrlSalvoNoBanco.isBlank()) return;
         try {
             String nomeLimpo = nomeOuUrlSalvoNoBanco.replace("/uploads/", "").replace("uploads/", "");
             Path caminhoDoArquivo = this.fileStorageLocation.resolve(nomeLimpo).normalize();
-            boolean apagou = Files.deleteIfExists(caminhoDoArquivo);
-            if (apagou) {
-                log.info("🗑️ Arquivo antigo removido da pasta uploads: {}", nomeLimpo);
-            }
+            Files.deleteIfExists(caminhoDoArquivo);
         } catch (Exception e) {
-            log.warn("⚠️ Aviso: Não foi possível apagar o arquivo antigo ({}). Motivo: {}", nomeOuUrlSalvoNoBanco, e.getMessage());
+            log.warn("Não foi possível apagar o arquivo antigo.");
         }
     }
 
@@ -167,7 +161,7 @@ public class ConfiguracaoLojaService {
             Path targetLocation = this.fileStorageLocation.resolve(fileName);
             Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException ex) {
-            throw new RuntimeException("Erro ao salvar arquivo " + fileName, ex);
+            throw new RuntimeException("Erro ao salvar arquivo", ex);
         }
     }
 
@@ -211,18 +205,8 @@ public class ConfiguracaoLojaService {
         f.setSerieProducao(d.fiscal().serieProducao() != null ? d.fiscal().serieProducao() : 1);
         f.setNfeProducao(d.fiscal().nfeProducao() != null ? d.fiscal().nfeProducao() : 1);
 
-        if (d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty()) {
-            f.setSenhaCert(d.fiscal().senhaCert());
-        } else {
-            f.setSenhaCert(senhaCertAtual);
-        }
-
-        if (d.fiscal().caminhoCertificado() != null && !d.fiscal().caminhoCertificado().isEmpty()) {
-            f.setCaminhoCertificado(d.fiscal().caminhoCertificado());
-        } else {
-            f.setCaminhoCertificado(caminhoCertAtual);
-        }
-
+        f.setSenhaCert(d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty() ? d.fiscal().senhaCert() : senhaCertAtual);
+        f.setCaminhoCertificado(d.fiscal().caminhoCertificado() != null && !d.fiscal().caminhoCertificado().isEmpty() ? d.fiscal().caminhoCertificado() : caminhoCertAtual);
         f.setArquivoCertificado(arquivoCertAtual);
 
         f.setCsrtId(d.fiscal().csrtId());
@@ -255,13 +239,12 @@ public class ConfiguracaoLojaService {
         fin.setDiasCarencia(d.financeiro().diasCarencia());
         fin.setFechamentoCego(d.financeiro().fechamentoCego());
 
-        if (d.financeiro().pagamentos() != null) {
-            fin.setAceitaDinheiro(d.financeiro().pagamentos().dinheiro());
-            fin.setAceitaPix(d.financeiro().pagamentos().pix());
-            fin.setAceitaCredito(d.financeiro().pagamentos().credito());
-            fin.setAceitaDebito(d.financeiro().pagamentos().debito());
-            fin.setAceitaCrediario(d.financeiro().pagamentos().crediario());
-        }
+        // CORREÇÃO: PAGAMENTOS PLANOS ACHATADOS (Removido o antigo d.financeiro().pagamentos() que causava o erro)
+        fin.setAceitaDinheiro(d.financeiro().aceitaDinheiro() != null ? d.financeiro().aceitaDinheiro() : true);
+        fin.setAceitaPix(d.financeiro().aceitaPix() != null ? d.financeiro().aceitaPix() : true);
+        fin.setAceitaCredito(d.financeiro().aceitaCredito() != null ? d.financeiro().aceitaCredito() : true);
+        fin.setAceitaDebito(d.financeiro().aceitaDebito() != null ? d.financeiro().aceitaDebito() : true);
+        fin.setAceitaCrediario(d.financeiro().aceitaCrediario() != null ? d.financeiro().aceitaCrediario() : false);
 
         c.setVendas(converterVendas(d.vendas()));
 
@@ -270,6 +253,16 @@ public class ConfiguracaoLojaService {
                 d.sistema().rodape(), d.sistema().tema(), d.sistema().backupNuvem(), d.sistema().senhaGerenteCancelamento(),
                 d.sistema().nomeTerminal(), d.sistema().imprimirLogoCupom()
         ));
+
+        // CORREÇÃO: SALVANDO ABA DE COMISSÕES
+        if (d.comissoes() != null) {
+            c.setComissoes(new ConfiguracaoLoja.DadosComissoes(
+                    d.comissoes().tipoCalculo(),
+                    d.comissoes().percentualGeral() != null ? d.comissoes().percentualGeral() : BigDecimal.ZERO,
+                    d.comissoes().comissionarSobre(),
+                    d.comissoes().descontarTaxasCartao() != null ? d.comissoes().descontarTaxasCartao() : false
+            ));
+        }
     }
 
     private ConfiguracaoDTO converterParaDTO(ConfiguracaoLoja c) {
@@ -306,10 +299,11 @@ public class ConfiguracaoLojaService {
                         c.getFinanceiro().getDescCaixa(), c.getFinanceiro().getDescGerente(),
                         c.getFinanceiro().getDescExtraPix(), c.getFinanceiro().getBloquearAbaixoCusto(),
                         c.getFinanceiro().getPixTipo(), c.getFinanceiro().getPixChave(),
-                        new ConfiguracaoDTO.PagamentosDTO(
-                                c.getFinanceiro().getAceitaDinheiro(), c.getFinanceiro().getAceitaPix(),
-                                c.getFinanceiro().getAceitaCredito(), c.getFinanceiro().getAceitaDebito(), c.getFinanceiro().getAceitaCrediario()
-                        ),
+
+                        // CORREÇÃO: BOOLEANOS PAGAMENTOS (SEM NOVO OBJETO)
+                        c.getFinanceiro().getAceitaDinheiro(), c.getFinanceiro().getAceitaPix(),
+                        c.getFinanceiro().getAceitaCredito(), c.getFinanceiro().getAceitaDebito(), c.getFinanceiro().getAceitaCrediario(),
+
                         c.getFinanceiro().getJurosMensal(), c.getFinanceiro().getMultaAtraso(),
                         c.getFinanceiro().getDiasCarencia(), c.getFinanceiro().getFechamentoCego()
                 ),
@@ -325,6 +319,14 @@ public class ConfiguracaoLojaService {
                         c.getSistema().getBackupHora(), c.getSistema().getRodape(), c.getSistema().getTema(),
                         c.getSistema().getBackupNuvem(), c.getSistema().getSenhaGerenteCancelamento(),
                         c.getSistema().getNomeTerminal(), c.getSistema().getImprimirLogoCupom()
+                ),
+
+                // CORREÇÃO: Mapeamento Blindado contra NullPointer (Protege o sistema após ser formatado)
+                new ConfiguracaoDTO.ComissoesDTO(
+                        c.getComissoes() != null && c.getComissoes().getTipoCalculo() != null ? c.getComissoes().getTipoCalculo() : "GERAL",
+                        c.getComissoes() != null && c.getComissoes().getPercentualGeral() != null ? c.getComissoes().getPercentualGeral() : BigDecimal.ZERO,
+                        c.getComissoes() != null && c.getComissoes().getComissionarSobre() != null ? c.getComissoes().getComissionarSobre() : "LUCRO",
+                        c.getComissoes() != null && c.getComissoes().getDescontarTaxasCartao() != null ? c.getComissoes().getDescontarTaxasCartao() : false
                 )
         );
     }

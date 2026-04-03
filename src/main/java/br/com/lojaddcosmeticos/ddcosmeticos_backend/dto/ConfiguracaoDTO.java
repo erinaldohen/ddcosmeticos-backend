@@ -13,7 +13,8 @@ public record ConfiguracaoDTO(
         FiscalDTO fiscal,
         FinanceiroDTO financeiro,
         VendasDTO vendas,
-        SistemaDTO sistema
+        SistemaDTO sistema,
+        ComissoesDTO comissoes // <-- INCLUÍDO A ABA DE COMISSÕES!
 ) {
     public record LojaDTO(
             @NotBlank String razaoSocial, String nomeFantasia, @CNPJ String cnpj, String ie, String im, String cnae,
@@ -29,11 +30,8 @@ public record ConfiguracaoDTO(
 
     public record FiscalDTO(
             String ambiente, String regime,
-
-            // Campos planos (Flat) alinhados com o Frontend
             String tokenHomologacao, String cscIdHomologacao, Integer serieHomologacao, Integer nfeHomologacao,
             String tokenProducao, String cscIdProducao, Integer serieProducao, Integer nfeProducao,
-
             String caminhoCertificado, String senhaCert,
             String csrtId, String csrtHash, String ibptToken, String naturezaPadrao,
             String emailContabil, Boolean enviarXmlAutomatico, BigDecimal aliquotaInterna,
@@ -44,11 +42,13 @@ public record ConfiguracaoDTO(
             BigDecimal comissaoProdutos, BigDecimal comissaoServicos, BigDecimal alertaSangria,
             BigDecimal fundoTrocoPadrao, BigDecimal metaDiaria, BigDecimal taxaDebito, BigDecimal taxaCredito,
             BigDecimal descCaixa, BigDecimal descGerente, Boolean descExtraPix, Boolean bloquearAbaixoCusto,
-            String pixTipo, String pixChave, PagamentosDTO pagamentos,
+            String pixTipo, String pixChave,
+
+            // PAGAMENTOS ACHATADOS PARA BATER EXATAMENTE COM O REACT
+            Boolean aceitaDinheiro, Boolean aceitaPix, Boolean aceitaCredito, Boolean aceitaDebito, Boolean aceitaCrediario,
+
             BigDecimal jurosMensal, BigDecimal multaAtraso, Integer diasCarencia, Boolean fechamentoCego
     ) {}
-
-    public record PagamentosDTO(Boolean dinheiro, Boolean pix, Boolean credito, Boolean debito, Boolean crediario) {}
 
     public record VendasDTO(
             String comportamentoCpf, Boolean bloquearEstoque, String layoutCupom, Boolean imprimirVendedor,
@@ -60,5 +60,10 @@ public record ConfiguracaoDTO(
             Boolean impressaoAuto, String larguraPapel, Boolean backupAuto, LocalTime backupHora,
             String rodape, String tema, Boolean backupNuvem, Boolean senhaGerenteCancelamento,
             String nomeTerminal, Boolean imprimirLogoCupom
+    ) {}
+
+    // DTO DA ABA FALTANTE
+    public record ComissoesDTO(
+            String tipoCalculo, BigDecimal percentualGeral, String comissionarSobre, Boolean descontarTaxasCartao
     ) {}
 }

@@ -37,15 +37,17 @@ public class VendaService {
     private final UsuarioRepository usuarioRepository;
     private final ClienteRepository clienteRepository;
     private final ContaReceberRepository contaReceberRepository;
+    private final TituloReceberRepository tituloReceberRepository;
     private final ConfiguracaoLojaService configuracaoLojaService;
     private final CaixaDiarioRepository caixaRepository;
     private final EstoqueService estoqueService;
     private final FinanceiroService financeiroService;
     private final NfceService nfceService;
+    private final NfeService nfeService; // 🚨 INJETADO PARA NF-E (MODELO 55) B2B
     private final AuditoriaService auditoriaService;
 
     // =========================================================================
-    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO)
+    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO E MAESTRO FISCAL)
     // =========================================================================
 
     @Transactional(rollbackFor = Exception.class)
@@ -55,7 +57,6 @@ public class VendaService {
 
         CaixaDiario caixa = validarCaixaAberto(usuarioLogado);
 
-        // 🚨 TRAVA DE SEGURANÇA FISCAL: Impede vendas sem CNPJ configurado
         ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
         if (config == null || config.getLoja() == null || config.getLoja().getCnpj() == null || config.getLoja().getCnpj().isBlank()) {
             throw new ValidationException("Operação bloqueada: Configure o CNPJ da empresa no menu Configurações antes de realizar vendas.");
@@ -78,6 +79,9 @@ public class VendaService {
                 ? config.getFiscal().getObsPadraoCupom()
                 : "Consumidor Não Identificado";
 
+        // =============================================================
+        // 🚨 INTELIGÊNCIA B2B E CADASTRO CORRIGIDO
+        // =============================================================
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -85,6 +89,51 @@ public class VendaService {
             venda.setClienteNome(cliente.getNome());
             venda.setClienteDocumento(cliente.getDocumento());
             venda.setClienteTelefone(cliente.getTelefone());
+        } else if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
+
+            String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
+            Cliente clienteEncontrado = clienteRepository.findByDocumento(docLimpo).orElse(null);
+
+            if (clienteEncontrado != null) {
+                // Se a empresa já existe, vamos garantir que a IE seja atualizada se estiver faltando!
+                if (docLimpo.length() == 14 && dto.clienteIe() != null) {
+                    // Mude para .setIe() ou .setInscricaoEstadual() conforme o seu model Cliente
+                    clienteEncontrado.setInscricaoEstadual(dto.clienteIe());
+                    clienteRepository.save(clienteEncontrado);
+                }
+                venda.setCliente(clienteEncontrado);
+                venda.setClienteNome(clienteEncontrado.getNome());
+                venda.setClienteDocumento(clienteEncontrado.getDocumento());
+                venda.setClienteTelefone(clienteEncontrado.getTelefone());
+            } else {
+                // Se for CNPJ, cria o cliente com a INSCRIÇÃO ESTADUAL
+                if (docLimpo.length() == 14) {
+                    Cliente novaEmpresa = new Cliente();
+                    novaEmpresa.setDocumento(docLimpo);
+                    novaEmpresa.setNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : "Empresa Não Identificada");
+                    novaEmpresa.setTelefone(dto.clienteTelefone());
+
+                    // 🚨 CORREÇÃO: Atribuindo a IE (Verifique o nome exato do set no seu Model)
+                    novaEmpresa.setInscricaoEstadual(dto.clienteIe());
+                    // Concatenando apenas para salvar visualmente no Banco, mas o seu NfeService
+// agora precisará ler os campos separados do DTO ou da própria entidade Cliente.
+                    String endCompleto = dto.clienteLogradouro() + ", " + dto.clienteNumero() + " - " +
+                            dto.clienteBairro() + " | " + dto.clienteCidade() + "-" + dto.clienteUf() +
+                            " CEP: " + dto.clienteCep();
+                    novaEmpresa.setEndereco(endCompleto);
+
+                    novaEmpresa.setAtivo(true);
+                    novaEmpresa.setLimiteCredito(BigDecimal.ZERO);
+
+                    clienteEncontrado = clienteRepository.save(novaEmpresa);
+                    venda.setCliente(clienteEncontrado);
+                }
+
+                venda.setClienteNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : clientePadraoCupom);
+                venda.setClienteDocumento(dto.clienteDocumento());
+                venda.setClienteTelefone(dto.clienteTelefone());
+            }
+
         } else {
             venda.setClienteNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : clientePadraoCupom);
             venda.setClienteDocumento(dto.clienteDocumento());
@@ -149,8 +198,12 @@ public class VendaService {
 
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
 
-        // SALVA A VENDA PARA OBTER O ID E GERA A CHAVE
+        // Salva a venda primeiramente como PENDENTE
+        venda.setStatusNfce(StatusFiscal.PENDENTE);
         venda = vendaRepository.save(venda);
+
+        gerarTitulosFiado(venda, pagamentos);
+
         try {
             gerarDadosFiscaisNfce(venda, config);
         } catch (Exception e) {
@@ -170,15 +223,32 @@ public class VendaService {
             }
         }
 
+        // =============================================================
+        // 🚨 MAESTRO FISCAL (EXIBINDO ERROS REAIS)
+        // =============================================================
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
-            final Venda vendaTransmitir = venda;
-            CompletableFuture.runAsync(() -> {
-                try {
-                    nfceService.emitirNfce(vendaTransmitir);
-                } catch (Exception e) {
-                    log.error("Erro na emissão NFC-e venda {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
+            try {
+                // Força o banco a gravar a venda antes de enviar o XML para a SEFAZ
+                vendaRepository.saveAndFlush(venda);
+
+                String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+
+                if (docLimpo.length() == 14) {
+                    log.info("🔥 B2B Detectado! Emitindo NF-e Modelo 55 Sincronamente...");
+                    // Nota: Se seu nfeService pedir o Objeto, mude para nfeService.emitirNfeModelo55(venda);
+                    nfeService.emitirNfeModelo55(venda.getIdVenda());
+                } else {
+                    log.info("🛒 B2C Detectado! Emitindo NFC-e Modelo 65 Sincronamente...");
+                    nfceService.emitirNfce(venda);
                 }
-            });
+
+                venda = vendaRepository.findByIdComItens(venda.getIdVenda()).orElse(venda);
+
+            } catch (Exception e) {
+                log.error("❌ Falha crítica na emissão Fiscal da Venda {}: {}", venda.getIdVenda(), e.getMessage());
+                // 🚨 CORREÇÃO: Agora o Java devolve o motivo real da falha para o React, parando o 500 genérico.
+                throw new ValidationException("A SEFAZ rejeitou a emissão: " + e.getMessage());
+            }
         }
         return converterParaDTO(venda);
     }
@@ -238,7 +308,6 @@ public class VendaService {
     private String calcularDigitoVerificadorModulo11(String chave43) {
         int soma = 0;
         int peso = 2;
-        // SEFAZ calcula da direita (posição 42) para a esquerda (posição 0)
         for (int i = 42; i >= 0; i--) {
             soma += Character.getNumericValue(chave43.charAt(i)) * peso;
             peso++;
@@ -335,6 +404,7 @@ public class VendaService {
 
         financeiroService.lancarReceitaDeVenda(venda.getIdVenda(), venda.getValorTotal(), venda.getFormaDePagamento().name(), venda.getQuantidadeParcelas(), buscarIdClientePorDocumento(venda.getClienteDocumento()));
 
+        gerarTitulosFiado(venda, venda.getPagamentos());
         atualizarFinanceiro(caixa, venda, venda.getPagamentos());
 
         ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
@@ -343,17 +413,16 @@ public class VendaService {
             vendaRepository.save(venda);
         } catch (Exception e) { log.warn("Aviso chave na retomada: {}", e.getMessage()); }
 
-        // SINTAXE CORRIGIDA E LIMPA: O backend envia os dados limpos para a SEFAZ e devolve o DTO.
-        // O envio do PDF no WhatsApp agora deve ser chamado exclusivamente pelo Frontend via API
-        // ou após um webhook de sucesso (polling)
-        final Venda vendaTransmitir = venda;
-        CompletableFuture.runAsync(() -> {
-            try {
-                nfceService.emitirNfce(vendaTransmitir);
-            } catch (Exception e) {
-                log.error("Erro NFCe venda retomada {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
+        try {
+            String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+            if (docLimpo.length() == 14) {
+                nfeService.emitirNfeModelo55(venda.getIdVenda());
+            } else {
+                nfceService.emitirNfce(venda);
             }
-        });
+        } catch (Exception e) {
+            log.error("Erro fiscal na retomada da venda {}: {}", venda.getIdVenda(), e.getMessage());
+        }
 
         return venda;
     }
@@ -382,7 +451,7 @@ public class VendaService {
     }
 
     // =========================================================================
-    // 4. ATUALIZAÇÃO FINANCEIRA DE CAIXA
+    // 4. INTEGRAÇÃO FINANCEIRA E GERADOR DE TÍTULOS
     // =========================================================================
 
     private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoVenda> pagamentos) {
@@ -417,6 +486,9 @@ public class VendaService {
                         caixa.setTotalVendasDebito(nvl(caixa.getTotalVendasDebito()).add(valorReal));
                         caixa.setTotalVendasCartao(nvl(caixa.getTotalVendasCartao()).add(valorReal));
                     }
+                    case CREDIARIO -> {
+                        log.info("Venda registrada no Crediário/Fiado: R$ {}", valorReal);
+                    }
                     default -> log.warn("Forma não mapeada no caixa: {}", pg.getFormaPagamento());
                 }
             }
@@ -424,8 +496,31 @@ public class VendaService {
         caixaRepository.save(caixa);
     }
 
+    private void gerarTitulosFiado(Venda vendaSalva, List<PagamentoVenda> pagamentos) {
+        if (pagamentos == null) return;
+        for (PagamentoVenda pg : pagamentos) {
+            if (FormaDePagamento.CREDIARIO.equals(pg.getFormaPagamento())) {
+                if (vendaSalva.getCliente() == null) {
+                    throw new ValidationException("Para vendas no fiado (crediário), o cliente deve estar cadastrado/identificado.");
+                }
+                TituloReceber titulo = new TituloReceber();
+                titulo.setCliente(vendaSalva.getCliente());
+                titulo.setVendaId(vendaSalva.getIdVenda());
+                titulo.setDescricao("Venda PDV #" + vendaSalva.getIdVenda());
+                titulo.setDataCompra(LocalDate.now());
+                titulo.setDataVencimento(LocalDate.now().plusDays(30)); // 30 dias de prazo padrão
+                titulo.setValorTotal(pg.getValor());
+                titulo.setSaldoDevedor(pg.getValor());
+                titulo.setValorPago(BigDecimal.ZERO);
+                titulo.setStatus(StatusTitulo.PENDENTE);
+
+                tituloReceberRepository.save(titulo);
+            }
+        }
+    }
+
     // =========================================================================
-    // 5. AUXILIARES E VALIDAÇÕES
+    // 5. AUXILIARES E VALIDAÇÕES INTEGRAIS
     // =========================================================================
 
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
@@ -447,7 +542,7 @@ public class VendaService {
                 venda.getClienteNome(), venda.getFormaDePagamento(), itensDto, pagamentosDto,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, venda.getValorTotal(),
                 venda.getStatusNfce(), venda.getChaveAcessoNfce(), venda.getObservacao(),
-                venda.getUrlQrCode() // <-- CORREÇÃO: Enviando a URL gerada para o React!
+                venda.getUrlQrCode()
         );
     }
 

@@ -54,6 +54,16 @@ public class NfceService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
+
+        // 🚨 TRAVA DE SEGURANÇA SEFAZ: Venda Fiado OBRIGA ter CPF/CNPJ
+        boolean isFiado = venda.getPagamentos() != null && venda.getPagamentos().stream()
+                .anyMatch(p -> p.getFormaPagamento() != null &&
+                        (p.getFormaPagamento().name().equalsIgnoreCase("FIADO") || p.getFormaPagamento().name().equalsIgnoreCase("CREDIARIO")));
+
+        if (isFiado && (venda.getCliente() == null || venda.getCliente().getDocumento() == null || venda.getCliente().getDocumento().isBlank())) {
+            throw new ValidationException("SEFAZ Rejeita: Para vendas no Fiado/Crediário é obrigatório identificar o Cliente com CPF/CNPJ.");
+        }
+
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
             log.warn("⚠️ Certificado ausente. Simulando emissão.");
@@ -61,13 +71,21 @@ public class NfceService {
         }
 
         try {
-            // 1ª Tentativa: Emissão NORMAL (tpEmis = 1) com Validação de Schemas LIGADA (true)
+            // 1ª Tentativa: Emissão NORMAL
             return processarEmissao(venda, configLoja, "1", true);
+
+        } catch (ValidationException ve) {
+            // 🚨 CORREÇÃO: Se a SEFAZ REJEITAR a nota por regra de negócio (NCM, tributação, CST),
+            // não entra em contingência! Salva como Rejeitada e cospe o erro real na tela do operador!
+            log.error("❌ Venda {} Rejeitada pela SEFAZ: {}", venda.getIdVenda(), ve.getMessage());
+            venda.setStatusNfce(StatusFiscal.REJEITADA);
+            vendaRepository.save(venda);
+            throw ve;
+
         } catch (Exception e) {
+            // Aqui entra APENAS se for falha de rede, timeout ou SEFAZ fora do ar (Contingência real)
             log.warn("⚠️ SEFAZ Indisponível ou Falha de Rede ({}). Entrando em modo de Contingência Offline...", e.getMessage());
             try {
-                // 2ª Tentativa (O Escudo): Emissão OFFLINE (tpEmis = 9) com Validação DESLIGADA (false)
-                // Isso impede o Java de tentar buscar arquivos na internet quando ela caiu!
                 return processarEmissao(venda, configLoja, "9", false);
             } catch (Exception ex) {
                 log.error("❌ Falha Catastrófica ao gerar NFC-e em Contingência: {}", ex.getMessage());
@@ -76,11 +94,8 @@ public class NfceService {
         }
     }
 
-    // Adicionado o parâmetro 'validarSchema' para o controle rigoroso da rede
     private NfceResponseDTO processarEmissao(Venda venda, ConfiguracaoLoja configLoja, String tpEmis, boolean validarSchema) throws Exception {
         ConfiguracoesNfe configNfe = iniciarConfiguracoesNfe(configLoja);
-
-        // 🚨 AQUI ESTÁ A BLINDAGEM DA INTERNET:
         configNfe.setValidacaoDocumento(validarSchema);
 
         boolean isProducao = AmbienteEnum.PRODUCAO.equals(configNfe.getAmbiente());
@@ -112,12 +127,17 @@ public class NfceService {
         infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja));
         infNFe.setTotal(montarTotal(venda));
         infNFe.setTransp(montarTransp());
-        infNFe.setPag(montarPag(venda.getValorTotal(), venda.getTroco()));
+
+        // CORREÇÃO DOS PAGAMENTOS APLICADA AQUI
+        infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal(), venda.getTroco()));
 
         TNFe.InfNFe.InfAdic adic = new TNFe.InfNFe.InfAdic();
         adic.setInfCpl(tributacaoService.calcularTextoTransparencia(venda));
         infNFe.setInfAdic(adic);
         infNFe.setInfRespTec(montarRespTec(cnpjEmitente));
+
+        // NFC-e MODELO 65 NUNCA DEVE TER O GRUPO DE COBRANÇA <cobr>
+        infNFe.setCobr(null);
 
         nfe.setInfNFe(infNFe);
 
@@ -148,7 +168,6 @@ public class NfceService {
         TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
 
         if ("9".equals(tpEmis)) {
-            // Mudamos para PENDENTE para o PostgreSQL não rejeitar a gravação!
             venda.setStatusNfce(StatusFiscal.PENDENTE);
             venda.setChaveAcessoNfce(chaveAcesso);
             venda.setXmlNota(xmlAssinado);
@@ -267,7 +286,7 @@ public class NfceService {
             if (isHomologacao && i == 1) {
                 p.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
             } else {
-                p.setXProd(item.getProduto().getDescricao());
+                p.setXProd(item.getDescricaoProduto() != null ? item.getDescricaoProduto() : item.getProduto().getDescricao());
             }
 
             String ncm = item.getProduto().getNcm() != null ? item.getProduto().getNcm().replaceAll("\\D", "") : "33049990";
@@ -327,16 +346,41 @@ public class NfceService {
         return t;
     }
 
-    private TNFe.InfNFe.Pag montarPag(BigDecimal tot, BigDecimal troco) {
+    // 🚨 REGRA SEFAZ: MAPEAMENTO EXATO DOS TIPOS DE PAGAMENTO E A PRAZO (indPag=1)
+    private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pagamentos, BigDecimal tot, BigDecimal troco) {
         TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
-        TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
-        det.setTPag("01");
+
+        if (pagamentos == null || pagamentos.isEmpty()) {
+            TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
+            det.setTPag("01"); // Dinheiro
+            det.setVPag(tot.add(troco != null ? troco : BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).toString());
+            pag.getDetPag().add(det);
+        } else {
+            for (PagamentoVenda p : pagamentos) {
+                TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
+                String tPag = "01"; // Dinheiro default
+
+                if (p.getFormaPagamento() != null) {
+                    switch (p.getFormaPagamento().name().toUpperCase()) {
+                        case "PIX": tPag = "17"; break;
+                        case "CREDITO": tPag = "03"; break;
+                        case "DEBITO": tPag = "04"; break;
+                        case "FIADO":
+                        case "CREDIARIO":
+                            tPag = "05"; // 05 = Crédito Loja
+                            det.setIndPag("1"); // 1 = A Prazo
+                            break;
+                        case "DINHEIRO": tPag = "01"; break;
+                    }
+                }
+
+                det.setTPag(tPag);
+                det.setVPag(p.getValor().setScale(2, RoundingMode.HALF_UP).toString());
+                pag.getDetPag().add(det);
+            }
+        }
 
         BigDecimal vTroco = troco != null ? troco : BigDecimal.ZERO;
-        BigDecimal vPag = tot.add(vTroco);
-
-        det.setVPag(vPag.setScale(2, RoundingMode.HALF_UP).toString());
-        pag.getDetPag().add(det);
         pag.setVTroco(vTroco.setScale(2, RoundingMode.HALF_UP).toString());
 
         return pag;
@@ -372,15 +416,8 @@ public class NfceService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transmitirNotaContingencia(Venda venda) {
         try {
-            log.info("📡 Tentando transmitir nota em contingência ID: {}", venda.getIdVenda());
             ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
-
-            if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
-                log.warn("⚠️ Certificado ausente. Ignorando retransmissão da venda {}", venda.getIdVenda());
-                return;
-            }
-
-            // O robô do Scheduler tenta transmitir a nota. Se houver internet, ele usa os Schemas normalmente (true).
+            if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) return;
             processarEmissao(venda, configLoja, "1", true);
             log.info("✅ Nota ID {} transmitida e autorizada com sucesso na SEFAZ.", venda.getIdVenda());
         } catch (Exception e) {

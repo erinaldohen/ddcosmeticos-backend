@@ -12,7 +12,6 @@ import org.hibernate.envers.Audited;
 
 import java.math.BigDecimal;
 
-// DBA/Performance: Substituído @Data por Getter, Setter e Equals explícito para evitar Loop Infinito
 @Getter
 @Setter
 @NoArgsConstructor
@@ -29,9 +28,9 @@ public class PagamentoVenda {
     @ToString.Include
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY) // OTIMIZAÇÃO: Não carrega a venda inteira na memória à toa
+    @ManyToOne(fetch = FetchType.LAZY) // OTIMIZAÇÃO MANTIDA
     @JoinColumn(name = "venda_id")
-    @JsonIgnore // Impede o loop infinito na serialização JSON do Spring
+    @JsonIgnore // BLINDAGEM CONTRA LOOP INFINITO MANTIDA
     private Venda venda;
 
     @Enumerated(EnumType.STRING)
@@ -40,9 +39,22 @@ public class PagamentoVenda {
     private FormaDePagamento formaPagamento;
 
     @ToString.Include
-    @Column(precision = 15, scale = 2) // BLINDAGEM FISCAL: Garante que os cêntimos não são perdidos
+    @Column(precision = 15, scale = 2)
     private BigDecimal valor = BigDecimal.ZERO;
 
     @ToString.Include
     private Integer parcelas = 1;
+
+    // =========================================================================
+    // BLINDAGEM FISCAL PARA TEF E PIX OFICIAL (EXIGÊNCIA SEFAZ)
+    // =========================================================================
+
+    @Column(length = 100)
+    private String codigoAutorizacao; // cAut: Código de autorização da maquineta ou End-to-End do PIX
+
+    @Column(length = 14)
+    private String cnpjCredenciadora; // CNPJ da Stone, Rede, PagSeguro, Cielo, etc.
+
+    @Column(length = 20)
+    private String bandeiraCartao; // tBand SEFAZ: VISA, MASTERCARD, ELO, etc.
 }

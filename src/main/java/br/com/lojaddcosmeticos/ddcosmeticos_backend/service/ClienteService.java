@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AnaliseCreditoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ClienteDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Cliente;
@@ -10,11 +11,17 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+
 @Service
 public class ClienteService {
 
     @Autowired
     private ClienteRepository repository;
+
+    // TODO: Injetar o repositório do financeiro quando for criado
+    // @Autowired
+    // private TituloReceberRepository tituloReceberRepository;
 
     @Transactional(readOnly = true)
     public Page<ClienteDTO> listar(String termo, Pageable pageable) {
@@ -34,6 +41,44 @@ public class ClienteService {
         return repository.findByDocumento(docLimpo)
                 .map(this::converterParaDTO)
                 .orElseThrow(() -> new ValidationException("Cliente não encontrado para o documento: " + doc));
+    }
+
+    // ========================================================================
+    // MOTOR DE ANÁLISE DE CRÉDITO PARA O PDV (VENDA FIADO)
+    // ========================================================================
+    @Transactional(readOnly = true)
+    public AnaliseCreditoDTO analisarCredito(String documento) {
+        String docLimpo = documento.replaceAll("\\D", "");
+
+        // 1. Valida se o cliente existe
+        Cliente cliente = repository.findByDocumento(docLimpo)
+                .orElseThrow(() -> new ValidationException("Cliente não encontrado. É necessário cadastrar primeiro."));
+
+        // 2. Valida se o cliente está bloqueado administrativamente
+        if (!cliente.isAtivo()) {
+            return new AnaliseCreditoDTO(true, "O cadastro deste cliente encontra-se desativado/bloqueado no sistema.", BigDecimal.ZERO);
+        }
+
+        // 3. Integração com Módulo Financeiro (Contas a Receber)
+        // Quando criar o financeiro, substitua o BigDecimal.ZERO pela soma real:
+        // BigDecimal debitosVencidos = tituloReceberRepository.somarDebitosVencidosPorCliente(cliente.getId());
+        BigDecimal debitosVencidos = BigDecimal.ZERO;
+
+        if (debitosVencidos != null && debitosVencidos.compareTo(BigDecimal.ZERO) > 0) {
+            return new AnaliseCreditoDTO(
+                    true,
+                    "O cliente possui faturas do crediário vencidas e não pagas.",
+                    debitosVencidos
+            );
+        }
+
+        /* * BÔNUS: Você tem o campo "limiteCredito" na tabela Cliente.
+         * No futuro, você pode somar o total que ele já deve (mesmo não vencido)
+         * e comparar com cliente.getLimiteCredito(). Se passar, retorna bloqueado = true!
+         */
+
+        // Se passou por todas as travas, crédito aprovado para o PDV!
+        return new AnaliseCreditoDTO(false, "Crédito aprovado. Cliente sem restrições.", BigDecimal.ZERO);
     }
 
     @Transactional

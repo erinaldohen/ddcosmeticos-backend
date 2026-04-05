@@ -60,13 +60,13 @@ public class Venda {
     @Column(precision = 15, scale = 2)
     private BigDecimal valorTotal = BigDecimal.ZERO;
 
+    // A coluna que armazenará o custo da mercadoria vendida (CMV)
     @Column(precision = 15, scale = 2)
     private BigDecimal custoTotal = BigDecimal.ZERO;
 
     @Column(precision = 15, scale = 2)
     private BigDecimal descontoTotal = BigDecimal.ZERO;
 
-    // Regra de negócio nativa: Valor padrão para emissão sem identificação
     @Column(length = 100)
     private String clienteNome = "Consumidor Não Identificado";
 
@@ -98,20 +98,20 @@ public class Venda {
     private StatusFiscal statusNfce;
 
     // =========================================================================
-    // DADOS FISCAIS NFC-E (CORRIGIDOS PARA COMPATIBILIDADE COM DTO E SEFAZ)
+    // DADOS FISCAIS NFC-E
     // =========================================================================
 
     @Column(length = 50)
     private String chaveAcessoNfce;
 
     @Column(length = 50)
-    private String protocolo; // Renomeado de protocoloAutorizacao para ser lido corretamente
+    private String protocolo;
 
     @Column
-    private Long numeroNfce; // Adicionado: Faltava na base de dados
+    private Long numeroNfce;
 
     @Column
-    private Integer serieNfce; // Adicionado: Faltava na base de dados
+    private Integer serieNfce;
 
     @Column(columnDefinition = "TEXT")
     private String xmlNota;
@@ -127,10 +127,32 @@ public class Venda {
     @Column(columnDefinition = "TEXT")
     private String observacao;
 
-    // AQUI ESTÁ A CORREÇÃO CRÍTICA:
-    // Mapeamento da URL gerada pela Sefaz para persistência no banco
     @Column(columnDefinition = "TEXT")
     private String urlQrCode;
+
+    // =========================================================================
+    // GATILHOS DE CICLO DE VIDA JPA (INTEGRIDADE PARA RELATÓRIOS)
+    // =========================================================================
+
+    /**
+     * Calcula e salva o Custo Total da Venda fisicamente no banco de dados.
+     * Isso garante que as Queries SQL do Relatório de Lucro Bruto funcionem perfeitamente.
+     */
+    @PrePersist
+    @PreUpdate
+    public void consolidarTotais() {
+        if (this.itens != null && !this.itens.isEmpty()) {
+            this.custoTotal = this.itens.stream()
+                    .map(item -> {
+                        BigDecimal custoUni = item.getCustoUnitarioHistorico() != null ? item.getCustoUnitarioHistorico() : BigDecimal.ZERO;
+                        BigDecimal qtd = item.getQuantidade() != null ? item.getQuantidade() : BigDecimal.ZERO;
+                        return custoUni.multiply(qtd);
+                    })
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        } else {
+            this.custoTotal = BigDecimal.ZERO;
+        }
+    }
 
     // =========================================================================
     // MÉTODOS DE SINCRONIZAÇÃO JPA (BEST PRACTICES)
@@ -163,6 +185,7 @@ public class Venda {
         return totalSeguro.subtract(getCustoTotal());
     }
 
+    // Mantemos como fallback caso a classe seja instanciada em memória e ainda não tenha sido persistida
     public BigDecimal getCustoTotal() {
         if (this.custoTotal != null && this.custoTotal.compareTo(BigDecimal.ZERO) > 0) {
             return this.custoTotal;

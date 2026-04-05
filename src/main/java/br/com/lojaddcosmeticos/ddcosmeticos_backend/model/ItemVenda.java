@@ -55,6 +55,9 @@ public class ItemVenda {
     // BLINDAGEM FISCAL: Fotografia exata no momento da venda (Imutável)
     // =========================================================================
 
+    @Column(length = 255, nullable = false)
+    private String descricaoProduto; // NOME EXATO no momento da venda
+
     @Column(length = 20)
     private String codigoBarras; // EAN daquele exato momento
 
@@ -86,6 +89,32 @@ public class ItemVenda {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
+
+    // =========================================================================
+    // GATILHOS JPA: Automação do Snapshot
+    // =========================================================================
+
+    /**
+     * Antes de salvar no banco, o Hibernate roda este método.
+     * Ele garante que a "fotografia" do produto seja tirada, mesmo que o dev esqueça de setar no Service.
+     */
+    @PrePersist
+    public void registrarFotografiaFiscal() {
+        if (this.produto != null) {
+            if (this.descricaoProduto == null || this.descricaoProduto.isBlank()) {
+                this.descricaoProduto = this.produto.getDescricao();
+            }
+            if (this.codigoBarras == null || this.codigoBarras.isBlank()) {
+                this.codigoBarras = this.produto.getCodigoBarras();
+            }
+            if (this.custoUnitarioHistorico == null || this.custoUnitarioHistorico.compareTo(BigDecimal.ZERO) == 0) {
+                this.custoUnitarioHistorico = this.produto.getPrecoCusto();
+            }
+            // OBS: Se o seu model de Produto tiver os campos fiscais (NCM, CFOP), pode populá-los aqui também.
+        } else if (this.descricaoProduto == null || this.descricaoProduto.isBlank()) {
+            this.descricaoProduto = "Item Avulso/Desconhecido";
+        }
+    }
 
     // =========================================================================
     // MÉTODOS DE CONVENIÊNCIA E MATEMÁTICA CORRIGIDA

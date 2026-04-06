@@ -424,10 +424,4 @@ public class NfceService {
             log.error("❌ Falha na transmissão automática da venda {}: {}", venda.getIdVenda(), e.getMessage());
         }
     }
-    public byte[] gerarPdfCupom(Long idVenda) {
-        Venda venda = vendaRepository.findById(idVenda).orElseThrow();
-        log.info("Gerando Cupom NFC-e (Térmico) para venda {}", idVenda);
-        // Lógica para renderizar o PDF do cupom térmico aqui
-        return venda.getXmlNota() != null ? venda.getXmlNota().getBytes() : "Recibo".getBytes();
-    }
 }

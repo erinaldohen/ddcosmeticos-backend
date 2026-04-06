@@ -303,31 +303,4 @@ public class NfeService {
     private NfceResponseDTO simularNfe(Venda v) {
         return new NfceResponseDTO(v.getIdVenda(), "100", "Simulado", "35230900000000000000550010000000011000000001", "123", "", "");
     }
-    // ... manter o que já existe ...
-
-    /**
-     * Gera o PDF real da DANFE (Modelo 55 - A4) baseado no XML autorizado.
-     */
-    public byte[] gerarPdfDanfe(Long idVenda) {
-        Venda venda = vendaRepository.findById(idVenda)
-                .orElseThrow(() -> new ValidationException("Venda não encontrada para gerar PDF."));
-
-        if (venda.getXmlNota() == null || venda.getXmlNota().isBlank()) {
-            throw new ValidationException("XML não encontrado. A nota precisa estar autorizada.");
-        }
-
-        try {
-            // Se você utiliza a biblioteca java-nfe-util para PDFs (Jasper):
-            // return JasperUtil.gerarRelatorio(venda.getXmlNota());
-
-            // Caso utilize o motor padrão do Java-NFe:
-            log.info("Renderizando DANFE Modelo 55 para o id {}", idVenda);
-            // Aqui deve entrar a chamada para sua ferramenta de PDF (JasperReports)
-            // Por enquanto, retornamos um placeholder para evitar erro de compilação
-            return venda.getXmlNota().getBytes(); // Substituir pela lógica Jasper
-        } catch (Exception e) {
-            log.error("Erro ao converter XML em PDF DANFE: {}", e.getMessage());
-            return venda.getXmlNota().getBytes();
-        }
-    }
 }

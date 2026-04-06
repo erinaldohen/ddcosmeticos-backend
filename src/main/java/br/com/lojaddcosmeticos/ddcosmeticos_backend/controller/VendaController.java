@@ -73,4 +73,13 @@ public class VendaController {
         vendaService.enviarEmailComXmlEPdf(id, email);
         return ResponseEntity.ok().build();
     }
+    @PostMapping(value = "/{id}/email-documento", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Void> enviarEmailComPdfDoFrontend(
+            @PathVariable Long id,
+            @RequestParam("email") String email,
+            @RequestParam("pdf") org.springframework.web.multipart.MultipartFile pdf) {
+
+        vendaService.enviarEmailComDocumentoFrontend(id, email, pdf);
+        return ResponseEntity.ok().build();
+    }
 }

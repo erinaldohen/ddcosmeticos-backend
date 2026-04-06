@@ -8,6 +8,19 @@ import java.time.LocalTime;
 
 public record ConfiguracaoDTO(
         Long id,
+
+        // 🚨 CAMPOS RAIZ: E-MAIL (SMTP)
+        String smtpHost,
+        Integer smtpPort,
+        String smtpUsername,
+        String smtpPassword,
+
+        // 🚨 CAMPOS RAIZ: INTEGRAÇÕES / GATEWAY
+        String gatewayPagamento,
+        String infinitepayClientId,
+        String infinitepayClientSecret,
+        String infinitepayWalletId,
+
         LojaDTO loja,
         EnderecoDTO endereco,
         FiscalDTO fiscal,

@@ -21,11 +21,16 @@ public record VendaResponseDTO(
         BigDecimal valorIbs,
         BigDecimal valorCbs,
         BigDecimal valorIs,
-        BigDecimal valorLiquido, // <-- Ajustado para bater com o VendaService
+        BigDecimal valorLiquido,
         StatusFiscal status,
-        String chaveAcessoNfce,  // <-- Ajustado para bater com o VendaService
-        String observacao,       // Adicionado como extra útil
-        String urlQrCode         // <-- CORREÇÃO: Variável que envia o link do QR Code para o React
+        String chaveAcessoNfce,
+        String observacao,
+        String urlQrCode,
+
+        // 🚨 NOVOS CAMPOS: Exigidos pelo React para montar o PDF da Impressão Corretamente
+        Long numeroNfce,
+        Integer serieNfce,
+        String tipoNota
 ) {
     // Construtor auxiliar que aceita a Entidade Venda
     public VendaResponseDTO(Venda venda) {
@@ -37,13 +42,15 @@ public record VendaResponseDTO(
                 venda.getClienteNome(),
                 venda.getFormaDePagamento(),
 
+                // 🚨 CORREÇÃO: Usando new java.util.ArrayList<>() para não confundir o compilador
                 venda.getItens() != null
                         ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
-                        : List.of(),
+                        : new java.util.ArrayList<>(),
 
+                // 🚨 CORREÇÃO: Usando new java.util.ArrayList<>() para não confundir o compilador
                 venda.getPagamentos() != null
                         ? venda.getPagamentos().stream().map(PagamentoResponseDTO::new).collect(Collectors.toList())
-                        : List.of(),
+                        : new java.util.ArrayList<>(),
 
                 venda.getValorIbs() != null ? venda.getValorIbs() : BigDecimal.ZERO,
                 venda.getValorCbs() != null ? venda.getValorCbs() : BigDecimal.ZERO,
@@ -52,7 +59,14 @@ public record VendaResponseDTO(
                 venda.getStatusNfce(),
                 venda.getChaveAcessoNfce(),
                 venda.getObservacao(),
-                venda.getUrlQrCode() // <-- CORREÇÃO: Mapeia o valor do banco para o DTO
+                venda.getUrlQrCode(),
+
+                // Mapeamento extra para a Impressão e o E-mail no PDV
+                venda.getNumeroNfce(),
+                venda.getSerieNfce(),
+
+                // O DTO descobre sozinho se é B2B ou B2C antes de devolver para a tela do caixa
+                (venda.getClienteDocumento() != null && venda.getClienteDocumento().replaceAll("\\D", "").length() == 14) ? "NFE" : "NFCE"
         );
     }
 }

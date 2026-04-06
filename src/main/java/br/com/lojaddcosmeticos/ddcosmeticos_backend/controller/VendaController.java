@@ -67,4 +67,10 @@ public class VendaController {
     public ResponseEntity<Venda> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(vendaService.buscarVendaComItens(id));
     }
+    @PostMapping("/{id}/email")
+    public ResponseEntity<Void> enviarNotaPorEmail(@PathVariable Long id, @RequestBody java.util.Map<String, String> payload) {
+        String email = payload.get("email");
+        vendaService.enviarEmailComXmlEPdf(id, email);
+        return ResponseEntity.ok().build();
+    }
 }

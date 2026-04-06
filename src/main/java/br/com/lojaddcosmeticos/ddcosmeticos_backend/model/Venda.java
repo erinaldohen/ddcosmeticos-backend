@@ -5,6 +5,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.DynamicInsert;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.envers.Audited;
 import org.hibernate.envers.RelationTargetAuditMode;
 
@@ -18,18 +20,19 @@ import java.util.List;
 @NoArgsConstructor
 @Entity
 @Audited
+@DynamicInsert // Otimização de Performance: Insere apenas os campos preenchidos
+@DynamicUpdate // Otimização de Performance: Atualiza apenas as colunas modificadas
 @Table(name = "tb_venda", indexes = {
         @Index(name = "idx_venda_data", columnList = "dataVenda"),
         @Index(name = "idx_venda_status", columnList = "statusNfce"),
         @Index(name = "idx_venda_cliente", columnList = "id_cliente")
 })
-@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+// 🚨 A anotação @EqualsAndHashCode do Lombok foi removida intencionalmente!
 @ToString(onlyExplicitlyIncluded = true)
 public class Venda {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @EqualsAndHashCode.Include
     @ToString.Include
     private Long idVenda;
 
@@ -98,7 +101,7 @@ public class Venda {
     private StatusFiscal statusNfce;
 
     // =========================================================================
-    // DADOS FISCAIS NFC-E
+    // DADOS FISCAIS NFC-E / NF-E
     // =========================================================================
 
     @Column(length = 50)
@@ -134,10 +137,6 @@ public class Venda {
     // GATILHOS DE CICLO DE VIDA JPA (INTEGRIDADE PARA RELATÓRIOS)
     // =========================================================================
 
-    /**
-     * Calcula e salva o Custo Total da Venda fisicamente no banco de dados.
-     * Isso garante que as Queries SQL do Relatório de Lucro Bruto funcionem perfeitamente.
-     */
     @PrePersist
     @PreUpdate
     public void consolidarTotais() {
@@ -152,6 +151,25 @@ public class Venda {
         } else {
             this.custoTotal = BigDecimal.ZERO;
         }
+    }
+
+    // =========================================================================
+    // EQUALS E HASHCODE À PROVA DE FALHAS (JPA BEST PRACTICES)
+    // =========================================================================
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Venda)) return false;
+        Venda venda = (Venda) o;
+        return idVenda != null && idVenda.equals(venda.getIdVenda());
+    }
+
+    @Override
+    public int hashCode() {
+        // Retorna um valor fixo (o hash da classe) para que o hash code
+        // não mude após o Hibernate gerar o ID (Evita o erro "Row was updated or deleted")
+        return getClass().hashCode();
     }
 
     // =========================================================================
@@ -185,7 +203,6 @@ public class Venda {
         return totalSeguro.subtract(getCustoTotal());
     }
 
-    // Mantemos como fallback caso a classe seja instanciada em memória e ainda não tenha sido persistida
     public BigDecimal getCustoTotal() {
         if (this.custoTotal != null && this.custoTotal.compareTo(BigDecimal.ZERO) > 0) {
             return this.custoTotal;

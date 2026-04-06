@@ -26,6 +26,25 @@ public class ConfiguracaoLoja implements Serializable {
     @ToString.Include
     private Long id;
 
+    // ==================================================================================
+    // 🚨 CAMPOS RAIZ (Mesmo nível do Flyway)
+    // ==================================================================================
+
+    // E-mail (SMTP)
+    @Column(length = 100) private String smtpHost;
+    private Integer smtpPort;
+    @Column(length = 100) private String smtpUsername;
+    @Column(length = 100) private String smtpPassword;
+
+    // Gateways de Pagamento (InfinitePay, Mercado Pago, etc)
+    @Column(length = 50) private String gatewayPagamento = "MANUAL";
+    @Column(length = 255) private String infinitepayClientId;
+    @Column(length = 255) private String infinitepayClientSecret;
+    @Column(length = 255) private String infinitepayWalletId;
+
+    // ==================================================================================
+    // EMBEDDABLES (Abas de Configuração)
+    // ==================================================================================
     @Embedded private DadosLoja loja = new DadosLoja();
     @Embedded private EnderecoLoja endereco = new EnderecoLoja();
     @Embedded private DadosFiscal fiscal = new DadosFiscal();
@@ -180,7 +199,6 @@ public class ConfiguracaoLoja implements Serializable {
     @Getter @Setter @NoArgsConstructor @AllArgsConstructor
     public static class DadosVendas {
         // 🚨 REGRA DE IDENTIFICAÇÃO DO PDV: Define o momento de solicitar CPF/CNPJ
-        // "NUNCA", "PERGUNTAR", "OBRIGATORIO"
         private String comportamentoCpf = "PERGUNTAR";
         private Boolean bloquearEstoque = true;
         private String layoutCupom;

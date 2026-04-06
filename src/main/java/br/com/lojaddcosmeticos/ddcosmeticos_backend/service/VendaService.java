@@ -5,11 +5,15 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
+import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -20,10 +24,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -32,6 +34,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class VendaService {
 
+    private final DocumentoFiscalPdfService pdfService;
     private final VendaRepository vendaRepository;
     private final ProdutoRepository produtoRepository;
     private final UsuarioRepository usuarioRepository;
@@ -43,11 +46,11 @@ public class VendaService {
     private final EstoqueService estoqueService;
     private final FinanceiroService financeiroService;
     private final NfceService nfceService;
-    private final NfeService nfeService; // 🚨 INJETADO PARA NF-E (MODELO 55) B2B
+    private final NfeService nfeService;
     private final AuditoriaService auditoriaService;
 
     // =========================================================================
-    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO E MAESTRO FISCAL)
+    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO COM SEFAZ HÍBRIDO NFE/NFCE)
     // =========================================================================
 
     @Transactional(rollbackFor = Exception.class)
@@ -79,9 +82,7 @@ public class VendaService {
                 ? config.getFiscal().getObsPadraoCupom()
                 : "Consumidor Não Identificado";
 
-        // =============================================================
-        // 🚨 INTELIGÊNCIA B2B E CADASTRO CORRIGIDO
-        // =============================================================
+        // Mapeamento Inteligente do Cliente
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -95,9 +96,7 @@ public class VendaService {
             Cliente clienteEncontrado = clienteRepository.findByDocumento(docLimpo).orElse(null);
 
             if (clienteEncontrado != null) {
-                // Se a empresa já existe, vamos garantir que a IE seja atualizada se estiver faltando!
                 if (docLimpo.length() == 14 && dto.clienteIe() != null) {
-                    // Mude para .setIe() ou .setInscricaoEstadual() conforme o seu model Cliente
                     clienteEncontrado.setInscricaoEstadual(dto.clienteIe());
                     clienteRepository.save(clienteEncontrado);
                 }
@@ -106,25 +105,22 @@ public class VendaService {
                 venda.setClienteDocumento(clienteEncontrado.getDocumento());
                 venda.setClienteTelefone(clienteEncontrado.getTelefone());
             } else {
-                // Se for CNPJ, cria o cliente com a INSCRIÇÃO ESTADUAL
                 if (docLimpo.length() == 14) {
                     Cliente novaEmpresa = new Cliente();
                     novaEmpresa.setDocumento(docLimpo);
                     novaEmpresa.setNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : "Empresa Não Identificada");
-                    novaEmpresa.setTelefone(dto.clienteTelefone());
+                    novaEmpresa.setTelefone(dto.clienteTelefone() != null ? dto.clienteTelefone().replaceAll("\\D", "") : null);
 
-                    // 🚨 CORREÇÃO: Atribuindo a IE (Verifique o nome exato do set no seu Model)
-                    novaEmpresa.setInscricaoEstadual(dto.clienteIe());
-                    // Concatenando apenas para salvar visualmente no Banco, mas o seu NfeService
-// agora precisará ler os campos separados do DTO ou da própria entidade Cliente.
+                    String ieLimpa = dto.clienteIe() != null ? dto.clienteIe().replaceAll("\\D", "") : "";
+                    novaEmpresa.setInscricaoEstadual(ieLimpa.isBlank() ? "ISENTO" : ieLimpa);
+
                     String endCompleto = dto.clienteLogradouro() + ", " + dto.clienteNumero() + " - " +
                             dto.clienteBairro() + " | " + dto.clienteCidade() + "-" + dto.clienteUf() +
-                            " CEP: " + dto.clienteCep();
+                            " CEP: " + (dto.clienteCep() != null ? dto.clienteCep().replaceAll("\\D", "") : "");
                     novaEmpresa.setEndereco(endCompleto);
 
                     novaEmpresa.setAtivo(true);
                     novaEmpresa.setLimiteCredito(BigDecimal.ZERO);
-
                     clienteEncontrado = clienteRepository.save(novaEmpresa);
                     venda.setCliente(clienteEncontrado);
                 }
@@ -198,7 +194,7 @@ public class VendaService {
 
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
 
-        // Salva a venda primeiramente como PENDENTE
+        // Salva a venda primeiramente como PENDENTE no banco
         venda.setStatusNfce(StatusFiscal.PENDENTE);
         venda = vendaRepository.save(venda);
 
@@ -211,8 +207,8 @@ public class VendaService {
             venda.setStatusNfce(StatusFiscal.PENDENTE);
             venda.setChaveAcessoNfce("AguardandoSefaz");
         }
-        venda = vendaRepository.save(venda);
 
+        venda = vendaRepository.save(venda);
         atualizarFinanceiro(caixa, venda, pagamentos);
 
         if (dto.logAuditoria() != null && !dto.logAuditoria().isEmpty()) {
@@ -223,39 +219,28 @@ public class VendaService {
             }
         }
 
-        // =============================================================
-        // 🚨 MAESTRO FISCAL (EXIBINDO ERROS REAIS)
-        // =============================================================
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
-            try {
-                // Força o banco a gravar a venda antes de enviar o XML para a SEFAZ
-                vendaRepository.saveAndFlush(venda);
+            final Venda vendaTransmitir = venda;
+            final String tipoNota = dto.tipoNota() != null ? dto.tipoNota() : "NFCE";
 
-                String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
-
-                if (docLimpo.length() == 14) {
-                    log.info("🔥 B2B Detectado! Emitindo NF-e Modelo 55 Sincronamente...");
-                    // Nota: Se seu nfeService pedir o Objeto, mude para nfeService.emitirNfeModelo55(venda);
-                    nfeService.emitirNfeModelo55(venda.getIdVenda());
-                } else {
-                    log.info("🛒 B2C Detectado! Emitindo NFC-e Modelo 65 Sincronamente...");
-                    nfceService.emitirNfce(venda);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    if ("NFE".equals(tipoNota)) {
+                        log.info("🔥 B2B Detectado! Emitindo NF-e Modelo 55 em background para a Venda {}", vendaTransmitir.getIdVenda());
+                        nfeService.emitirNfeModelo55(vendaTransmitir.getIdVenda());
+                    } else {
+                        log.info("🛒 B2C Detectado! Emitindo NFC-e Modelo 65 em background para a Venda {}", vendaTransmitir.getIdVenda());
+                        nfceService.emitirNfce(vendaTransmitir);
+                    }
+                } catch (Exception e) {
+                    log.error("Erro na comunicação com a SEFAZ para a venda {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
                 }
-
-                venda = vendaRepository.findByIdComItens(venda.getIdVenda()).orElse(venda);
-
-            } catch (Exception e) {
-                log.error("❌ Falha crítica na emissão Fiscal da Venda {}: {}", venda.getIdVenda(), e.getMessage());
-                // 🚨 CORREÇÃO: Agora o Java devolve o motivo real da falha para o React, parando o 500 genérico.
-                throw new ValidationException("A SEFAZ rejeitou a emissão: " + e.getMessage());
-            }
+            });
         }
-        return converterParaDTO(venda);
+
+        return new VendaResponseDTO(venda);
     }
 
-    // =========================================================================
-    // 1.1 ALGORITMO OFICIAL SEFAZ (MÓDULO 11) À PROVA DE FALHAS
-    // =========================================================================
     private void gerarDadosFiscaisNfce(Venda venda, ConfiguracaoLoja config) {
         try {
             String cnpjStr = "00000000000000";
@@ -299,7 +284,7 @@ public class VendaService {
             venda.setProtocolo(ambiente + uf + String.format("%012d", System.currentTimeMillis() % 1000000000000L));
 
         } catch (Exception e) {
-            log.error("FALHA GRAVE AO GERAR CHAVE NFC-e: {}", e.getMessage());
+            log.error("FALHA GRAVE AO GERAR CHAVE FISCAL: {}", e.getMessage());
             venda.setStatusNfce(StatusFiscal.PENDENTE);
             venda.setChaveAcessoNfce("AguardandoSefaz");
         }
@@ -318,10 +303,6 @@ public class VendaService {
         if (dv == 10 || dv == 11) dv = 0;
         return String.valueOf(dv);
     }
-
-    // =========================================================================
-    // 2. GESTÃO DE ESTADOS (SUSPENDER, CANCELAR, EFETIVAR)
-    // =========================================================================
 
     @Transactional(rollbackFor = Exception.class)
     public Venda suspenderVenda(VendaRequestDTO dto) {
@@ -413,34 +394,33 @@ public class VendaService {
             vendaRepository.save(venda);
         } catch (Exception e) { log.warn("Aviso chave na retomada: {}", e.getMessage()); }
 
-        try {
-            String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
-            if (docLimpo.length() == 14) {
-                nfeService.emitirNfeModelo55(venda.getIdVenda());
-            } else {
-                nfceService.emitirNfce(venda);
+        final Venda vendaTransmitir = venda;
+        CompletableFuture.runAsync(() -> {
+            try {
+                String docLimpo = vendaTransmitir.getClienteDocumento() != null ? vendaTransmitir.getClienteDocumento().replaceAll("\\D", "") : "";
+                if (docLimpo.length() == 14) {
+                    nfeService.emitirNfeModelo55(vendaTransmitir.getIdVenda());
+                } else {
+                    nfceService.emitirNfce(vendaTransmitir);
+                }
+            } catch (Exception e) {
+                log.error("Erro na emissão fiscal da venda {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
             }
-        } catch (Exception e) {
-            log.error("Erro fiscal na retomada da venda {}: {}", venda.getIdVenda(), e.getMessage());
-        }
+        });
 
         return venda;
     }
 
-    // =========================================================================
-    // 3. CONSULTAS
-    // =========================================================================
-
     @Transactional(readOnly = true)
     public List<VendaResponseDTO> listarVendasSuspensas() {
-        return vendaRepository.findByStatusNfce(StatusFiscal.PENDENTE).stream().map(this::converterParaDTO).collect(Collectors.toList());
+        return vendaRepository.findByStatusNfce(StatusFiscal.PENDENTE).stream().map(VendaResponseDTO::new).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public Page<VendaResponseDTO> listarVendas(LocalDate inicio, LocalDate fim, Pageable pageable) {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDateTime.now().minusDays(30);
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
-        return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable).map(this::converterParaDTO);
+        return vendaRepository.findByDataVendaBetween(dataInicio, dataFim, pageable).map(VendaResponseDTO::new);
     }
 
     @Transactional(readOnly = true)
@@ -449,10 +429,6 @@ public class VendaService {
         Hibernate.initialize(venda.getPagamentos());
         return venda;
     }
-
-    // =========================================================================
-    // 4. INTEGRAÇÃO FINANCEIRA E GERADOR DE TÍTULOS
-    // =========================================================================
 
     private void atualizarFinanceiro(CaixaDiario caixa, Venda venda, List<PagamentoVenda> pagamentos) {
         if (pagamentos == null || pagamentos.isEmpty()) return;
@@ -519,32 +495,8 @@ public class VendaService {
         }
     }
 
-    // =========================================================================
-    // 5. AUXILIARES E VALIDAÇÕES INTEGRAIS
-    // =========================================================================
-
     private BigDecimal nvl(BigDecimal val) { return val == null ? BigDecimal.ZERO : val; }
     private BigDecimal nvl(BigDecimal val, BigDecimal padrao) { return val == null ? padrao : val; }
-
-    private VendaResponseDTO converterParaDTO(Venda venda) {
-        List<ItemVendaResponseDTO> itensDto = venda.getItens() != null
-                ? venda.getItens().stream().map(i -> {
-            String nome = (i.getProduto() != null && i.getProduto().getDescricao() != null) ? i.getProduto().getDescricao() : "Produto Desconhecido";
-            String ean = (i.getProduto() != null) ? i.getProduto().getCodigoBarras() : "Sem EAN";
-            return new ItemVendaResponseDTO(i.getProduto() != null ? i.getProduto().getId() : null, nome, ean, i.getQuantidade(), i.getPrecoUnitario(), i.getDesconto());
-        }).collect(Collectors.toList()) : new ArrayList<>();
-
-        List<PagamentoResponseDTO> pagamentosDto = venda.getPagamentos() != null
-                ? venda.getPagamentos().stream().map(p -> new PagamentoResponseDTO(p.getFormaPagamento(), p.getValor(), p.getParcelas())).collect(Collectors.toList()) : new ArrayList<>();
-
-        return new VendaResponseDTO(
-                venda.getIdVenda(), venda.getDataVenda(), venda.getValorTotal(), venda.getDescontoTotal(),
-                venda.getClienteNome(), venda.getFormaDePagamento(), itensDto, pagamentosDto,
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, venda.getValorTotal(),
-                venda.getStatusNfce(), venda.getChaveAcessoNfce(), venda.getObservacao(),
-                venda.getUrlQrCode()
-        );
-    }
 
     private void processarSaidaEstoqueComAuditoria(Produto produto, int qtdVenda) {
         if (produto.getQuantidadeEmEstoque() < qtdVenda) {
@@ -615,5 +567,138 @@ public class VendaService {
         Cliente cliente = clienteRepository.findByDocumento(documento.replaceAll("\\D", "")).orElseThrow(() -> new ResourceNotFoundException("Cliente não cadastrado."));
         BigDecimal divida = nvl(contaReceberRepository.somarDividaTotalPorDocumento(cliente.getDocumento()));
         if (divida.add(valor).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de crédito excedido!");
+    }
+
+    // =========================================================================
+    // MOTOR DE E-MAIL INTELIGENTE (B2B vs B2C com Documentos Reais)
+    // =========================================================================
+    @Transactional(readOnly = true)
+    public void enviarEmailComXmlEPdf(Long idVenda, String emailDestino) {
+        Venda venda = vendaRepository.findByIdComItens(idVenda)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + idVenda));
+
+        // 🚨 INTELIGÊNCIA B2B vs B2C
+        String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+        boolean isB2B = docLimpo.length() == 14;
+
+        int tentativas = 0;
+        while ((venda.getXmlNota() == null || venda.getXmlNota().isBlank()) && tentativas < 5) {
+            try {
+                Thread.sleep(1000);
+                venda = vendaRepository.findByIdComItens(idVenda).orElse(venda);
+            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            tentativas++;
+        }
+
+        try {
+            ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
+            org.springframework.mail.javamail.JavaMailSenderImpl mailSender = new org.springframework.mail.javamail.JavaMailSenderImpl();
+
+            mailSender.setHost(config.getSmtpHost() != null ? config.getSmtpHost() : "smtp.gmail.com");
+            mailSender.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
+            mailSender.setUsername(config.getSmtpUsername());
+            mailSender.setPassword(config.getSmtpPassword());
+
+            java.util.Properties props = mailSender.getJavaMailProperties();
+            props.put("mail.transport.protocol", "smtp");
+            props.put("mail.smtp.auth", "true");
+            props.put("mail.smtp.starttls.enable", "true");
+
+            jakarta.mail.internet.MimeMessage message = mailSender.createMimeMessage();
+            org.springframework.mail.javamail.MimeMessageHelper helper = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(config.getSmtpUsername());
+            helper.setTo(emailDestino);
+            helper.setSubject("Documento Fiscal - " + config.getLoja().getNomeFantasia() + " (Venda #" + idVenda + ")");
+
+            StringBuilder corpo = new StringBuilder();
+            corpo.append("Olá, ").append(venda.getClienteNome()).append("!\n\n");
+            corpo.append("Agradecemos a sua compra via ").append(venda.getFormaDePagamento()).append(".\n");
+            corpo.append("Data da transação: ").append(venda.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))).append("\n\n");
+
+            corpo.append("📦 ITENS DO SEU PEDIDO:\n");
+            corpo.append("------------------------------------------\n");
+            for (ItemVenda item : venda.getItens()) {
+                corpo.append(String.format("%-3s x %-30s R$ %8.2f\n",
+                        item.getQuantidade().setScale(0, RoundingMode.DOWN),
+                        item.getProduto().getDescricao(),
+                        item.getPrecoUnitario()));
+            }
+            corpo.append("------------------------------------------\n");
+            corpo.append(String.format("VALOR TOTAL: R$ %.2f\n", venda.getValorTotal()));
+            corpo.append("------------------------------------------\n\n");
+            corpo.append("Anexamos a este e-mail o seu documento fiscal.\n\nAtenciosamente,\n")
+                    .append(config.getLoja().getNomeFantasia());
+
+            helper.setText(corpo.toString());
+
+            // 🚨 GERAÇÃO E ANEXAÇÃO DOS DOCUMENTOS OFICIAIS
+            if (isB2B) {
+                // CNPJ: Manda XML Oficial + DANFE formato A4
+                if (venda.getXmlNota() != null && !venda.getXmlNota().isBlank()) {
+                    org.springframework.core.io.ByteArrayResource xml = new org.springframework.core.io.ByteArrayResource(venda.getXmlNota().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    helper.addAttachment("XML_NFe_" + idVenda + ".xml", xml);
+                }
+
+                // Gera a DANFE A4
+                byte[] pdfDanfe = pdfService.gerarDanfeNfe(venda, config);
+                org.springframework.core.io.ByteArrayResource pdfAnexo = new org.springframework.core.io.ByteArrayResource(pdfDanfe);
+                helper.addAttachment("DANFE_" + idVenda + ".pdf", pdfAnexo);
+
+            } else {
+                // CPF / Avulso: Manda apenas o Cupom Térmico 80mm
+                byte[] pdfCupom = pdfService.gerarCupomNfce(venda, config);
+                org.springframework.core.io.ByteArrayResource pdfAnexo = new org.springframework.core.io.ByteArrayResource(pdfCupom);
+                helper.addAttachment("CupomFiscal_" + idVenda + ".pdf", pdfAnexo);
+            }
+
+            mailSender.send(message);
+            log.info("E-mail {} enviado com sucesso (PDF legível) para {}", isB2B ? "B2B (DANFE+XML)" : "B2C (Cupom 80mm)", emailDestino);
+
+        } catch (Exception e) {
+            log.error("Erro ao enviar e-mail da venda {}: {}", idVenda, e.getMessage());
+            throw new ValidationException("Falha ao enviar e-mail fiscal. Verifique a conexão com o provedor SMTP.");
+        }
+    }
+
+    // =========================================================================
+    // VALIDADOR DE PDF E GERADOR ESPELHO
+    // =========================================================================
+
+    // Método que garante que não vamos enviar um XML disfarçado de PDF
+    private boolean isPdfValido(byte[] data) {
+        return data != null && data.length > 4 &&
+                data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46; // %PDF
+    }
+
+    private org.springframework.core.io.ByteArrayResource gerarPdfEspelho(Venda venda) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        com.lowagie.text.Document document = new com.lowagie.text.Document(com.lowagie.text.PageSize.A4.rotate());
+
+        try {
+            com.lowagie.text.pdf.PdfWriter.getInstance(document, out);
+            document.open();
+
+            com.lowagie.text.Font titleFont = com.lowagie.text.FontFactory.getFont(com.lowagie.text.FontFactory.HELVETICA_BOLD, 16);
+            com.lowagie.text.Paragraph title = new com.lowagie.text.Paragraph("Documento Auxiliar de Venda - DD Cosméticos", titleFont);
+            title.setAlignment(com.lowagie.text.Element.ALIGN_CENTER);
+            document.add(title);
+
+            document.add(new com.lowagie.text.Paragraph("\nNúmero da Venda: " + venda.getIdVenda()));
+            document.add(new com.lowagie.text.Paragraph("Data e Hora: " + venda.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"))));
+            document.add(new com.lowagie.text.Paragraph("Cliente: " + (venda.getClienteNome() != null ? venda.getClienteNome() : "Consumidor Final")));
+            document.add(new com.lowagie.text.Paragraph("Valor Total Pago: R$ " + venda.getValorTotal()));
+
+            String chave = venda.getChaveAcessoNfce() != null && !venda.getChaveAcessoNfce().isBlank() ? venda.getChaveAcessoNfce() : "Aguardando processamento SEFAZ";
+            document.add(new com.lowagie.text.Paragraph("Chave de Acesso: " + chave));
+
+            document.add(new com.lowagie.text.Paragraph("\n\n* O arquivo XML oficial encontra-se em anexo neste e-mail (se aprovado)."));
+            document.close();
+
+        } catch (com.lowagie.text.DocumentException e) {
+            log.error("Erro gerando PDF espelho da venda {}", venda.getIdVenda(), e);
+        }
+
+        return new org.springframework.core.io.ByteArrayResource(out.toByteArray());
     }
 }

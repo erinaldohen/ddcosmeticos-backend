@@ -46,20 +46,20 @@ public class ConfiguracaoLojaService {
         }
     }
 
-    private ConfiguracaoLoja.DadosVendas converterVendas(ConfiguracaoDTO.VendasDTO dto) {
-        if (dto == null) return new ConfiguracaoLoja.DadosVendas();
+    private ConfiguracaoLoja.DadosVendas converterVendas(ConfiguracaoDTO.VendasDTO vendasDTO) {
+        if (vendasDTO == null) return new ConfiguracaoLoja.DadosVendas();
         ConfiguracaoLoja.DadosVendas vendas = new ConfiguracaoLoja.DadosVendas();
-        vendas.setComportamentoCpf(dto.comportamentoCpf());
-        vendas.setBloquearEstoque(dto.bloquearEstoque());
-        vendas.setLayoutCupom(dto.layoutCupom());
-        vendas.setImprimirVendedor(dto.imprimirVendedor());
-        vendas.setImprimirTicketTroca(dto.imprimirTicketTroca());
-        vendas.setAutoEnterScanner(dto.autoEnterScanner());
-        vendas.setFidelidadeAtiva(dto.fidelidadeAtiva());
-        vendas.setPontosPorReal(dto.pontosPorReal());
-        vendas.setUsarBalanca(dto.usarBalanca());
-        vendas.setAgruparItens(dto.agruparItens());
-        vendas.setMetaMensal(dto.metaMensal() != null ? dto.metaMensal() : BigDecimal.ZERO);
+        vendas.setComportamentoCpf(vendasDTO.comportamentoCpf());
+        vendas.setBloquearEstoque(vendasDTO.bloquearEstoque());
+        vendas.setLayoutCupom(vendasDTO.layoutCupom());
+        vendas.setImprimirVendedor(vendasDTO.imprimirVendedor());
+        vendas.setImprimirTicketTroca(vendasDTO.imprimirTicketTroca());
+        vendas.setAutoEnterScanner(vendasDTO.autoEnterScanner());
+        vendas.setFidelidadeAtiva(vendasDTO.fidelidadeAtiva());
+        vendas.setPontosPorReal(vendasDTO.pontosPorReal());
+        vendas.setUsarBalanca(vendasDTO.usarBalanca());
+        vendas.setAgruparItens(vendasDTO.agruparItens());
+        vendas.setMetaMensal(vendasDTO.metaMensal() != null ? vendasDTO.metaMensal() : BigDecimal.ZERO);
         return vendas;
     }
 
@@ -80,9 +80,9 @@ public class ConfiguracaoLojaService {
     }
 
     @Transactional
-    public ConfiguracaoDTO salvar(ConfiguracaoDTO dto) {
+    public ConfiguracaoDTO salvar(ConfiguracaoDTO configuracaoDTO) {
         ConfiguracaoLoja config = buscarConfiguracao();
-        atualizarEntidade(config, dto);
+        atualizarEntidade(config, configuracaoDTO);
         ConfiguracaoLoja salva = repository.save(config);
         return converterParaDTO(salva);
     }
@@ -127,8 +127,8 @@ public class ConfiguracaoLojaService {
     }
 
     @Transactional
-    public String salvarLogo(MultipartFile file) {
-        String contentType = file.getContentType();
+    public String salvarLogo(MultipartFile multipartFile) {
+        String contentType = multipartFile.getContentType();
         if (contentType == null || !contentType.startsWith("image/")) {
             throw new ValidationException("Apenas arquivos de imagem são permitidos.");
         }
@@ -136,9 +136,9 @@ public class ConfiguracaoLojaService {
         ConfiguracaoLoja config = buscarConfiguracao();
         apagarArquivoAntigo(config.getLoja().getLogoUrl());
 
-        String extension = getFileExtension(file.getOriginalFilename());
+        String extension = getFileExtension(multipartFile.getOriginalFilename());
         String fileName = "logo_" + UUID.randomUUID() + extension;
-        salvarArquivoEmDisco(file, fileName);
+        salvarArquivoEmDisco(multipartFile, fileName);
         String fileUrl = "/uploads/" + fileName;
         config.getLoja().setLogoUrl(fileUrl);
         repository.save(config);
@@ -169,98 +169,112 @@ public class ConfiguracaoLojaService {
         return filename != null && filename.contains(".") ? filename.substring(filename.lastIndexOf(".")) : ".png";
     }
 
-    private void atualizarEntidade(ConfiguracaoLoja c, ConfiguracaoDTO d) {
-        c.garantirInstancias();
+    private void atualizarEntidade(ConfiguracaoLoja configuracaoLoja, ConfiguracaoDTO configuracaoDTO) {
+        configuracaoLoja.garantirInstancias();
 
-        String logoAtual = c.getLoja().getLogoUrl();
-        c.setLoja(new ConfiguracaoLoja.DadosLoja(
-                d.loja().razaoSocial(), d.loja().nomeFantasia(), d.loja().cnpj(), d.loja().ie(), d.loja().im(), d.loja().cnae(),
-                d.loja().email(), d.loja().telefone(), d.loja().whatsapp(), d.loja().site(), d.loja().instagram(), d.loja().slogan(),
-                d.loja().corDestaque(), d.loja().isMatriz(), d.loja().horarioAbre(), d.loja().horarioFecha(),
-                d.loja().toleranciaMinutos(), d.loja().bloqueioForaHorario(), d.loja().taxaEntregaPadrao(), d.loja().tempoEntregaMin(),
-                d.loja().logoUrl() != null && !d.loja().logoUrl().isEmpty() ? d.loja().logoUrl() : logoAtual
+        // 🚨 1. SALVANDO E-MAIL (SMTP) E INTEGRAÇÕES NA RAIZ DA ENTIDADE
+        if (configuracaoDTO.smtpHost() != null) configuracaoLoja.setSmtpHost(configuracaoDTO.smtpHost());
+        if (configuracaoDTO.smtpPort() != null) configuracaoLoja.setSmtpPort(configuracaoDTO.smtpPort());
+        if (configuracaoDTO.smtpUsername() != null) configuracaoLoja.setSmtpUsername(configuracaoDTO.smtpUsername());
+
+        // Só atualiza a senha de e-mail se o usuário digitou uma nova (proteção de frontend)
+        if (configuracaoDTO.smtpPassword() != null && !configuracaoDTO.smtpPassword().isBlank()) {
+            configuracaoLoja.setSmtpPassword(configuracaoDTO.smtpPassword());
+        }
+
+        if (configuracaoDTO.gatewayPagamento() != null) configuracaoLoja.setGatewayPagamento(configuracaoDTO.gatewayPagamento());
+        if (configuracaoDTO.infinitepayClientId() != null) configuracaoLoja.setInfinitepayClientId(configuracaoDTO.infinitepayClientId());
+        if (configuracaoDTO.infinitepayClientSecret() != null) configuracaoLoja.setInfinitepayClientSecret(configuracaoDTO.infinitepayClientSecret());
+        if (configuracaoDTO.infinitepayWalletId() != null) configuracaoLoja.setInfinitepayWalletId(configuracaoDTO.infinitepayWalletId());
+        // -------------------------------------------------------------
+
+        String logoAtual = configuracaoLoja.getLoja().getLogoUrl();
+        configuracaoLoja.setLoja(new ConfiguracaoLoja.DadosLoja(
+                configuracaoDTO.loja().razaoSocial(), configuracaoDTO.loja().nomeFantasia(), configuracaoDTO.loja().cnpj(), configuracaoDTO.loja().ie(), configuracaoDTO.loja().im(), configuracaoDTO.loja().cnae(),
+                configuracaoDTO.loja().email(), configuracaoDTO.loja().telefone(), configuracaoDTO.loja().whatsapp(), configuracaoDTO.loja().site(), configuracaoDTO.loja().instagram(), configuracaoDTO.loja().slogan(),
+                configuracaoDTO.loja().corDestaque(), configuracaoDTO.loja().isMatriz(), configuracaoDTO.loja().horarioAbre(), configuracaoDTO.loja().horarioFecha(),
+                configuracaoDTO.loja().toleranciaMinutos(), configuracaoDTO.loja().bloqueioForaHorario(), configuracaoDTO.loja().taxaEntregaPadrao(), configuracaoDTO.loja().tempoEntregaMin(),
+                configuracaoDTO.loja().logoUrl() != null && !configuracaoDTO.loja().logoUrl().isEmpty() ? configuracaoDTO.loja().logoUrl() : logoAtual
         ));
 
-        c.setEndereco(new ConfiguracaoLoja.EnderecoLoja(
-                d.endereco().cep(), d.endereco().logradouro(), d.endereco().numero(), d.endereco().complemento(),
-                d.endereco().bairro(), d.endereco().cidade(), d.endereco().uf()
+        configuracaoLoja.setEndereco(new ConfiguracaoLoja.EnderecoLoja(
+                configuracaoDTO.endereco().cep(), configuracaoDTO.endereco().logradouro(), configuracaoDTO.endereco().numero(), configuracaoDTO.endereco().complemento(),
+                configuracaoDTO.endereco().bairro(), configuracaoDTO.endereco().cidade(), configuracaoDTO.endereco().uf()
         ));
 
-        ConfiguracaoLoja.DadosFiscal f = c.getFiscal();
+        ConfiguracaoLoja.DadosFiscal f = configuracaoLoja.getFiscal();
 
         String senhaCertAtual = f.getSenhaCert();
         String caminhoCertAtual = f.getCaminhoCertificado();
         byte[] arquivoCertAtual = f.getArquivoCertificado();
 
-        f.setAmbiente(d.fiscal().ambiente());
-        f.setRegime(d.fiscal().regime());
+        f.setAmbiente(configuracaoDTO.fiscal().ambiente());
+        f.setRegime(configuracaoDTO.fiscal().regime());
 
-        f.setTokenHomologacao(d.fiscal().tokenHomologacao());
-        f.setCscIdHomologacao(d.fiscal().cscIdHomologacao());
-        f.setSerieHomologacao(d.fiscal().serieHomologacao() != null ? d.fiscal().serieHomologacao() : 1);
-        f.setNfeHomologacao(d.fiscal().nfeHomologacao() != null ? d.fiscal().nfeHomologacao() : 1);
+        f.setTokenHomologacao(configuracaoDTO.fiscal().tokenHomologacao());
+        f.setCscIdHomologacao(configuracaoDTO.fiscal().cscIdHomologacao());
+        f.setSerieHomologacao(configuracaoDTO.fiscal().serieHomologacao() != null ? configuracaoDTO.fiscal().serieHomologacao() : 1);
+        f.setNfeHomologacao(configuracaoDTO.fiscal().nfeHomologacao() != null ? configuracaoDTO.fiscal().nfeHomologacao() : 1);
 
-        f.setTokenProducao(d.fiscal().tokenProducao());
-        f.setCscIdProducao(d.fiscal().cscIdProducao());
-        f.setSerieProducao(d.fiscal().serieProducao() != null ? d.fiscal().serieProducao() : 1);
-        f.setNfeProducao(d.fiscal().nfeProducao() != null ? d.fiscal().nfeProducao() : 1);
+        f.setTokenProducao(configuracaoDTO.fiscal().tokenProducao());
+        f.setCscIdProducao(configuracaoDTO.fiscal().cscIdProducao());
+        f.setSerieProducao(configuracaoDTO.fiscal().serieProducao() != null ? configuracaoDTO.fiscal().serieProducao() : 1);
+        f.setNfeProducao(configuracaoDTO.fiscal().nfeProducao() != null ? configuracaoDTO.fiscal().nfeProducao() : 1);
 
-        f.setSenhaCert(d.fiscal().senhaCert() != null && !d.fiscal().senhaCert().isEmpty() ? d.fiscal().senhaCert() : senhaCertAtual);
-        f.setCaminhoCertificado(d.fiscal().caminhoCertificado() != null && !d.fiscal().caminhoCertificado().isEmpty() ? d.fiscal().caminhoCertificado() : caminhoCertAtual);
+        f.setSenhaCert(configuracaoDTO.fiscal().senhaCert() != null && !configuracaoDTO.fiscal().senhaCert().isEmpty() ? configuracaoDTO.fiscal().senhaCert() : senhaCertAtual);
+        f.setCaminhoCertificado(configuracaoDTO.fiscal().caminhoCertificado() != null && !configuracaoDTO.fiscal().caminhoCertificado().isEmpty() ? configuracaoDTO.fiscal().caminhoCertificado() : caminhoCertAtual);
         f.setArquivoCertificado(arquivoCertAtual);
 
-        f.setCsrtId(d.fiscal().csrtId());
-        f.setCsrtHash(d.fiscal().csrtHash());
-        f.setIbptToken(d.fiscal().ibptToken());
-        f.setNaturezaPadrao(d.fiscal().naturezaPadrao());
-        f.setEmailContabil(d.fiscal().emailContabil());
-        f.setEnviarXmlAutomatico(d.fiscal().enviarXmlAutomatico());
-        f.setAliquotaInterna(d.fiscal().aliquotaInterna());
-        f.setModoContingencia(d.fiscal().modoContingencia());
-        f.setPriorizarMonofasico(d.fiscal().priorizarMonofasico());
-        f.setObsPadraoCupom(d.fiscal().obsPadraoCupom());
+        f.setCsrtId(configuracaoDTO.fiscal().csrtId());
+        f.setCsrtHash(configuracaoDTO.fiscal().csrtHash());
+        f.setIbptToken(configuracaoDTO.fiscal().ibptToken());
+        f.setNaturezaPadrao(configuracaoDTO.fiscal().naturezaPadrao());
+        f.setEmailContabil(configuracaoDTO.fiscal().emailContabil());
+        f.setEnviarXmlAutomatico(configuracaoDTO.fiscal().enviarXmlAutomatico());
+        f.setAliquotaInterna(configuracaoDTO.fiscal().aliquotaInterna());
+        f.setModoContingencia(configuracaoDTO.fiscal().modoContingencia());
+        f.setPriorizarMonofasico(configuracaoDTO.fiscal().priorizarMonofasico());
+        f.setObsPadraoCupom(configuracaoDTO.fiscal().obsPadraoCupom());
 
-        ConfiguracaoLoja.DadosFinanceiro fin = c.getFinanceiro();
-        fin.setComissaoProdutos(d.financeiro().comissaoProdutos());
-        fin.setComissaoServicos(d.financeiro().comissaoServicos());
-        fin.setAlertaSangria(d.financeiro().alertaSangria());
-        fin.setFundoTrocoPadrao(d.financeiro().fundoTrocoPadrao());
-        fin.setMetaDiaria(d.financeiro().metaDiaria());
-        fin.setTaxaDebito(d.financeiro().taxaDebito());
-        fin.setTaxaCredito(d.financeiro().taxaCredito());
-        fin.setDescCaixa(d.financeiro().descCaixa());
-        fin.setDescGerente(d.financeiro().descGerente());
-        fin.setDescExtraPix(d.financeiro().descExtraPix());
-        fin.setBloquearAbaixoCusto(d.financeiro().bloquearAbaixoCusto());
-        fin.setPixTipo(d.financeiro().pixTipo());
-        fin.setPixChave(d.financeiro().pixChave());
-        fin.setJurosMensal(d.financeiro().jurosMensal());
-        fin.setMultaAtraso(d.financeiro().multaAtraso());
-        fin.setDiasCarencia(d.financeiro().diasCarencia());
-        fin.setFechamentoCego(d.financeiro().fechamentoCego());
+        ConfiguracaoLoja.DadosFinanceiro fin = configuracaoLoja.getFinanceiro();
+        fin.setComissaoProdutos(configuracaoDTO.financeiro().comissaoProdutos());
+        fin.setComissaoServicos(configuracaoDTO.financeiro().comissaoServicos());
+        fin.setAlertaSangria(configuracaoDTO.financeiro().alertaSangria());
+        fin.setFundoTrocoPadrao(configuracaoDTO.financeiro().fundoTrocoPadrao());
+        fin.setMetaDiaria(configuracaoDTO.financeiro().metaDiaria());
+        fin.setTaxaDebito(configuracaoDTO.financeiro().taxaDebito());
+        fin.setTaxaCredito(configuracaoDTO.financeiro().taxaCredito());
+        fin.setDescCaixa(configuracaoDTO.financeiro().descCaixa());
+        fin.setDescGerente(configuracaoDTO.financeiro().descGerente());
+        fin.setDescExtraPix(configuracaoDTO.financeiro().descExtraPix());
+        fin.setBloquearAbaixoCusto(configuracaoDTO.financeiro().bloquearAbaixoCusto());
+        fin.setPixTipo(configuracaoDTO.financeiro().pixTipo());
+        fin.setPixChave(configuracaoDTO.financeiro().pixChave());
+        fin.setJurosMensal(configuracaoDTO.financeiro().jurosMensal());
+        fin.setMultaAtraso(configuracaoDTO.financeiro().multaAtraso());
+        fin.setDiasCarencia(configuracaoDTO.financeiro().diasCarencia());
+        fin.setFechamentoCego(configuracaoDTO.financeiro().fechamentoCego());
 
-        // CORREÇÃO: PAGAMENTOS PLANOS ACHATADOS (Removido o antigo d.financeiro().pagamentos() que causava o erro)
-        fin.setAceitaDinheiro(d.financeiro().aceitaDinheiro() != null ? d.financeiro().aceitaDinheiro() : true);
-        fin.setAceitaPix(d.financeiro().aceitaPix() != null ? d.financeiro().aceitaPix() : true);
-        fin.setAceitaCredito(d.financeiro().aceitaCredito() != null ? d.financeiro().aceitaCredito() : true);
-        fin.setAceitaDebito(d.financeiro().aceitaDebito() != null ? d.financeiro().aceitaDebito() : true);
-        fin.setAceitaCrediario(d.financeiro().aceitaCrediario() != null ? d.financeiro().aceitaCrediario() : false);
+        fin.setAceitaDinheiro(configuracaoDTO.financeiro().aceitaDinheiro() != null ? configuracaoDTO.financeiro().aceitaDinheiro() : true);
+        fin.setAceitaPix(configuracaoDTO.financeiro().aceitaPix() != null ? configuracaoDTO.financeiro().aceitaPix() : true);
+        fin.setAceitaCredito(configuracaoDTO.financeiro().aceitaCredito() != null ? configuracaoDTO.financeiro().aceitaCredito() : true);
+        fin.setAceitaDebito(configuracaoDTO.financeiro().aceitaDebito() != null ? configuracaoDTO.financeiro().aceitaDebito() : true);
+        fin.setAceitaCrediario(configuracaoDTO.financeiro().aceitaCrediario() != null ? configuracaoDTO.financeiro().aceitaCrediario() : false);
 
-        c.setVendas(converterVendas(d.vendas()));
+        configuracaoLoja.setVendas(converterVendas(configuracaoDTO.vendas()));
 
-        c.setSistema(new ConfiguracaoLoja.DadosSistema(
-                d.sistema().impressaoAuto(), d.sistema().larguraPapel(), d.sistema().backupAuto(), d.sistema().backupHora(),
-                d.sistema().rodape(), d.sistema().tema(), d.sistema().backupNuvem(), d.sistema().senhaGerenteCancelamento(),
-                d.sistema().nomeTerminal(), d.sistema().imprimirLogoCupom()
+        configuracaoLoja.setSistema(new ConfiguracaoLoja.DadosSistema(
+                configuracaoDTO.sistema().impressaoAuto(), configuracaoDTO.sistema().larguraPapel(), configuracaoDTO.sistema().backupAuto(), configuracaoDTO.sistema().backupHora(),
+                configuracaoDTO.sistema().rodape(), configuracaoDTO.sistema().tema(), configuracaoDTO.sistema().backupNuvem(), configuracaoDTO.sistema().senhaGerenteCancelamento(),
+                configuracaoDTO.sistema().nomeTerminal(), configuracaoDTO.sistema().imprimirLogoCupom()
         ));
 
-        // CORREÇÃO: SALVANDO ABA DE COMISSÕES
-        if (d.comissoes() != null) {
-            c.setComissoes(new ConfiguracaoLoja.DadosComissoes(
-                    d.comissoes().tipoCalculo(),
-                    d.comissoes().percentualGeral() != null ? d.comissoes().percentualGeral() : BigDecimal.ZERO,
-                    d.comissoes().comissionarSobre(),
-                    d.comissoes().descontarTaxasCartao() != null ? d.comissoes().descontarTaxasCartao() : false
+        if (configuracaoDTO.comissoes() != null) {
+            configuracaoLoja.setComissoes(new ConfiguracaoLoja.DadosComissoes(
+                    configuracaoDTO.comissoes().tipoCalculo(),
+                    configuracaoDTO.comissoes().percentualGeral() != null ? configuracaoDTO.comissoes().percentualGeral() : BigDecimal.ZERO,
+                    configuracaoDTO.comissoes().comissionarSobre(),
+                    configuracaoDTO.comissoes().descontarTaxasCartao() != null ? configuracaoDTO.comissoes().descontarTaxasCartao() : false
             ));
         }
     }
@@ -268,6 +282,18 @@ public class ConfiguracaoLojaService {
     private ConfiguracaoDTO converterParaDTO(ConfiguracaoLoja c) {
         return new ConfiguracaoDTO(
                 c.getId(),
+
+                // 🚨 2. ENVIANDO OS CAMPOS RAIZ PARA O FRONTEND
+                c.getSmtpHost() != null ? c.getSmtpHost() : "",
+                c.getSmtpPort() != null ? c.getSmtpPort() : 587,
+                c.getSmtpUsername() != null ? c.getSmtpUsername() : "",
+                "", // Envia a senha em branco por segurança
+                c.getGatewayPagamento() != null ? c.getGatewayPagamento() : "MANUAL",
+                c.getInfinitepayClientId() != null ? c.getInfinitepayClientId() : "",
+                c.getInfinitepayClientSecret() != null ? c.getInfinitepayClientSecret() : "",
+                c.getInfinitepayWalletId() != null ? c.getInfinitepayWalletId() : "",
+                // -------------------------------------------------------------
+
                 new ConfiguracaoDTO.LojaDTO(
                         c.getLoja().getRazaoSocial(), c.getLoja().getNomeFantasia(), c.getLoja().getCnpj(), c.getLoja().getIe(),
                         c.getLoja().getIm(), c.getLoja().getCnae(), c.getLoja().getEmail(), c.getLoja().getTelefone(),
@@ -286,7 +312,7 @@ public class ConfiguracaoLojaService {
                         c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao(),
                         c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(),
                         c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao(),
-                        c.getFiscal().getCaminhoCertificado(), "",
+                        c.getFiscal().getCaminhoCertificado(), "", // Senha do certificado enviada em branco
                         c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
                         c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
                         c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),
@@ -299,11 +325,8 @@ public class ConfiguracaoLojaService {
                         c.getFinanceiro().getDescCaixa(), c.getFinanceiro().getDescGerente(),
                         c.getFinanceiro().getDescExtraPix(), c.getFinanceiro().getBloquearAbaixoCusto(),
                         c.getFinanceiro().getPixTipo(), c.getFinanceiro().getPixChave(),
-
-                        // CORREÇÃO: BOOLEANOS PAGAMENTOS (SEM NOVO OBJETO)
                         c.getFinanceiro().getAceitaDinheiro(), c.getFinanceiro().getAceitaPix(),
                         c.getFinanceiro().getAceitaCredito(), c.getFinanceiro().getAceitaDebito(), c.getFinanceiro().getAceitaCrediario(),
-
                         c.getFinanceiro().getJurosMensal(), c.getFinanceiro().getMultaAtraso(),
                         c.getFinanceiro().getDiasCarencia(), c.getFinanceiro().getFechamentoCego()
                 ),
@@ -320,8 +343,6 @@ public class ConfiguracaoLojaService {
                         c.getSistema().getBackupNuvem(), c.getSistema().getSenhaGerenteCancelamento(),
                         c.getSistema().getNomeTerminal(), c.getSistema().getImprimirLogoCupom()
                 ),
-
-                // CORREÇÃO: Mapeamento Blindado contra NullPointer (Protege o sistema após ser formatado)
                 new ConfiguracaoDTO.ComissoesDTO(
                         c.getComissoes() != null && c.getComissoes().getTipoCalculo() != null ? c.getComissoes().getTipoCalculo() : "GERAL",
                         c.getComissoes() != null && c.getComissoes().getPercentualGeral() != null ? c.getComissoes().getPercentualGeral() : BigDecimal.ZERO,
@@ -337,6 +358,8 @@ public class ConfiguracaoLojaService {
         config.getSistema().setTema("light");
         config.getSistema().setImpressaoAuto(true);
         config.getFiscal().setAmbiente("HOMOLOGACAO");
+        config.setGatewayPagamento("MANUAL"); // Define o manual como padrão inicial
+
         return repository.save(config);
     }
 }

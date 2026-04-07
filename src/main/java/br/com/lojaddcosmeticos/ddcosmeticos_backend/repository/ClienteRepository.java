@@ -8,8 +8,10 @@ import java.util.Optional;
 @Repository
 public interface ClienteRepository extends JpaRepository<Cliente, Long> {
 
-    // Agora busca por CPF ou CNPJ genericamente
     Optional<Cliente> findByDocumento(String documento);
+
+    // 👉 ADICIONE ESTA LINHA:
+    Optional<Cliente> findByTelefone(String telefone);
 
     boolean existsByDocumento(String documento);
 }

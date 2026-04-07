@@ -18,7 +18,8 @@ import java.util.Optional;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/fiscal/nfce")
+// 🚨 CORREÇÃO: Mapeamento duplo para garantir que o frontend encontre a rota com ou sem o "/fiscal"
+@RequestMapping({"/api/v1/fiscal/nfce", "/api/v1/nfce"})
 @Tag(name = "Fiscal NFC-e", description = "Emissão, Impressão e Status de Cupom Fiscal (Modelo 65)")
 public class NfceController {
 
@@ -83,5 +84,23 @@ public class NfceController {
             log.error("Erro ao retransmitir NFC-e da venda {}: {}", idVenda, e.getMessage());
             return ResponseEntity.badRequest().body("Falha na retransmissão: " + e.getMessage());
         }
+    }
+
+    // =====================================================================
+    // SERVE O PDF DO CUPOM TÉRMICO (80mm) PARA O NAVEGADOR
+    // =====================================================================
+    @GetMapping(value = "/{idVenda}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @Operation(summary = "Baixar Cupom (PDF via Frontend)", description = "Rota otimizada para o frontend baixar ou abrir o PDF em nova aba.")
+    public ResponseEntity<byte[]> baixarCupomPdf(@PathVariable Long idVenda) {
+        byte[] pdfBytes = impressaoService.gerarCupomNfce(idVenda);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        // "inline" faz o PDF abrir no navegador em vez de baixar automaticamente
+        headers.setContentDispositionFormData("inline", "CupomFiscal_" + idVenda + ".pdf");
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(pdfBytes);
     }
 }

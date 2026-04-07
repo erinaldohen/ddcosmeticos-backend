@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AnaliseCreditoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ClienteDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Cliente;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ClienteRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ClienteService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,6 +25,8 @@ public class ClienteController {
 
     @Autowired
     private ClienteService clienteService;
+    @Autowired
+    private ClienteRepository clienteRepository;
 
     @GetMapping
     @Operation(summary = "Listar Clientes")
@@ -71,5 +74,14 @@ public class ClienteController {
             // Retorna 404 se o cliente não existir, para o React forçar o cadastro
             return ResponseEntity.notFound().build();
         }
+    }
+    // 👉 ADICIONE ESTE MÉTODO DENTRO DO SEU ClienteController
+    @GetMapping("/telefone/{telefone}")
+    public ResponseEntity<Cliente> buscarPorTelefone(@PathVariable String telefone) {
+        String telLimpo = telefone.replaceAll("\\D", "");
+
+        return clienteRepository.findByTelefone(telLimpo)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

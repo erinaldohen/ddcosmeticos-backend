@@ -18,9 +18,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -48,6 +50,7 @@ public class VendaService {
     private final NfceService nfceService;
     private final NfeService nfeService;
     private final AuditoriaService auditoriaService;
+
     // =========================================================================
     // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO COM SEFAZ HÍBRIDO NFE/NFCE)
     // =========================================================================
@@ -81,7 +84,9 @@ public class VendaService {
                 ? config.getFiscal().getObsPadraoCupom()
                 : "Consumidor Não Identificado";
 
-        // Mapeamento Inteligente do Cliente
+        // =========================================================================
+        // MAPEAMENTO INTELIGENTE DO CLIENTE (ATUALIZADO PARA SUPORTAR APENAS TELEFONE)
+        // =========================================================================
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -89,8 +94,8 @@ public class VendaService {
             venda.setClienteNome(cliente.getNome());
             venda.setClienteDocumento(cliente.getDocumento());
             venda.setClienteTelefone(cliente.getTelefone());
-        } else if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
 
+        } else if (dto.clienteDocumento() != null && !dto.clienteDocumento().isBlank()) {
             String docLimpo = dto.clienteDocumento().replaceAll("\\D", "");
             Cliente clienteEncontrado = clienteRepository.findByDocumento(docLimpo).orElse(null);
 
@@ -123,17 +128,54 @@ public class VendaService {
                     clienteEncontrado = clienteRepository.save(novaEmpresa);
                     venda.setCliente(clienteEncontrado);
                 }
-
                 venda.setClienteNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : clientePadraoCupom);
                 venda.setClienteDocumento(dto.clienteDocumento());
                 venda.setClienteTelefone(dto.clienteTelefone());
             }
 
+        } else if (dto.clienteTelefone() != null && !dto.clienteTelefone().isBlank() && dto.clienteNome() != null && !dto.clienteNome().isBlank()) {
+            String telLimpo = dto.clienteTelefone().replaceAll("\\D", "");
+
+            // Busca Inteligente: tenta o número limpo ou o formato com máscara (caso tenha sido guardado manualmente antes)
+            String telMascara;
+            if (telLimpo.length() == 11) {
+                telMascara = String.format("(%s) %s-%s", telLimpo.substring(0, 2), telLimpo.substring(2, 7), telLimpo.substring(7));
+            } else {
+                telMascara = telLimpo;
+            }
+
+            Cliente clienteEncontrado = clienteRepository.findByTelefone(telLimpo)
+                    .orElseGet(() -> clienteRepository.findByTelefone(telMascara).orElse(null));
+
+            if (clienteEncontrado != null) {
+                clienteEncontrado.setNome(dto.clienteNome().toUpperCase());
+                clienteRepository.save(clienteEncontrado);
+
+                venda.setCliente(clienteEncontrado);
+                venda.setClienteNome(clienteEncontrado.getNome());
+                venda.setClienteTelefone(clienteEncontrado.getTelefone());
+            } else {
+                Cliente novoCliente = new Cliente();
+                novoCliente.setNome(dto.clienteNome().toUpperCase());
+                novoCliente.setTelefone(telLimpo);
+                // 🚨 PREVENÇÃO DO ERRO 409: Cria um ID provisório para não violar a restrição de CPF único do banco
+                novoCliente.setDocumento("TL" + telLimpo + (new Random().nextInt(90) + 10));
+                novoCliente.setAtivo(true);
+                novoCliente.setLimiteCredito(BigDecimal.ZERO);
+
+                novoCliente = clienteRepository.save(novoCliente);
+
+                venda.setCliente(novoCliente);
+                venda.setClienteNome(novoCliente.getNome());
+                venda.setClienteTelefone(novoCliente.getTelefone());
+            }
         } else {
             venda.setClienteNome(dto.clienteNome() != null && !dto.clienteNome().isBlank() ? dto.clienteNome() : clientePadraoCupom);
             venda.setClienteDocumento(dto.clienteDocumento());
             venda.setClienteTelefone(dto.clienteTelefone());
         }
+
+        // =========================================================================
 
         venda.setDescontoTotal(nvl(dto.descontoTotal()));
 
@@ -569,93 +611,114 @@ public class VendaService {
     }
 
     // =========================================================================
-    // MOTOR DE E-MAIL INTELIGENTE (B2B vs B2C)
+    // MÉTODOS AUXILIARES DE E-MAIL E PDF
     // =========================================================================
+    private JavaMailSenderImpl configurarMailSender(ConfiguracaoLoja config) {
+        JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
+        mailSender.setHost(config.getSmtpHost() != null ? config.getSmtpHost() : "smtp.gmail.com");
+        mailSender.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
+        mailSender.setUsername(config.getSmtpUsername());
+        mailSender.setPassword(config.getSmtpPassword());
+
+        Properties props = mailSender.getJavaMailProperties();
+        props.put("mail.transport.protocol", "smtp");
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", "true");
+        return mailSender;
+    }
+
+    private String gerarCorpoEmail(Venda venda, ConfiguracaoLoja config) {
+        StringBuilder corpo = new StringBuilder();
+        corpo.append("Olá, ").append(venda.getClienteNome() != null ? venda.getClienteNome() : "Cliente").append("!\n\n");
+        corpo.append("Agradecemos a sua compra via ").append(venda.getFormaDePagamento()).append(".\n");
+        corpo.append("Data da transação: ").append(venda.getDataVenda().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))).append("\n\n");
+
+        corpo.append("📦 ITENS DO SEU PEDIDO:\n");
+        corpo.append("------------------------------------------\n");
+        for (ItemVenda item : venda.getItens()) {
+            corpo.append(String.format("- %s x %s: R$ %.2f\n",
+                    item.getQuantidade().setScale(0, RoundingMode.DOWN),
+                    item.getProduto().getDescricao(),
+                    item.getPrecoUnitario()));
+        }
+        corpo.append("------------------------------------------\n");
+        corpo.append(String.format("VALOR TOTAL: R$ %.2f\n", venda.getValorTotal()));
+        corpo.append("------------------------------------------\n\n");
+        corpo.append("Anexamos a este e-mail o seu documento fiscal.\n\nAtenciosamente,\n")
+                .append(config.getLoja().getNomeFantasia());
+
+        return corpo.toString();
+    }
+
+    private boolean isB2B(Venda venda) {
+        String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+        return docLimpo.length() == 14;
+    }
+
+    private void aguardarXmlSefaz(Venda venda) {
+        int tentativas = 0;
+        while ((venda.getXmlNota() == null || venda.getXmlNota().isBlank()) && tentativas < 5) {
+            try {
+                Thread.sleep(1000);
+                Venda atualizada = vendaRepository.findByIdComItens(venda.getIdVenda()).orElse(null);
+                if (atualizada != null) venda.setXmlNota(atualizada.getXmlNota());
+            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            tentativas++;
+        }
+    }
+
+    private void anexarXmlSeExistir(Venda venda, MimeMessageHelper helper, Long idVenda) throws Exception {
+        if (venda.getXmlNota() != null && !venda.getXmlNota().isBlank()) {
+            ByteArrayResource xml = new ByteArrayResource(venda.getXmlNota().getBytes(StandardCharsets.UTF_8));
+            helper.addAttachment("XML_NFe_" + idVenda + ".xml", xml);
+        }
+    }
+
+    private void criarEAnexarPdfEspelho(Venda venda, MimeMessageHelper helper, Long idVenda) throws Exception {
+        helper.addAttachment("Recibo_Auxiliar_" + idVenda + ".pdf", gerarPdfEspelho(venda));
+    }
+
     @Transactional(readOnly = true)
     public void enviarEmailComXmlEPdf(Long idVenda, String emailDestino) {
         Venda venda = vendaRepository.findByIdComItens(idVenda)
                 .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + idVenda));
 
-        // 1. INTELIGÊNCIA DE CLIENTE: B2B (CNPJ) vs B2C (CPF/Avulso)
-        String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
-        boolean isB2B = docLimpo.length() == 14;
-
-        // Aguarda aprovação da SEFAZ para ter o XML pronto
-        int tentativas = 0;
-        while ((venda.getXmlNota() == null || venda.getXmlNota().isBlank()) && tentativas < 5) {
-            try {
-                Thread.sleep(1000);
-                venda = vendaRepository.findByIdComItens(idVenda).orElse(venda);
-            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            tentativas++;
-        }
+        boolean isB2B = isB2B(venda);
+        aguardarXmlSefaz(venda);
 
         try {
             ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
-            org.springframework.mail.javamail.JavaMailSenderImpl mailSender = new org.springframework.mail.javamail.JavaMailSenderImpl();
+            JavaMailSenderImpl mailSender = configurarMailSender(config);
 
-            mailSender.setHost(config.getSmtpHost() != null ? config.getSmtpHost() : "smtp.gmail.com");
-            mailSender.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
-            mailSender.setUsername(config.getSmtpUsername());
-            mailSender.setPassword(config.getSmtpPassword());
-
-            java.util.Properties props = mailSender.getJavaMailProperties();
-            props.put("mail.transport.protocol", "smtp");
-            props.put("mail.smtp.auth", "true");
-            props.put("mail.smtp.starttls.enable", "true");
-
-            jakarta.mail.internet.MimeMessage message = mailSender.createMimeMessage();
-            org.springframework.mail.javamail.MimeMessageHelper helper = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(config.getSmtpUsername() != null ? config.getSmtpUsername() : "naoresponda@ddcosmeticos.com.br");
             helper.setTo(emailDestino);
             helper.setSubject("Documento Fiscal - " + config.getLoja().getNomeFantasia() + " (Venda #" + idVenda + ")");
+            helper.setText(gerarCorpoEmail(venda, config));
 
-            // Corpo do E-mail Ricaço com itens da compra
-            StringBuilder corpo = new StringBuilder();
-            corpo.append("Olá, ").append(venda.getClienteNome()).append("!\n\n");
-            corpo.append("Confirmamos o recebimento do seu pagamento via ").append(venda.getFormaDePagamento()).append(".\n");
-            corpo.append("Detalhes da compra realizada em: ")
-                    .append(venda.getDataVenda().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))).append("\n\n");
-
-            corpo.append("📦 ITENS DO SEU PEDIDO:\n");
-            corpo.append("------------------------------------------\n");
-            for (ItemVenda item : venda.getItens()) {
-                corpo.append(String.format("%-3s x %-30s R$ %8.2f\n",
-                        item.getQuantidade().setScale(0, java.math.RoundingMode.DOWN),
-                        item.getProduto().getDescricao(),
-                        item.getPrecoUnitario()));
-            }
-            corpo.append("------------------------------------------\n");
-            corpo.append(String.format("VALOR TOTAL: R$ %.2f\n", venda.getValorTotal()));
-            corpo.append("------------------------------------------\n\n");
-            corpo.append("Anexamos a este e-mail o seu documento fiscal.\n\nAtenciosamente,\n")
-                    .append(config.getLoja().getNomeFantasia());
-
-            helper.setText(corpo.toString());
-
-            // =========================================================================
-            // 🚨 GERAÇÃO DE ANEXOS USANDO O IMPRESSAOSERVICE OFICIAL
-            // =========================================================================
             if (isB2B) {
-                // MODO B2B (EMPRESAS): Envia o XML Oficial e a DANFE
-                if (venda.getXmlNota() != null && !venda.getXmlNota().isBlank()) {
-                    org.springframework.core.io.ByteArrayResource xml = new org.springframework.core.io.ByteArrayResource(venda.getXmlNota().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    helper.addAttachment("XML_NFe_" + idVenda + ".xml", xml);
+                anexarXmlSeExistir(venda, helper, idVenda);
+                try {
+                    byte[] pdfDanfe = impressaoService.gerarDanfeA4(venda.getIdVenda());
+                    helper.addAttachment("DANFE_" + idVenda + ".pdf", new ByteArrayResource(pdfDanfe));
+                } catch (Exception e) {
+                    log.warn("Gerador DANFE A4 falhou, anexando espelho auxiliar.", e);
+                    criarEAnexarPdfEspelho(venda, helper, idVenda);
                 }
-
-                // 🚨 Usa a DANFE A4 formatada para empresas
-                byte[] pdfDanfe = impressaoService.gerarDanfeA4(venda.getIdVenda());
-                helper.addAttachment("DANFE_" + idVenda + ".pdf", new org.springframework.core.io.ByteArrayResource(pdfDanfe));
-
             } else {
-                // MODO B2C (CONSUMIDOR FINAL): Envia apenas o Cupom Fiscal Térmico (80mm)
-                byte[] pdfCupom = impressaoService.gerarCupomNfce(venda.getIdVenda());
-                helper.addAttachment("CupomFiscal_" + idVenda + ".pdf", new org.springframework.core.io.ByteArrayResource(pdfCupom));
+                try {
+                    byte[] pdfCupom = impressaoService.gerarCupomNfce(venda.getIdVenda());
+                    helper.addAttachment("CupomFiscal_" + idVenda + ".pdf", new ByteArrayResource(pdfCupom));
+                } catch (Exception e) {
+                    log.warn("Gerador Cupom Bobina falhou, anexando espelho auxiliar.", e);
+                    criarEAnexarPdfEspelho(venda, helper, idVenda);
+                }
             }
 
             mailSender.send(message);
-            log.info("E-mail {} enviado com sucesso para {}", isB2B ? "B2B (DANFE+XML)" : "B2C (Cupom)", emailDestino);
+            log.info("E-mail com PDF nativo ({}) enviado com sucesso para: {}", isB2B ? "B2B" : "B2C", emailDestino);
 
         } catch (Exception e) {
             log.error("Erro ao enviar e-mail da venda {}: {}", idVenda, e.getMessage());
@@ -663,17 +726,44 @@ public class VendaService {
         }
     }
 
-    // =========================================================================
-    // VALIDADOR DE PDF E GERADOR ESPELHO
-    // =========================================================================
+    @Transactional(readOnly = true)
+    public void enviarEmailComDocumentoFrontend(Long idVenda, String emailDestino, MultipartFile pdfFrontend) {
+        Venda venda = vendaRepository.findByIdComItens(idVenda)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + idVenda));
 
-    // Método que garante que não vamos enviar um XML disfarçado de PDF
-    private boolean isPdfValido(byte[] data) {
-        return data != null && data.length > 4 &&
-                data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46; // %PDF
+        boolean isB2B = isB2B(venda);
+        aguardarXmlSefaz(venda);
+
+        try {
+            ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
+            JavaMailSenderImpl mailSender = configurarMailSender(config);
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(config.getSmtpUsername() != null ? config.getSmtpUsername() : "naoresponda@ddcosmeticos.com.br");
+            helper.setTo(emailDestino);
+            helper.setSubject("Documento Fiscal - " + config.getLoja().getNomeFantasia() + " (Venda #" + idVenda + ")");
+            helper.setText(gerarCorpoEmail(venda, config));
+
+            // 🚨 Anexa o PDF perfeito vindo do React
+            String nomePdf = isB2B ? "DANFE_" + idVenda + ".pdf" : "CupomFiscal_" + idVenda + ".pdf";
+            helper.addAttachment(nomePdf, new ByteArrayResource(pdfFrontend.getBytes()));
+
+            if (isB2B) {
+                anexarXmlSeExistir(venda, helper, idVenda);
+            }
+
+            mailSender.send(message);
+            log.info("E-mail com PDF do React enviado com sucesso para: {}", emailDestino);
+
+        } catch (Exception e) {
+            log.error("Erro ao enviar e-mail (Frontend) da venda {}: {}", idVenda, e.getMessage());
+            throw new ValidationException("Falha ao enviar e-mail fiscal. Verifique a conexão com o provedor SMTP.");
+        }
     }
 
-    private org.springframework.core.io.ByteArrayResource gerarPdfEspelho(Venda venda) {
+    private ByteArrayResource gerarPdfEspelho(Venda venda) {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         com.lowagie.text.Document document = new com.lowagie.text.Document(com.lowagie.text.PageSize.A4.rotate());
 
@@ -701,90 +791,6 @@ public class VendaService {
             log.error("Erro gerando PDF espelho da venda {}", venda.getIdVenda(), e);
         }
 
-        return new org.springframework.core.io.ByteArrayResource(out.toByteArray());
-    }
-    // =========================================================================
-    // MOTOR DE E-MAIL (RECEBENDO O PDF PERFEITO DO REACT)
-    // =========================================================================
-    @Transactional(readOnly = true)
-    public void enviarEmailComDocumentoFrontend(Long idVenda, String emailDestino, org.springframework.web.multipart.MultipartFile pdfFrontend) {
-        // Busca a venda com os itens para não dar LazyInitializationException
-        Venda venda = vendaRepository.findByIdComItens(idVenda)
-                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + idVenda));
-
-        // 1. INTELIGÊNCIA B2B vs B2C
-        String docLimpo = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
-        boolean isB2B = docLimpo.length() == 14;
-
-        // Aguarda aprovação da SEFAZ para garantir que o XML exista
-        int tentativas = 0;
-        while ((venda.getXmlNota() == null || venda.getXmlNota().isBlank()) && tentativas < 5) {
-            try {
-                Thread.sleep(1000);
-                venda = vendaRepository.findByIdComItens(idVenda).orElse(venda);
-            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            tentativas++;
-        }
-
-        try {
-            ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
-            org.springframework.mail.javamail.JavaMailSenderImpl mailSender = new org.springframework.mail.javamail.JavaMailSenderImpl();
-
-            mailSender.setHost(config.getSmtpHost() != null ? config.getSmtpHost() : "smtp.gmail.com");
-            mailSender.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
-            mailSender.setUsername(config.getSmtpUsername());
-            mailSender.setPassword(config.getSmtpPassword());
-
-            java.util.Properties props = mailSender.getJavaMailProperties();
-            props.put("mail.transport.protocol", "smtp");
-            props.put("mail.smtp.auth", "true");
-            props.put("mail.smtp.starttls.enable", "true");
-
-            jakarta.mail.internet.MimeMessage message = mailSender.createMimeMessage();
-            org.springframework.mail.javamail.MimeMessageHelper helper = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
-
-            helper.setFrom(config.getSmtpUsername() != null ? config.getSmtpUsername() : "naoresponda@ddcosmeticos.com.br");
-            helper.setTo(emailDestino);
-            helper.setSubject("Documento Fiscal - " + config.getLoja().getNomeFantasia() + " (Venda #" + idVenda + ")");
-
-            // Corpo do E-mail
-            StringBuilder corpo = new StringBuilder();
-            corpo.append("Olá, ").append(venda.getClienteNome() != null ? venda.getClienteNome() : "Cliente").append("!\n\n");
-            corpo.append("Agradecemos a sua compra via ").append(venda.getFormaDePagamento()).append(".\n");
-            corpo.append("Data da transação: ").append(venda.getDataVenda().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))).append("\n\n");
-
-            corpo.append("📦 ITENS DO SEU PEDIDO:\n");
-            corpo.append("------------------------------------------\n");
-            for (ItemVenda item : venda.getItens()) {
-                corpo.append(String.format("- %s x %s: R$ %.2f\n",
-                        item.getQuantidade().setScale(0, RoundingMode.DOWN),
-                        item.getProduto().getDescricao(),
-                        item.getPrecoUnitario()));
-            }
-            corpo.append("------------------------------------------\n");
-            corpo.append(String.format("VALOR TOTAL: R$ %.2f\n", venda.getValorTotal()));
-            corpo.append("------------------------------------------\n\n");
-            corpo.append("Anexamos a este e-mail o seu documento fiscal.\n\nAtenciosamente,\n")
-                    .append(config.getLoja().getNomeFantasia());
-
-            helper.setText(corpo.toString());
-
-            // 🚨 A MÁGICA ACONTECE AQUI: Anexa EXATAMENTE o PDF perfeito que veio do React!
-            String nomePdf = isB2B ? "DANFE_" + idVenda + ".pdf" : "CupomFiscal_" + idVenda + ".pdf";
-            helper.addAttachment(nomePdf, new org.springframework.core.io.ByteArrayResource(pdfFrontend.getBytes()));
-
-            // 🚨 SE FOR EMPRESA (B2B), ANEXA TAMBÉM O XML OFICIAL
-            if (isB2B && venda.getXmlNota() != null && !venda.getXmlNota().isBlank()) {
-                org.springframework.core.io.ByteArrayResource xml = new org.springframework.core.io.ByteArrayResource(venda.getXmlNota().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                helper.addAttachment("NFe_" + venda.getChaveAcessoNfce() + ".xml", xml);
-            }
-
-            mailSender.send(message);
-            log.info("E-mail com PDF do React enviado com sucesso para: {}", emailDestino);
-
-        } catch (Exception e) {
-            log.error("Erro ao enviar e-mail da venda {}: {}", idVenda, e.getMessage());
-            throw new ValidationException("Falha ao enviar e-mail fiscal.");
-        }
+        return new ByteArrayResource(out.toByteArray());
     }
 }

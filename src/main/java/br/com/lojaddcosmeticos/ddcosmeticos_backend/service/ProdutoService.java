@@ -249,7 +249,7 @@ public class ProdutoService {
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(
             String termo, String marca, String categoria, String statusEstoque,
-            Boolean semImagem, Boolean semNcm, Boolean precoZero, Boolean revisaoPendente, Pageable pageable // <-- Adicionado: revisaoPendente
+            Boolean semImagem, Boolean semNcm, Boolean precoZero, Boolean revisaoPendente, Pageable pageable
     ) {
         if (pageable == null) pageable = Pageable.unpaged();
         if (termo != null && termo.trim().isEmpty()) termo = null;
@@ -259,9 +259,8 @@ public class ProdutoService {
         if (semImagem == null) semImagem = false;
         if (semNcm == null) semNcm = false;
         if (precoZero == null) precoZero = false;
-        if (revisaoPendente == null) revisaoPendente = false; // Valor default de segurança
+        if (revisaoPendente == null) revisaoPendente = false;
 
-        // Agora a chamada corresponde exatemente aos 8 parâmetros + pageable do Repository
         return produtoRepository.buscarComFiltros(
                 termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, revisaoPendente, pageable
         ).map(this::toDTO);
@@ -269,7 +268,6 @@ public class ProdutoService {
 
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(String termo, Pageable pageable) {
-        // Chama a versão principal garantindo a injeção do `false` nos novos parâmetros
         return listarResumo(termo, null, null, null, false, false, false, false, pageable);
     }
 
@@ -397,18 +395,82 @@ public class ProdutoService {
         Map<String, Object> resultado = new HashMap<>(); resultado.put("sucesso", true); resultado.put("totalAtualizado", alterados); resultado.put("mensagem", "Custos zerados foram preenchidos com 50% do valor de venda."); return resultado;
     }
 
+    // =========================================================================
+    // 🔥 CORREÇÃO: O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
+    // =========================================================================
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public Map<String, Object> corrigirNcmsEmMassa() {
-        List<Produto> todos = produtoRepository.findAll(); int corrigidos = 0;
+        List<Produto> todos = produtoRepository.findAll();
+        int corrigidos = 0;
+
         for (Produto p : todos) {
-            String ncm = p.getNcm() == null ? "" : p.getNcm();
-            if (ncm.isEmpty() || ncm.equals("00000000")) {
-                String ncmNovo = produtoRepository.findNcmInteligente(p.getDescricao().split(" ")[0]);
-                if (ncmNovo != null) { p.setNcm(ncmNovo); produtoRepository.save(p); corrigidos++; }
+            String ncmAtual = p.getNcm() == null ? "" : p.getNcm().replaceAll("\\D", "");
+            String desc = p.getDescricao() != null ? p.getDescricao().toUpperCase() : "";
+
+            // 1. Identifica Anomalias: Produtos de cosmética devem estar no Capítulo 33 ou 34.
+            // Ex: O NCM 12119090 (Plantas/Raízes) para Henna Make-up é um erro comum de cadastro.
+            boolean ncmAnomalia = ncmAtual.isEmpty() ||
+                    ncmAtual.equals("00000000") ||
+                    (!ncmAtual.startsWith("33") && !ncmAtual.startsWith("34"));
+
+            // 2. Inferência de NCM via IA (Regras de Negócio DD Cosméticos)
+            String ncmSugerido = ncmAtual;
+
+            if (desc.contains("HENNA") || desc.contains("SOBRANCELHA") || desc.contains("MAKE") || desc.contains("BASE ") || desc.contains("PO COMPACTO") || desc.contains("CORRETIVO") || desc.contains("PRIMER") || desc.contains("SERUM")) {
+                ncmSugerido = "33049990"; // Cosméticos diversos / Maquiagem geral
+            } else if (desc.contains("SHAMPOO")) {
+                ncmSugerido = "33051000";
+            } else if (desc.contains("CONDICIONADOR") || desc.contains("MASCARA") || desc.contains("ATIVADOR") || desc.contains("CREME CAPILAR") || desc.contains("GELATINA") || desc.contains("LEAVE-IN") || desc.contains("REPARADOR")) {
+                ncmSugerido = "33059000"; // Outras preparações capilares
+            } else if (desc.contains("BATOM") || desc.contains("GLOSS") || desc.contains("LIP")) {
+                ncmSugerido = "33041000"; // Maquiagem lábios
+            } else if (desc.contains("RIMEL") || desc.contains("MASCARA DE CILIOS") || desc.contains("DELINEADOR") || desc.contains("LAPIS DE OLHO")) {
+                ncmSugerido = "33042010"; // Maquiagem olhos
+            } else if (desc.contains("ESMALTE") || desc.contains("ACETONA") || desc.contains("REMOVEDOR")) {
+                ncmSugerido = "33043000"; // Manicuro/Pedicuro
+            } else if (desc.contains("PERFUME") || desc.contains("COLONIA") || desc.contains("FRAGRANCIA")) {
+                ncmSugerido = "33030010"; // Perfumaria
+            } else if (desc.contains("DESODORANTE") || desc.contains("ANTITRANSPIRANTE")) {
+                ncmSugerido = "33072010"; // Desodorantes
+            } else if (desc.contains("SABONETE")) {
+                ncmSugerido = "34011190"; // Sabões
+            }
+
+            // 3. Aplica a correção se sugeriu algo novo ou se o atual for uma anomalia grave
+            if (!ncmSugerido.equals(ncmAtual) || ncmAnomalia) {
+
+                // Se a IA não achou palavra-chave exata, mas o NCM atual é anomalia (Ex: 12119090),
+                // tenta um "fallback" buscando por produtos parecidos no banco
+                if (ncmSugerido.equals(ncmAtual) && ncmAnomalia) {
+                    try {
+                        String ncmBanco = produtoRepository.findNcmInteligente(desc.split(" ")[0]);
+                        if (ncmBanco != null && !ncmBanco.isEmpty()) {
+                            ncmSugerido = ncmBanco;
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                // Se finalmente temos um NCM diferente, grava-o
+                if (!ncmSugerido.equals(ncmAtual) && !ncmSugerido.isEmpty()) {
+                    p.setNcm(ncmSugerido);
+
+                    // Recalcula a tributação Monofásica automaticamente com o NCM novo
+                    boolean ehMonofasico = ncmSugerido.startsWith("3303") || ncmSugerido.startsWith("3304") ||
+                            ncmSugerido.startsWith("3305") || ncmSugerido.startsWith("3307");
+                    p.setIsMonofasico(ehMonofasico);
+                    if (ehMonofasico) p.setCst("04");
+
+                    produtoRepository.save(p);
+                    corrigidos++;
+                }
             }
         }
-        Map<String, Object> resultado = new HashMap<>(); resultado.put("sucesso", true); resultado.put("qtdCorrigidos", corrigidos); return resultado;
+
+        Map<String, Object> resultado = new HashMap<>();
+        resultado.put("sucesso", true);
+        resultado.put("qtdCorrigidos", corrigidos);
+        return resultado;
     }
 
     public byte[] gerarRelatorioCsv() {

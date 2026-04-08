@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.CanalOrigem;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.FormaDePagamento;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.DynamicInsert;
@@ -29,6 +30,7 @@ import java.util.List;
 })
 // 🚨 A anotação @EqualsAndHashCode do Lombok foi removida intencionalmente!
 @ToString(onlyExplicitlyIncluded = true)
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Venda {
 
     @Id

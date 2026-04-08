@@ -18,6 +18,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
@@ -51,10 +53,6 @@ public class VendaService {
     private final NfeService nfeService;
     private final AuditoriaService auditoriaService;
 
-    // =========================================================================
-    // 1. PROCESSAMENTO DE VENDAS (FINALIZAÇÃO COM SEFAZ HÍBRIDO NFE/NFCE)
-    // =========================================================================
-
     @Transactional(rollbackFor = Exception.class)
     public VendaResponseDTO realizarVenda(VendaRequestDTO dto) {
         Usuario usuarioLogado = capturarUsuarioLogado();
@@ -84,9 +82,6 @@ public class VendaService {
                 ? config.getFiscal().getObsPadraoCupom()
                 : "Consumidor Não Identificado";
 
-        // =========================================================================
-        // MAPEAMENTO INTELIGENTE DO CLIENTE (ATUALIZADO PARA SUPORTAR APENAS TELEFONE)
-        // =========================================================================
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -136,7 +131,6 @@ public class VendaService {
         } else if (dto.clienteTelefone() != null && !dto.clienteTelefone().isBlank() && dto.clienteNome() != null && !dto.clienteNome().isBlank()) {
             String telLimpo = dto.clienteTelefone().replaceAll("\\D", "");
 
-            // Busca Inteligente: tenta o número limpo ou o formato com máscara (caso tenha sido guardado manualmente antes)
             String telMascara;
             if (telLimpo.length() == 11) {
                 telMascara = String.format("(%s) %s-%s", telLimpo.substring(0, 2), telLimpo.substring(2, 7), telLimpo.substring(7));
@@ -158,7 +152,6 @@ public class VendaService {
                 Cliente novoCliente = new Cliente();
                 novoCliente.setNome(dto.clienteNome().toUpperCase());
                 novoCliente.setTelefone(telLimpo);
-                // 🚨 PREVENÇÃO DO ERRO 409: Cria um ID provisório para não violar a restrição de CPF único do banco
                 novoCliente.setDocumento("TL" + telLimpo + (new Random().nextInt(90) + 10));
                 novoCliente.setAtivo(true);
                 novoCliente.setLimiteCredito(BigDecimal.ZERO);
@@ -174,8 +167,6 @@ public class VendaService {
             venda.setClienteDocumento(dto.clienteDocumento());
             venda.setClienteTelefone(dto.clienteTelefone());
         }
-
-        // =========================================================================
 
         venda.setDescontoTotal(nvl(dto.descontoTotal()));
 
@@ -235,9 +226,11 @@ public class VendaService {
 
         validarLimitesDeDesconto(usuarioLogado, subtotalItens, totalDescontosConcedidos);
 
-        // Salva a venda primeiramente como PENDENTE no banco
+        // Salva a venda como PENDENTE no banco
         venda.setStatusNfce(StatusFiscal.PENDENTE);
+
         venda = vendaRepository.save(venda);
+        final Long idVendaSalva = venda.getIdVenda();
 
         gerarTitulosFiado(venda, pagamentos);
 
@@ -255,26 +248,48 @@ public class VendaService {
         if (dto.logAuditoria() != null && !dto.logAuditoria().isEmpty()) {
             for (VendaRequestDTO.LogAuditoriaPDVDTO logPDV : dto.logAuditoria()) {
                 String mensagemFormatada = String.format("[Ação: %s] %s | Marcador: %s | Venda ID: %d",
-                        logPDV.acao(), logPDV.detalhes(), logPDV.hora(), venda.getIdVenda());
+                        logPDV.acao(), logPDV.detalhes(), logPDV.hora(), idVendaSalva);
                 auditoriaService.registrarAcao("ALERTA_PDV", usuarioLogado.getNome(), mensagemFormatada);
             }
         }
 
+        // =========================================================================================
+        // 🚨 3. A MÁGICA DA SINCRONIZAÇÃO DE TRANSAÇÕES (ROTEAMENTO INTELIGENTE RESTAURADO)
+        // =========================================================================================
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
-            final Venda vendaTransmitir = venda;
             final String tipoNota = dto.tipoNota() != null ? dto.tipoNota() : "NFCE";
 
-            CompletableFuture.runAsync(() -> {
-                try {
-                    if ("NFE".equals(tipoNota)) {
-                        log.info("🔥 B2B Detectado! Emitindo NF-e Modelo 55 em background para a Venda {}", vendaTransmitir.getIdVenda());
-                        nfeService.emitirNfeModelo55(vendaTransmitir.getIdVenda());
-                    } else {
-                        log.info("🛒 B2C Detectado! Emitindo NFC-e Modelo 65 em background para a Venda {}", vendaTransmitir.getIdVenda());
-                        nfceService.emitirNfce(vendaTransmitir);
-                    }
-                } catch (Exception e) {
-                    log.error("Erro na comunicação com a SEFAZ para a venda {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            if ("NFE".equals(tipoNota)) {
+                                log.info("🔥 B2B Detectado! Emitindo NF-e Modelo 55 em background para a Venda {}", idVendaSalva);
+                                nfeService.emitirNfeModelo55(idVendaSalva);
+                            } else {
+                                log.info("🛒 B2C Detectado! Emitindo NFC-e Modelo 65 em background para a Venda {}", idVendaSalva);
+                                Venda vParaEmitir = vendaRepository.findByIdComItens(idVendaSalva).orElse(null);
+                                if(vParaEmitir != null) nfceService.emitirNfce(vParaEmitir);
+                            }
+                        } catch (ValidationException ve) {
+                            log.error("SEFAZ Rejeitou a nota {}: {}", idVendaSalva, ve.getMessage());
+                            Venda vRejeitada = vendaRepository.findById(idVendaSalva).orElse(null);
+                            if(vRejeitada != null){
+                                vRejeitada.setStatusNfce(StatusFiscal.REJEITADA);
+                                vRejeitada.setMensagemRejeicao(ve.getMessage());
+                                vendaRepository.save(vRejeitada);
+                            }
+                        } catch (Exception e) {
+                            log.error("Erro na comunicação com a SEFAZ para a venda {}: {}", idVendaSalva, e.getMessage());
+                            Venda vRejeitada = vendaRepository.findById(idVendaSalva).orElse(null);
+                            if(vRejeitada != null){
+                                vRejeitada.setStatusNfce(StatusFiscal.REJEITADA);
+                                vRejeitada.setMensagemRejeicao("Erro interno na emissão: " + e.getMessage());
+                                vendaRepository.save(vRejeitada);
+                            }
+                        }
+                    });
                 }
             });
         }
@@ -319,7 +334,7 @@ public class VendaService {
             String dv = calcularDigitoVerificadorModulo11(chaveSemDV);
 
             venda.setChaveAcessoNfce(chaveSemDV + dv);
-            venda.setStatusNfce(StatusFiscal.AUTORIZADA);
+            venda.setStatusNfce(StatusFiscal.AUTORIZADA); // Fica pre-autorizada até a thread background validar
 
             String ambiente = isProducao ? "1" : "2";
             venda.setProtocolo(ambiente + uf + String.format("%012d", System.currentTimeMillis() % 1000000000000L));
@@ -435,17 +450,32 @@ public class VendaService {
             vendaRepository.save(venda);
         } catch (Exception e) { log.warn("Aviso chave na retomada: {}", e.getMessage()); }
 
-        final Venda vendaTransmitir = venda;
-        CompletableFuture.runAsync(() -> {
-            try {
-                String docLimpo = vendaTransmitir.getClienteDocumento() != null ? vendaTransmitir.getClienteDocumento().replaceAll("\\D", "") : "";
-                if (docLimpo.length() == 14) {
-                    nfeService.emitirNfeModelo55(vendaTransmitir.getIdVenda());
-                } else {
-                    nfceService.emitirNfce(vendaTransmitir);
-                }
-            } catch (Exception e) {
-                log.error("Erro na emissão fiscal da venda {}: {}", vendaTransmitir.getIdVenda(), e.getMessage());
+        final Long idVendaTransmitir = venda.getIdVenda();
+        final String docCli = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        if (docCli.length() == 14) {
+                            nfeService.emitirNfeModelo55(idVendaTransmitir);
+                        } else {
+                            Venda vParaEmitir = vendaRepository.findByIdComItens(idVendaTransmitir).orElse(null);
+                            if(vParaEmitir != null) nfceService.emitirNfce(vParaEmitir);
+                        }
+                    } catch (ValidationException ve) {
+                        log.error("SEFAZ Rejeitou a nota retomada {}: {}", idVendaTransmitir, ve.getMessage());
+                        Venda vRejeitada = vendaRepository.findById(idVendaTransmitir).orElse(null);
+                        if(vRejeitada != null){
+                            vRejeitada.setStatusNfce(StatusFiscal.REJEITADA);
+                            vRejeitada.setMensagemRejeicao(ve.getMessage());
+                            vendaRepository.save(vRejeitada);
+                        }
+                    } catch (Exception e) {
+                        log.error("Erro na emissão fiscal retomada da venda {}: {}", idVendaTransmitir, e.getMessage());
+                    }
+                });
             }
         });
 
@@ -466,8 +496,12 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public Venda buscarVendaComItens(Long id) {
-        Venda venda = vendaRepository.findByIdComItens(id).orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+        Venda venda = vendaRepository.findByIdComItens(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda #" + id + " não encontrada."));
+
         Hibernate.initialize(venda.getPagamentos());
+        Hibernate.initialize(venda.getUsuario());
+
         return venda;
     }
 
@@ -746,7 +780,6 @@ public class VendaService {
             helper.setSubject("Documento Fiscal - " + config.getLoja().getNomeFantasia() + " (Venda #" + idVenda + ")");
             helper.setText(gerarCorpoEmail(venda, config));
 
-            // 🚨 Anexa o PDF perfeito vindo do React
             String nomePdf = isB2B ? "DANFE_" + idVenda + ".pdf" : "CupomFiscal_" + idVenda + ".pdf";
             helper.addAttachment(nomePdf, new ByteArrayResource(pdfFrontend.getBytes()));
 

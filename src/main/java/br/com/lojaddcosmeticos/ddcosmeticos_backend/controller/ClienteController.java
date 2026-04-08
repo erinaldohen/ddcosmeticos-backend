@@ -84,4 +84,15 @@ public class ClienteController {
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
+    @GetMapping("/documento/{documento}")
+    public ResponseEntity<Cliente> buscarPorDocumento(@PathVariable String documento) {
+        String docLimpo = documento.replaceAll("\\D", ""); // Remove pontos e traços
+
+        // Vai procurar o cliente pelo documento exato no banco de dados
+        return clienteRepository.findAll().stream()
+                .filter(c -> c.getDocumento() != null && c.getDocumento().replaceAll("\\D", "").equals(docLimpo))
+                .findFirst()
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
 }

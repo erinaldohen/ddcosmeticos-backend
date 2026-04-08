@@ -63,9 +63,16 @@ public class VendaController {
         return ResponseEntity.noContent().build();
     }
 
+    // Dentro do seu VendaController.java
+
     @GetMapping("/{id}")
-    public ResponseEntity<Venda> buscarPorId(@PathVariable Long id) {
-        return ResponseEntity.ok(vendaService.buscarVendaComItens(id));
+    public ResponseEntity<VendaResponseDTO> buscarPorId(@PathVariable Long id) {
+        Venda venda = vendaService.buscarVendaComItens(id); // ou buscarPorId, dependendo de como você nomeou
+
+        // AQUI ESTÁ A MÁGICA: Convertemos a Venda "suja" no DTO "limpo" antes de enviar para a tela
+        VendaResponseDTO dto = new VendaResponseDTO(venda);
+
+        return ResponseEntity.ok(dto);
     }
     @PostMapping("/{id}/email")
     public ResponseEntity<Void> enviarNotaPorEmail(@PathVariable Long id, @RequestBody java.util.Map<String, String> payload) {

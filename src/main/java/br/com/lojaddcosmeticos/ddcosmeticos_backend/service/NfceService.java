@@ -54,43 +54,19 @@ public class NfceService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda venda) {
-
-        // 🚨 TRAVA DE SEGURANÇA SEFAZ: Venda Fiado OBRIGA ter CPF/CNPJ
-        boolean isFiado = venda.getPagamentos() != null && venda.getPagamentos().stream()
-                .anyMatch(p -> p.getFormaPagamento() != null &&
-                        (p.getFormaPagamento().name().equalsIgnoreCase("FIADO") || p.getFormaPagamento().name().equalsIgnoreCase("CREDIARIO")));
-
-        if (isFiado && (venda.getCliente() == null || venda.getCliente().getDocumento() == null || venda.getCliente().getDocumento().isBlank())) {
-            throw new ValidationException("SEFAZ Rejeita: Para vendas no Fiado/Crediário é obrigatório identificar o Cliente com CPF/CNPJ.");
-        }
-
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
-            log.warn("⚠️ Certificado ausente. Simulando emissão.");
-            return simularEmissaoEmDev(venda);
+            log.warn("⚠️ Certificado ausente. Cancelando emissão real.");
+            return null;
         }
 
         try {
-            // 1ª Tentativa: Emissão NORMAL
             return processarEmissao(venda, configLoja, "1", true);
-
         } catch (ValidationException ve) {
-            // 🚨 CORREÇÃO: Se a SEFAZ REJEITAR a nota por regra de negócio (NCM, tributação, CST),
-            // não entra em contingência! Salva como Rejeitada e cospe o erro real na tela do operador!
-            log.error("❌ Venda {} Rejeitada pela SEFAZ: {}", venda.getIdVenda(), ve.getMessage());
-            venda.setStatusNfce(StatusFiscal.REJEITADA);
-            vendaRepository.save(venda);
             throw ve;
-
         } catch (Exception e) {
-            // Aqui entra APENAS se for falha de rede, timeout ou SEFAZ fora do ar (Contingência real)
-            log.warn("⚠️ SEFAZ Indisponível ou Falha de Rede ({}). Entrando em modo de Contingência Offline...", e.getMessage());
-            try {
-                return processarEmissao(venda, configLoja, "9", false);
-            } catch (Exception ex) {
-                log.error("❌ Falha Catastrófica ao gerar NFC-e em Contingência: {}", ex.getMessage());
-                throw new ValidationException("Erro fatal na emissão do cupom offline: " + ex.getMessage());
-            }
+            log.warn("⚠️ Falha ao emitir NFCe: {}", e.getMessage());
+            throw new ValidationException("Erro na emissão: " + e.getMessage());
         }
     }
 
@@ -127,64 +103,28 @@ public class NfceService {
         infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja));
         infNFe.setTotal(montarTotal(venda));
         infNFe.setTransp(montarTransp());
-
-        // CORREÇÃO DOS PAGAMENTOS APLICADA AQUI
         infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal(), venda.getTroco()));
 
         TNFe.InfNFe.InfAdic adic = new TNFe.InfNFe.InfAdic();
-        adic.setInfCpl(tributacaoService.calcularTextoTransparencia(venda));
+        adic.setInfCpl("Trib aprox R$ 0.00 Fed e R$ 0.00 Est. Fonte: IBPT.");
         infNFe.setInfAdic(adic);
         infNFe.setInfRespTec(montarRespTec(cnpjEmitente));
 
-        // NFC-e MODELO 65 NUNCA DEVE TER O GRUPO DE COBRANÇA <cobr>
-        infNFe.setCobr(null);
-
         nfe.setInfNFe(infNFe);
-
-        String cscId = isProducao ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
-        String cscToken = isProducao ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
-        String qrCodeFront = "";
-
-        if (cscId != null && !cscId.isBlank() && cscToken != null && !cscToken.isBlank()) {
-            String cIdTokenSemZeros = String.valueOf(Integer.parseInt(cscId.replaceAll("\\D", "")));
-            String urlQrCode = isProducao ? "http://nfce.sefaz.pe.gov.br/nfce/consulta" : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
-            String urlChave = "nfce.sefaz.pe.gov.br/nfce/consulta";
-
-            String pParaHash = chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + cscToken.trim();
-            String hash = gerarHashSHA1(pParaHash).toLowerCase();
-
-            qrCodeFront = urlQrCode + "?p=" + chaveAcesso + "|2|" + configNfe.getAmbiente().getCodigo() + "|" + cIdTokenSemZeros + "|" + hash;
-
-            TNFe.InfNFeSupl supl = new TNFe.InfNFeSupl();
-            supl.setQrCode("<![CDATA[" + qrCodeFront + "]]>");
-            supl.setUrlChave(urlChave);
-            nfe.setInfNFeSupl(supl);
-        }
-
         enviNFe.getNFe().add(nfe);
 
         String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
         String xmlAssinado = br.com.swconsultoria.nfe.Assinar.assinaNfe(configNfe, xmlNaoAssinado, br.com.swconsultoria.nfe.dom.enuns.AssinaturaEnum.NFE);
         TEnviNFe enviNFeAssinado = XmlNfeUtil.xmlToObject(xmlAssinado, TEnviNFe.class);
 
-        if ("9".equals(tpEmis)) {
-            venda.setStatusNfce(StatusFiscal.PENDENTE);
-            venda.setChaveAcessoNfce(chaveAcesso);
-            venda.setXmlNota(xmlAssinado);
-            vendaRepository.save(venda);
-            return new NfceResponseDTO(venda.getIdVenda(), "100", "Emitida em Contingência (Aguardando Envio)", chaveAcesso, "", xmlAssinado, qrCodeFront);
-        }
-
         TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFeAssinado, DocumentoEnum.NFCE);
 
         if (retorno.getProtNFe() != null && "100".equals(retorno.getProtNFe().getInfProt().getCStat())) {
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             venda.setChaveAcessoNfce(chaveAcesso);
-            venda.setUrlQrCode(qrCodeFront);
             venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFeAssinado, retorno.getProtNFe()));
             vendaRepository.save(venda);
-
-            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), qrCodeFront);
+            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), "");
         } else {
             String msg = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
             throw new ValidationException("Sefaz Rejeitou: " + msg);
@@ -234,12 +174,6 @@ public class NfceService {
         ide.setCMunFG("2611606");
         ide.setTpImp("4");
         ide.setTpEmis(tpEmis);
-
-        if ("9".equals(tpEmis)) {
-            ide.setDhCont(XmlNfeUtil.dataNfe(LocalDateTime.now()));
-            ide.setXJust("Falha de conexao com a SEFAZ ou Sefaz Inoperante no momento da venda");
-        }
-
         ide.setCDV(dv);
         ide.setTpAmb(cfg.getAmbiente().getCodigo());
         ide.setFinNFe("1");
@@ -257,13 +191,13 @@ public class NfceService {
         e.setIE(cfg.getLoja().getIe().replaceAll("\\D", ""));
         e.setCRT(cfg.getFiscal().getRegime() != null ? cfg.getFiscal().getRegime() : "1");
         TEnderEmi end = new TEnderEmi();
-        end.setXLgr(cfg.getEndereco().getLogradouro());
-        end.setNro(cfg.getEndereco().getNumero());
-        end.setXBairro(cfg.getEndereco().getBairro());
+        end.setXLgr(cfg.getEndereco().getLogradouro() != null ? cfg.getEndereco().getLogradouro() : "RUA");
+        end.setNro(cfg.getEndereco().getNumero() != null ? cfg.getEndereco().getNumero() : "SN");
+        end.setXBairro(cfg.getEndereco().getBairro() != null ? cfg.getEndereco().getBairro() : "CENTRO");
         end.setCMun("2611606");
         end.setXMun("RECIFE");
         end.setUF(TUfEmi.PE);
-        end.setCEP(cfg.getEndereco().getCep().replaceAll("\\D", ""));
+        end.setCEP(cfg.getEndereco().getCep() != null ? cfg.getEndereco().getCep().replaceAll("\\D", "") : "50000000");
         end.setCPais("1058");
         end.setXPais("BRASIL");
         e.setEnderEmit(end);
@@ -272,37 +206,35 @@ public class NfceService {
 
     private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itens, ConfiguracaoLoja config) {
         List<TNFe.InfNFe.Det> details = new ArrayList<>();
-        boolean isST = config.getFiscal().getNaturezaPadrao() != null && config.getFiscal().getNaturezaPadrao().contains("5.405");
-        boolean isHomologacao = "HOMOLOGACAO".equalsIgnoreCase(config.getFiscal().getAmbiente());
-
         int i = 1;
         for (ItemVenda item : itens) {
             TNFe.InfNFe.Det det = new TNFe.InfNFe.Det();
             det.setNItem(String.valueOf(i));
             TNFe.InfNFe.Det.Prod p = new TNFe.InfNFe.Det.Prod();
             p.setCProd(item.getProduto().getId().toString());
-            p.setCEAN("SEM GTIN");
 
-            if (isHomologacao && i == 1) {
-                p.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
+            // 🔥 CORREÇÃO EAN
+            String ean = item.getProduto().getCodigoBarras();
+            if (ean != null && ean.matches("\\d{8}|\\d{12}|\\d{13}|\\d{14}")) {
+                p.setCEAN(ean);
+                p.setCEANTrib(ean);
             } else {
-                p.setXProd(item.getDescricaoProduto() != null ? item.getDescricaoProduto() : item.getProduto().getDescricao());
+                p.setCEAN("SEM GTIN");
+                p.setCEANTrib("SEM GTIN");
             }
+
+            p.setXProd(item.getDescricaoProduto() != null ? item.getDescricaoProduto() : item.getProduto().getDescricao());
 
             String ncm = item.getProduto().getNcm() != null ? item.getProduto().getNcm().replaceAll("\\D", "") : "33049990";
             if (ncm.length() != 8) ncm = "33049990";
             p.setNCM(ncm);
 
-            if (item.getProduto().getCest() != null && !item.getProduto().getCest().isBlank()) {
-                p.setCEST(item.getProduto().getCest().replaceAll("\\D", ""));
-            }
-
-            p.setCFOP(isST ? "5405" : "5102");
+            p.setCFOP("5102");
             p.setUCom("UN");
             p.setQCom(item.getQuantidade().setScale(4, RoundingMode.HALF_UP).toString());
             p.setVUnCom(item.getPrecoUnitario().setScale(2, RoundingMode.HALF_UP).toString());
             p.setVProd(item.getPrecoUnitario().multiply(item.getQuantidade()).setScale(2, RoundingMode.HALF_UP).toString());
-            p.setCEANTrib("SEM GTIN");
+
             p.setUTrib("UN");
             p.setQTrib(p.getQCom());
             p.setVUnTrib(p.getVUnCom());
@@ -311,23 +243,13 @@ public class NfceService {
 
             TNFe.InfNFe.Det.Imposto imp = new TNFe.InfNFe.Det.Imposto();
             TNFe.InfNFe.Det.Imposto.ICMS icms = new TNFe.InfNFe.Det.Imposto.ICMS();
-
-            if (isST) {
-                TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN500 s500 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN500();
-                s500.setOrig(item.getProduto().getOrigem() != null ? item.getProduto().getOrigem() : "0");
-                s500.setCSOSN("500");
-                icms.setICMSSN500(s500);
-            } else {
-                TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 s102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
-                s102.setOrig(item.getProduto().getOrigem() != null ? item.getProduto().getOrigem() : "0");
-                s102.setCSOSN("102");
-                icms.setICMSSN102(s102);
-            }
-
+            TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 s102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
+            s102.setOrig(item.getProduto().getOrigem() != null ? item.getProduto().getOrigem() : "0");
+            s102.setCSOSN("102");
+            icms.setICMSSN102(s102);
             imp.getContent().add(new ObjectFactory().createTNFeInfNFeDetImpostoICMS(icms));
             det.setImposto(imp);
             details.add(det);
-
             i++;
         }
         return details;
@@ -346,19 +268,18 @@ public class NfceService {
         return t;
     }
 
-    // 🚨 REGRA SEFAZ: MAPEAMENTO EXATO DOS TIPOS DE PAGAMENTO E A PRAZO (indPag=1)
     private TNFe.InfNFe.Pag montarPag(List<PagamentoVenda> pagamentos, BigDecimal tot, BigDecimal troco) {
         TNFe.InfNFe.Pag pag = new TNFe.InfNFe.Pag();
 
         if (pagamentos == null || pagamentos.isEmpty()) {
             TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
-            det.setTPag("01"); // Dinheiro
+            det.setTPag("01");
             det.setVPag(tot.add(troco != null ? troco : BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).toString());
             pag.getDetPag().add(det);
         } else {
             for (PagamentoVenda p : pagamentos) {
                 TNFe.InfNFe.Pag.DetPag det = new TNFe.InfNFe.Pag.DetPag();
-                String tPag = "01"; // Dinheiro default
+                String tPag = "01";
 
                 if (p.getFormaPagamento() != null) {
                     switch (p.getFormaPagamento().name().toUpperCase()) {
@@ -367,10 +288,10 @@ public class NfceService {
                         case "DEBITO": tPag = "04"; break;
                         case "FIADO":
                         case "CREDIARIO":
-                            tPag = "05"; // 05 = Crédito Loja
-                            det.setIndPag("1"); // 1 = A Prazo
+                            tPag = "05";
+                            det.setIndPag("1");
                             break;
-                        case "DINHEIRO": tPag = "01"; break;
+                        default: tPag = "01"; break;
                     }
                 }
 
@@ -407,10 +328,6 @@ public class NfceService {
         r.setEmail("suporte@ddcosmeticos.com.br");
         r.setFone("81999999999");
         return r;
-    }
-
-    private NfceResponseDTO simularEmissaoEmDev(Venda v) {
-        return new NfceResponseDTO(v.getIdVenda(), "100", "Simulado", "35230900000000000000650010000000011000000001", "123", "", "");
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

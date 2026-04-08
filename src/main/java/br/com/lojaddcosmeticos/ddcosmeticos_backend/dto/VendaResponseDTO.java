@@ -27,12 +27,18 @@ public record VendaResponseDTO(
         String observacao,
         String urlQrCode,
 
-        // 🚨 NOVOS CAMPOS: Exigidos pelo React para montar o PDF da Impressão Corretamente
+        // Exigidos pelo React para montar o PDF da Impressão
         Long numeroNfce,
         Integer serieNfce,
-        String tipoNota
+        String tipoNota,
+
+        // 🚨 NOVOS CAMPOS: Isolamento do Frontend (Evita erros de Proxy e garante dados na tela)
+        String clienteDocumento,
+        String clienteTelefone,
+        String protocolo,
+        String xmlNota,
+        String nomeOperador
 ) {
-    // Construtor auxiliar que aceita a Entidade Venda
     public VendaResponseDTO(Venda venda) {
         this(
                 venda.getIdVenda(),
@@ -42,12 +48,10 @@ public record VendaResponseDTO(
                 venda.getClienteNome(),
                 venda.getFormaDePagamento(),
 
-                // 🚨 CORREÇÃO: Usando new java.util.ArrayList<>() para não confundir o compilador
                 venda.getItens() != null
                         ? venda.getItens().stream().map(ItemVendaResponseDTO::new).collect(Collectors.toList())
                         : new java.util.ArrayList<>(),
 
-                // 🚨 CORREÇÃO: Usando new java.util.ArrayList<>() para não confundir o compilador
                 venda.getPagamentos() != null
                         ? venda.getPagamentos().stream().map(PagamentoResponseDTO::new).collect(Collectors.toList())
                         : new java.util.ArrayList<>(),
@@ -61,12 +65,16 @@ public record VendaResponseDTO(
                 venda.getObservacao(),
                 venda.getUrlQrCode(),
 
-                // Mapeamento extra para a Impressão e o E-mail no PDV
                 venda.getNumeroNfce(),
                 venda.getSerieNfce(),
+                (venda.getClienteDocumento() != null && venda.getClienteDocumento().replaceAll("\\D", "").length() == 14) ? "NFE" : "NFCE",
 
-                // O DTO descobre sozinho se é B2B ou B2C antes de devolver para a tela do caixa
-                (venda.getClienteDocumento() != null && venda.getClienteDocumento().replaceAll("\\D", "").length() == 14) ? "NFE" : "NFCE"
+                // Extraindo os dados reais para o ecrã
+                venda.getClienteDocumento(),
+                venda.getClienteTelefone(),
+                venda.getProtocolo(),
+                venda.getXmlNota(),
+                venda.getUsuario() != null ? venda.getUsuario().getNome() : "Sistema"
         );
     }
 }

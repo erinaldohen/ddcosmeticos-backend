@@ -1,5 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -20,6 +21,7 @@ import java.time.LocalDateTime;
 @Table(name = "cliente")
 @EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de ouro do JPA
 @ToString(onlyExplicitlyIncluded = true)
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Cliente implements Serializable {
 
     private static final long serialVersionUID = 1L;

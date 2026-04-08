@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.model;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties; // 🚨 IMPORTAÇÃO SALVADORA
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -25,15 +26,16 @@ import java.util.List;
 @Table(name = "usuario")
 @SQLDelete(sql = "UPDATE usuario SET ativo = false WHERE id = ?")
 @SQLRestriction("ativo = true")
-// OTIMIZAÇÃO: equals e hashCode baseados apenas no ID (Regra de Ouro do JPA)
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
+// 🚨 DIZ AO JACKSON PARA IGNORAR OS FANTASMAS DO HIBERNATE NA HORA DE GERAR O JSON
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Usuario implements UserDetails, Serializable {
 
     private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @EqualsAndHashCode.Include // Usa apenas o ID para comparar objetos
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(nullable = false, length = 150)
@@ -67,7 +69,6 @@ public class Usuario implements UserDetails, Serializable {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Adicionamos "ROLE_" antes do nome do enum (ex: ROLE_ADMIN, ROLE_CAIXA)
         return List.of(new SimpleGrantedAuthority(this.perfilDoUsuario.name()));
     }
 
@@ -75,7 +76,7 @@ public class Usuario implements UserDetails, Serializable {
     public String getPassword() { return this.senha; }
 
     @Override
-    public String getUsername() { return this.email; } // O login é feito pelo email
+    public String getUsername() { return this.email; }
 
     @Override
     public boolean isAccountNonExpired() { return true; }

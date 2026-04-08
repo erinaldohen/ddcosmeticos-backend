@@ -9,9 +9,10 @@ import java.util.Optional;
 public interface ClienteRepository extends JpaRepository<Cliente, Long> {
 
     Optional<Cliente> findByDocumento(String documento);
-
-    // 👉 ADICIONE ESTA LINHA:
     Optional<Cliente> findByTelefone(String telefone);
 
     boolean existsByDocumento(String documento);
+
+    // 🔥 MUDANÇA: Checagem de duplicação por telefone
+    boolean existsByTelefone(String telefone);
 }

@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @Audited
 @Table(name = "cliente")
-@EqualsAndHashCode(onlyExplicitlyIncluded = true) // Regra de ouro do JPA
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @ToString(onlyExplicitlyIncluded = true)
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Cliente implements Serializable {
@@ -32,51 +32,52 @@ public class Cliente implements Serializable {
     @ToString.Include
     private Long id;
 
-    // CPF ou CNPJ (sem formatação, apenas números)
-    @Column(nullable = false, unique = true, length = 14)
+    // 🔥 MUDANÇA: nullable = false foi removido. Agora CPF é opcional.
+    @Column(unique = true, length = 14)
     @ToString.Include
     private String documento;
 
     @Column(nullable = false, length = 150)
     @ToString.Include
-    private String nome; // Razão Social / Nome completo
+    private String nome;
 
     @Column(length = 150)
-    private String nomeFantasia; // Novo
+    private String nomeFantasia;
 
-    // Importante para NFe: Se for PJ, geralmente tem IE. Se for PF, é null ou "ISENTO".
     @Column(length = 50)
     private String inscricaoEstadual;
 
     @Column(length = 10)
-    private String tipoPessoa; // "FISICA" ou "JURIDICA"
+    private String tipoPessoa;
 
-    @Column(length = 20)
+    // Telefone passa a ser chave importantíssima para PF
+    @Column(length = 20, unique = true)
     private String telefone;
 
     @Column(length = 255)
     private String endereco;
 
-    // DBA: Especificar a precisão no Postgres é crucial para colunas de moeda
     @Column(name = "limite_credito", precision = 15, scale = 2)
     private BigDecimal limiteCredito = BigDecimal.ZERO;
 
-    // DBA: updatable = false protege a data de criação contra alterações futuras
     @Column(name = "data_cadastro", updatable = false)
     private LocalDateTime dataCadastro = LocalDateTime.now();
 
     private boolean ativo = true;
 
-    // --- Lógica Automática ---
     @PrePersist
     @PreUpdate
     public void preSalvar() {
-        if (this.documento != null) {
-            // Remove pontos e traços para salvar limpo no banco
+        if (this.documento != null && !this.documento.isBlank()) {
             this.documento = this.documento.replaceAll("\\D", "");
-
-            // Define tipo automaticamente baseado na quantidade de dígitos
             this.tipoPessoa = this.documento.length() > 11 ? "JURIDICA" : "FISICA";
+        } else {
+            this.documento = null;
+            this.tipoPessoa = "FISICA"; // Se não tem doc, é consumidor final PF
+        }
+
+        if (this.telefone != null && !this.telefone.isBlank()) {
+            this.telefone = this.telefone.replaceAll("\\D", ""); // Limpa o telefone
         }
     }
 }

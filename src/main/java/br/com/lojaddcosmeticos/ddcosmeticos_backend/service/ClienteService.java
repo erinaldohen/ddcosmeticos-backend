@@ -19,10 +19,6 @@ public class ClienteService {
     @Autowired
     private ClienteRepository repository;
 
-    // TODO: Injetar o repositório do financeiro quando for criado
-    // @Autowired
-    // private TituloReceberRepository tituloReceberRepository;
-
     @Transactional(readOnly = true)
     public Page<ClienteDTO> listar(String termo, Pageable pageable) {
         return repository.findAll(pageable).map(this::converterParaDTO);
@@ -43,57 +39,33 @@ public class ClienteService {
                 .orElseThrow(() -> new ValidationException("Cliente não encontrado para o documento: " + doc));
     }
 
-    // ========================================================================
-    // MOTOR DE ANÁLISE DE CRÉDITO PARA O PDV (VENDA FIADO)
-    // ========================================================================
+    // 🔥 MUDANÇA: O PDV manda um número (CPF, CNPJ ou Telefone). Nós achamos quem é!
     @Transactional(readOnly = true)
-    public AnaliseCreditoDTO analisarCredito(String documento) {
-        String docLimpo = documento.replaceAll("\\D", "");
+    public AnaliseCreditoDTO analisarCredito(String identificador) {
+        String limpo = identificador.replaceAll("\\D", "");
 
-        // 1. Valida se o cliente existe
-        Cliente cliente = repository.findByDocumento(docLimpo)
-                .orElseThrow(() -> new ValidationException("Cliente não encontrado. É necessário cadastrar primeiro."));
+        Cliente cliente = repository.findByDocumento(limpo)
+                .orElseGet(() -> repository.findByTelefone(limpo)
+                        .orElseThrow(() -> new ValidationException("Cliente não encontrado. É necessário cadastrar primeiro.")));
 
-        // 2. Valida se o cliente está bloqueado administrativamente
         if (!cliente.isAtivo()) {
             return new AnaliseCreditoDTO(true, "O cadastro deste cliente encontra-se desativado/bloqueado no sistema.", BigDecimal.ZERO);
         }
 
-        // 3. Integração com Módulo Financeiro (Contas a Receber)
-        // Quando criar o financeiro, substitua o BigDecimal.ZERO pela soma real:
-        // BigDecimal debitosVencidos = tituloReceberRepository.somarDebitosVencidosPorCliente(cliente.getId());
         BigDecimal debitosVencidos = BigDecimal.ZERO;
-
         if (debitosVencidos != null && debitosVencidos.compareTo(BigDecimal.ZERO) > 0) {
-            return new AnaliseCreditoDTO(
-                    true,
-                    "O cliente possui faturas do crediário vencidas e não pagas.",
-                    debitosVencidos
-            );
+            return new AnaliseCreditoDTO(true, "O cliente possui faturas do crediário vencidas e não pagas.", debitosVencidos);
         }
 
-        /* * BÔNUS: Você tem o campo "limiteCredito" na tabela Cliente.
-         * No futuro, você pode somar o total que ele já deve (mesmo não vencido)
-         * e comparar com cliente.getLimiteCredito(). Se passar, retorna bloqueado = true!
-         */
-
-        // Se passou por todas as travas, crédito aprovado para o PDV!
         return new AnaliseCreditoDTO(false, "Crédito aprovado. Cliente sem restrições.", BigDecimal.ZERO);
     }
 
     @Transactional
     public ClienteDTO salvar(ClienteDTO dto) {
-        String docLimpo = dto.documento().replaceAll("\\D", "");
-
-        if (dto.id() == null && repository.existsByDocumento(docLimpo)) {
-            throw new ValidationException("Já existe um cliente cadastrado com este CPF/CNPJ.");
-        }
+        validarRegrasNegocio(dto, null);
 
         Cliente cliente = new Cliente();
         atualizarEntidade(cliente, dto);
-
-        // Garante documento limpo na entidade
-        cliente.setDocumento(docLimpo);
 
         if (cliente.getId() == null) {
             cliente.setDataCadastro(java.time.LocalDateTime.now());
@@ -107,14 +79,8 @@ public class ClienteService {
         Cliente cliente = repository.findById(id)
                 .orElseThrow(() -> new ValidationException("Cliente não encontrado."));
 
-        String docLimpo = dto.documento().replaceAll("\\D", "");
-
-        if (!cliente.getDocumento().equals(docLimpo) && repository.existsByDocumento(docLimpo)) {
-            throw new ValidationException("CPF/CNPJ já utilizado por outro cliente.");
-        }
-
+        validarRegrasNegocio(dto, cliente);
         atualizarEntidade(cliente, dto);
-        cliente.setDocumento(docLimpo); // Garante atualização do doc
 
         return converterParaDTO(repository.save(cliente));
     }
@@ -127,11 +93,49 @@ public class ClienteService {
         repository.save(cliente);
     }
 
+    // ========================================================================
+    // 🔥 MUDANÇA: CENTRAL DE VALIDAÇÃO DE OBRIGATORIEDADE DINÂMICA
+    // ========================================================================
+    private void validarRegrasNegocio(ClienteDTO dto, Cliente clienteExistente) {
+        String docLimpo = dto.documento() != null && !dto.documento().isBlank() ? dto.documento().replaceAll("\\D", "") : null;
+        String telLimpo = dto.telefone() != null && !dto.telefone().isBlank() ? dto.telefone().replaceAll("\\D", "") : null;
+
+        boolean isPJ = docLimpo != null && docLimpo.length() > 11;
+
+        if (isPJ) {
+            if (docLimpo.length() != 14) throw new ValidationException("CNPJ inválido.");
+        } else {
+            // É Pessoa Física (CPF preenchido ou vazio)
+            if (telLimpo == null || telLimpo.isBlank()) {
+                throw new ValidationException("Para consumidores finais e pessoas físicas, o telefone é obrigatório.");
+            }
+        }
+
+        // Verifica CPF/CNPJ Duplicado
+        if (docLimpo != null) {
+            repository.findByDocumento(docLimpo).ifPresent(c -> {
+                if (clienteExistente == null || !c.getId().equals(clienteExistente.getId())) {
+                    throw new ValidationException("Já existe um cliente cadastrado com este CPF/CNPJ.");
+                }
+            });
+        }
+
+        // Verifica Telefone Duplicado
+        if (telLimpo != null) {
+            repository.findByTelefone(telLimpo).ifPresent(c -> {
+                if (clienteExistente == null || !c.getId().equals(clienteExistente.getId())) {
+                    throw new ValidationException("Já existe um cliente com este Telefone cadastrado.");
+                }
+            });
+        }
+    }
+
     private void atualizarEntidade(Cliente cliente, ClienteDTO dto) {
         cliente.setNome(dto.nome());
         cliente.setNomeFantasia(dto.nomeFantasia());
+        cliente.setDocumento(dto.documento()); // O @PrePersist vai cuidar da limpeza
         cliente.setInscricaoEstadual(dto.inscricaoEstadual());
-        cliente.setTelefone(dto.telefone());
+        cliente.setTelefone(dto.telefone()); // O @PrePersist vai cuidar da limpeza
         cliente.setEndereco(dto.endereco());
         cliente.setLimiteCredito(dto.limiteCredito());
     }

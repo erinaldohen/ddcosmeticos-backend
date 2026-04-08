@@ -16,8 +16,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
-
 @RestController
 @RequestMapping("/api/v1/clientes")
 @Tag(name = "Clientes", description = "Gestão de Clientes e Limites de Crédito")
@@ -65,33 +63,30 @@ public class ClienteController {
         clienteService.alternarStatus(id);
         return ResponseEntity.noContent().build();
     }
+
     @GetMapping("/analise-credito/{documento}")
     public ResponseEntity<AnaliseCreditoDTO> analisarCredito(@PathVariable String documento) {
         try {
             AnaliseCreditoDTO analise = clienteService.analisarCredito(documento);
             return ResponseEntity.ok(analise);
         } catch (br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException e) {
-            // Retorna 404 se o cliente não existir, para o React forçar o cadastro
             return ResponseEntity.notFound().build();
         }
     }
-    // 👉 ADICIONE ESTE MÉTODO DENTRO DO SEU ClienteController
+
     @GetMapping("/telefone/{telefone}")
     public ResponseEntity<Cliente> buscarPorTelefone(@PathVariable String telefone) {
         String telLimpo = telefone.replaceAll("\\D", "");
-
         return clienteRepository.findByTelefone(telLimpo)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
-    @GetMapping("/documento/{documento}")
-    public ResponseEntity<Cliente> buscarPorDocumento(@PathVariable String documento) {
-        String docLimpo = documento.replaceAll("\\D", ""); // Remove pontos e traços
 
-        // Vai procurar o cliente pelo documento exato no banco de dados
-        return clienteRepository.findAll().stream()
-                .filter(c -> c.getDocumento() != null && c.getDocumento().replaceAll("\\D", "").equals(docLimpo))
-                .findFirst()
+    // 🔥 MUDANÇA: Otimizado. Sem Stream pesada na tabela inteira.
+    @GetMapping("/documento/{documento}")
+    public ResponseEntity<Cliente> buscarPorDocumentoExato(@PathVariable String documento) {
+        String docLimpo = documento.replaceAll("\\D", "");
+        return clienteRepository.findByDocumento(docLimpo)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

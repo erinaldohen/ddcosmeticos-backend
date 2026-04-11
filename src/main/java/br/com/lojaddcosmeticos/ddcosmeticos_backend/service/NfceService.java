@@ -53,7 +53,10 @@ public class NfceService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public NfceResponseDTO emitirNfce(Venda venda) {
+    public NfceResponseDTO emitirNfce(Venda vendaDesanexada) {
+        Venda venda = vendaRepository.findById(vendaDesanexada.getIdVenda())
+                .orElseThrow(() -> new ValidationException("Venda não encontrada para emissão."));
+
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) {
             log.warn("⚠️ Certificado ausente. Cancelando emissão real.");
@@ -90,6 +93,7 @@ public class NfceService {
         enviNFe.setIndSinc("1");
 
         TNFe nfe = new TNFe();
+
         TNFe.InfNFe infNFe = new TNFe.InfNFe();
         infNFe.setId("NFe" + chaveAcesso);
         infNFe.setVersao("4.00");
@@ -100,7 +104,7 @@ public class NfceService {
             infNFe.setDest(montarDest(venda.getCliente()));
         }
 
-        infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja));
+        infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja, isProducao));
         infNFe.setTotal(montarTotal(venda));
         infNFe.setTransp(montarTransp());
         infNFe.setPag(montarPag(venda.getPagamentos(), venda.getValorTotal(), venda.getTroco()));
@@ -111,6 +115,24 @@ public class NfceService {
         infNFe.setInfRespTec(montarRespTec(cnpjEmitente));
 
         nfe.setInfNFe(infNFe);
+
+        String cscId = isProducao ? configLoja.getFiscal().getCscIdProducao() : configLoja.getFiscal().getCscIdHomologacao();
+        String cscToken = isProducao ? configLoja.getFiscal().getTokenProducao() : configLoja.getFiscal().getTokenHomologacao();
+
+        if (cscId == null || cscToken == null) {
+            throw new ValidationException("CSC (Token/ID) de " + (isProducao ? "Produção" : "Homologação") + " não configurado na Loja.");
+        }
+
+        String qrCodeStr = gerarQrCodeSefazPE(chaveAcesso, configNfe.getAmbiente().getCodigo(), cscId, cscToken);
+
+        TNFe.InfNFeSupl infNFeSupl = new TNFe.InfNFeSupl();
+        infNFeSupl.setQrCode(qrCodeStr);
+
+        // 🔥 CORREÇÃO DA REJEIÇÃO 878: A Sefaz PE exige a string exata (sem http://) para ambos os ambientes
+        infNFeSupl.setUrlChave("nfce.sefaz.pe.gov.br/nfce/consulta");
+
+        nfe.setInfNFeSupl(infNFeSupl);
+
         enviNFe.getNFe().add(nfe);
 
         String xmlNaoAssinado = XmlNfeUtil.objectToXml(enviNFe);
@@ -123,12 +145,25 @@ public class NfceService {
             venda.setStatusNfce(StatusFiscal.AUTORIZADA);
             venda.setChaveAcessoNfce(chaveAcesso);
             venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFeAssinado, retorno.getProtNFe()));
+            venda.setUrlQrCode(qrCodeStr);
             vendaRepository.save(venda);
-            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), "");
+            return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), qrCodeStr);
         } else {
             String msg = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
             throw new ValidationException("Sefaz Rejeitou: " + msg);
         }
+    }
+
+    private String gerarQrCodeSefazPE(String chaveAcesso, String tpAmbiente, String idCsc, String cscToken) throws Exception {
+        String urlBase = tpAmbiente.equals("1")
+                ? "http://nfce.sefaz.pe.gov.br/nfce/consulta"
+                : "http://nfcehomolog.sefaz.pe.gov.br/nfce/consulta";
+
+        String idCscLimpo = idCsc.replaceFirst("^0+(?!$)", "");
+        String stringParaHash = chaveAcesso + "|2|" + tpAmbiente + "|" + idCscLimpo;
+        String hashSha1 = gerarHashSHA1(stringParaHash + cscToken).toUpperCase();
+
+        return urlBase + "?p=" + stringParaHash + "|" + hashSha1;
     }
 
     private String gerarHashSHA1(String input) throws Exception {
@@ -204,7 +239,7 @@ public class NfceService {
         return e;
     }
 
-    private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itens, ConfiguracaoLoja config) {
+    private List<TNFe.InfNFe.Det> montarDetalhes(List<ItemVenda> itens, ConfiguracaoLoja config, boolean isProducao) {
         List<TNFe.InfNFe.Det> details = new ArrayList<>();
         int i = 1;
         for (ItemVenda item : itens) {
@@ -213,9 +248,11 @@ public class NfceService {
             TNFe.InfNFe.Det.Prod p = new TNFe.InfNFe.Det.Prod();
             p.setCProd(item.getProduto().getId().toString());
 
-            // 🔥 CORREÇÃO EAN
             String ean = item.getProduto().getCodigoBarras();
-            if (ean != null && ean.matches("\\d{8}|\\d{12}|\\d{13}|\\d{14}")) {
+            // A Sefaz permite "SEM GTIN" se o código for nulo, branco ou inválido.
+            // Para não correr riscos com DVs incorretos (Rejeição 611),
+            // se o código começar com 2 (internos/balança) ou não for GTIN válido, evitamos enviá-lo.
+            if (ean != null && ean.matches("\\d{8}|\\d{12}|\\d{13}|\\d{14}") && isValidGTIN(ean)) {
                 p.setCEAN(ean);
                 p.setCEANTrib(ean);
             } else {
@@ -223,7 +260,11 @@ public class NfceService {
                 p.setCEANTrib("SEM GTIN");
             }
 
-            p.setXProd(item.getDescricaoProduto() != null ? item.getDescricaoProduto() : item.getProduto().getDescricao());
+            if (!isProducao && i == 1) {
+                p.setXProd("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL");
+            } else {
+                p.setXProd(item.getDescricaoProduto() != null ? item.getDescricaoProduto() : item.getProduto().getDescricao());
+            }
 
             String ncm = item.getProduto().getNcm() != null ? item.getProduto().getNcm().replaceAll("\\D", "") : "33049990";
             if (ncm.length() != 8) ncm = "33049990";
@@ -297,6 +338,13 @@ public class NfceService {
 
                 det.setTPag(tPag);
                 det.setVPag(p.getValor().setScale(2, RoundingMode.HALF_UP).toString());
+
+                if (tPag.equals("03") || tPag.equals("04") || tPag.equals("17")) {
+                    TNFe.InfNFe.Pag.DetPag.Card card = new TNFe.InfNFe.Pag.DetPag.Card();
+                    card.setTpIntegra("2");
+                    det.setCard(card);
+                }
+
                 pag.getDetPag().add(det);
             }
         }
@@ -331,14 +379,32 @@ public class NfceService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void transmitirNotaContingencia(Venda venda) {
+    public void transmitirNotaContingencia(Venda vendaDesanexada) {
         try {
+            Venda venda = vendaRepository.findById(vendaDesanexada.getIdVenda()).orElse(vendaDesanexada);
             ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
             if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) return;
             processarEmissao(venda, configLoja, "1", true);
             log.info("✅ Nota ID {} transmitida e autorizada com sucesso na SEFAZ.", venda.getIdVenda());
         } catch (Exception e) {
-            log.error("❌ Falha na transmissão automática da venda {}: {}", venda.getIdVenda(), e.getMessage());
+            log.error("❌ Falha na transmissão automática da venda {}: {}", vendaDesanexada.getIdVenda(), e.getMessage());
         }
+    }
+    private boolean isValidGTIN(String gtin) {
+        if (gtin == null || !gtin.matches("\\d+")) return false;
+        if (gtin.startsWith("2")) return false; // Códigos iniciados com 2 são de uso restrito/interno (Sefaz rejeita se não for bem parametrizado)
+
+        int sum = 0;
+        int length = gtin.length();
+        for (int i = 0; i < length - 1; i++) {
+            int num = Character.getNumericValue(gtin.charAt(i));
+            if (length % 2 == 0) {
+                sum += (i % 2 == 0) ? num * 3 : num;
+            } else {
+                sum += (i % 2 != 0) ? num * 3 : num;
+            }
+        }
+        int checksum = (10 - (sum % 10)) % 10;
+        return checksum == Character.getNumericValue(gtin.charAt(length - 1));
     }
 }

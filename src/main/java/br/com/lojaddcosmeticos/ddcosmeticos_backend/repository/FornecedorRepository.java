@@ -25,4 +25,5 @@ public interface FornecedorRepository extends JpaRepository<Fornecedor, Long> {
 
     // Método auxiliar leve para validações rápidas
     boolean existsByCnpj(String cnpj);
+    Optional<Fornecedor> findByRazaoSocialIgnoreCase(String razaoSocial);
 }

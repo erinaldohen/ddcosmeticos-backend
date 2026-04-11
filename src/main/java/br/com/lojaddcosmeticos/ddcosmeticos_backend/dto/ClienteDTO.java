@@ -1,8 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -14,19 +12,32 @@ public record ClienteDTO(
 
         String nomeFantasia,
 
-        // 🔥 MUDANÇA: Retirado o NotBlank. Agora a obrigatoriedade é decidida pelo Service (PF x PJ).
+        // 🔥 NOVO: Essencial para o CRM dividir as abas (FISICA ou JURIDICA)
+        String tipoPessoa,
+
+        // A obrigatoriedade é decidida pelo Service (PF x PJ).
         String documento,
 
         String inscricaoEstadual,
 
-        // 🔥 MUDANÇA: Telefone agora é vital
+        // Telefone agora é vital para a máquina de vendas (WhatsApp)
         String telefone,
 
-        String endereco,
+        // Endereço desmembrado exigido para a Sefaz (NF-e/NFC-e)
+        String cep,
+        String logradouro,
+        String numero,
+        String complemento,
+        String bairro,
+        String cidade,
+        String uf,
 
-        @NotNull(message = "O limite de crédito é obrigatório")
-        @PositiveOrZero
+        // 🔥 MUDANÇA: Removidas as anotações @NotNull e @PositiveOrZero.
+        // O limite de crédito não trava mais a edição do cadastro no frontend.
         BigDecimal limiteCredito,
+
+        // Totalizador calculado pelo @Formula no banco de dados para o Ranking
+        BigDecimal totalGasto,
 
         LocalDateTime dataCadastro,
         boolean ativo

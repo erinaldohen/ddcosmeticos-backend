@@ -27,10 +27,18 @@ public class ClienteController {
     private ClienteRepository clienteRepository;
 
     @GetMapping
-    @Operation(summary = "Listar Clientes")
+    @Operation(summary = "Listar Clientes (Com suporte a filtro B2B/B2C)")
     public ResponseEntity<Page<ClienteDTO>> listar(
             @RequestParam(required = false) String termo,
+            @RequestParam(required = false) String tipo, // 🔥 NOVO: Suporte para as abas PF/PJ do CRM
             Pageable pageable) {
+
+        // Se a tela do CRM mandar "?tipo=FISICA" ou "?tipo=JURIDICA", aciona a nova lógica
+        if (tipo != null && !tipo.isBlank()) {
+            return ResponseEntity.ok(clienteService.listarPorTipo(tipo, pageable));
+        }
+
+        // Se não mandar tipo, mantém a funcionalidade original intacta
         return ResponseEntity.ok(clienteService.listar(termo, pageable));
     }
 

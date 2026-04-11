@@ -39,7 +39,6 @@ public class ClienteService {
                 .orElseThrow(() -> new ValidationException("Cliente não encontrado para o documento: " + doc));
     }
 
-    // 🔥 MUDANÇA: O PDV manda um número (CPF, CNPJ ou Telefone). Nós achamos quem é!
     @Transactional(readOnly = true)
     public AnaliseCreditoDTO analisarCredito(String identificador) {
         String limpo = identificador.replaceAll("\\D", "");
@@ -67,9 +66,8 @@ public class ClienteService {
         Cliente cliente = new Cliente();
         atualizarEntidade(cliente, dto);
 
-        if (cliente.getId() == null) {
-            cliente.setDataCadastro(java.time.LocalDateTime.now());
-        }
+        cliente.setDataCadastro(java.time.LocalDateTime.now());
+        cliente.setAtivo(true);
 
         return converterParaDTO(repository.save(cliente));
     }
@@ -93,26 +91,36 @@ public class ClienteService {
         repository.save(cliente);
     }
 
+    @Transactional(readOnly = true)
+    public Page<ClienteDTO> listarPorTipo(String tipo, Pageable pageable) {
+        return repository.findByTipoPessoa(tipo.toUpperCase(), pageable)
+                .map(this::converterParaDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ClienteDTO> buscarPorNome(String nome, Pageable pageable) {
+        return repository.findByNomeContainingIgnoreCase(nome, pageable)
+                .map(this::converterParaDTO);
+    }
+
     // ========================================================================
-    // 🔥 MUDANÇA: CENTRAL DE VALIDAÇÃO DE OBRIGATORIEDADE DINÂMICA
+    // 🔥 CENTRAL DE VALIDAÇÃO DE OBRIGATORIEDADE DINÂMICA
     // ========================================================================
     private void validarRegrasNegocio(ClienteDTO dto, Cliente clienteExistente) {
-        String docLimpo = dto.documento() != null && !dto.documento().isBlank() ? dto.documento().replaceAll("\\D", "") : null;
-        String telLimpo = dto.telefone() != null && !dto.telefone().isBlank() ? dto.telefone().replaceAll("\\D", "") : null;
+        String docLimpo = dto.documento() != null ? dto.documento().replaceAll("\\D", "") : "";
+        String telLimpo = dto.telefone() != null ? dto.telefone().replaceAll("\\D", "") : "";
 
-        boolean isPJ = docLimpo != null && docLimpo.length() > 11;
+        boolean isPJ = docLimpo.length() == 14;
 
         if (isPJ) {
             if (docLimpo.length() != 14) throw new ValidationException("CNPJ inválido.");
         } else {
-            // É Pessoa Física (CPF preenchido ou vazio)
-            if (telLimpo == null || telLimpo.isBlank()) {
+            if (telLimpo.isBlank()) {
                 throw new ValidationException("Para consumidores finais e pessoas físicas, o telefone é obrigatório.");
             }
         }
 
-        // Verifica CPF/CNPJ Duplicado
-        if (docLimpo != null) {
+        if (!docLimpo.isBlank()) {
             repository.findByDocumento(docLimpo).ifPresent(c -> {
                 if (clienteExistente == null || !c.getId().equals(clienteExistente.getId())) {
                     throw new ValidationException("Já existe um cliente cadastrado com este CPF/CNPJ.");
@@ -120,8 +128,7 @@ public class ClienteService {
             });
         }
 
-        // Verifica Telefone Duplicado
-        if (telLimpo != null) {
+        if (!telLimpo.isBlank()) {
             repository.findByTelefone(telLimpo).ifPresent(c -> {
                 if (clienteExistente == null || !c.getId().equals(clienteExistente.getId())) {
                     throw new ValidationException("Já existe um cliente com este Telefone cadastrado.");
@@ -133,11 +140,40 @@ public class ClienteService {
     private void atualizarEntidade(Cliente cliente, ClienteDTO dto) {
         cliente.setNome(dto.nome());
         cliente.setNomeFantasia(dto.nomeFantasia());
-        cliente.setDocumento(dto.documento()); // O @PrePersist vai cuidar da limpeza
-        cliente.setInscricaoEstadual(dto.inscricaoEstadual());
-        cliente.setTelefone(dto.telefone()); // O @PrePersist vai cuidar da limpeza
-        cliente.setEndereco(dto.endereco());
-        cliente.setLimiteCredito(dto.limiteCredito());
+        cliente.setDocumento(dto.documento());
+        cliente.setTelefone(dto.telefone());
+
+        // Determina o tipo de pessoa pelo tamanho do documento se não for enviado
+        String docLimpo = dto.documento() != null ? dto.documento().replaceAll("\\D", "") : "";
+        if (dto.tipoPessoa() != null && !dto.tipoPessoa().isBlank()) {
+            cliente.setTipoPessoa(dto.tipoPessoa().toUpperCase());
+        } else {
+            cliente.setTipoPessoa(docLimpo.length() == 14 ? "JURIDICA" : "FISICA");
+        }
+
+        // Apenas salva a IE se for CNPJ (14 dígitos).
+        if (docLimpo.length() == 14) {
+            cliente.setInscricaoEstadual(dto.inscricaoEstadual());
+        } else {
+            cliente.setInscricaoEstadual(null);
+        }
+
+        // Endereço desmembrado
+        cliente.setCep(dto.cep());
+        cliente.setLogradouro(dto.logradouro());
+        cliente.setNumero(dto.numero());
+        cliente.setComplemento(dto.complemento());
+        cliente.setBairro(dto.bairro());
+        cliente.setCidade(dto.cidade());
+        cliente.setUf(dto.uf());
+
+        // Mantemos o setLimiteCredito caso a sua Entidade Cliente ainda precise dele.
+        // Como o DTO não exige mais, se vier null, salvamos 0 ou mantemos o atual.
+        if (dto.limiteCredito() != null) {
+            cliente.setLimiteCredito(dto.limiteCredito());
+        } else if (cliente.getLimiteCredito() == null) {
+            cliente.setLimiteCredito(BigDecimal.ZERO);
+        }
     }
 
     private ClienteDTO converterParaDTO(Cliente c) {
@@ -145,11 +181,19 @@ public class ClienteService {
                 c.getId(),
                 c.getNome(),
                 c.getNomeFantasia(),
+                c.getTipoPessoa(),       // 🔥 Mapeado para o Frontend (Abas)
                 c.getDocumento(),
                 c.getInscricaoEstadual(),
                 c.getTelefone(),
-                c.getEndereco(),
+                c.getCep(),
+                c.getLogradouro(),
+                c.getNumero(),
+                c.getComplemento(),
+                c.getBairro(),
+                c.getCidade(),
+                c.getUf(),
                 c.getLimiteCredito(),
+                c.getTotalGasto(),       // 🔥 Mapeado para o Frontend (Ranking)
                 c.getDataCadastro(),
                 c.isAtivo()
         );

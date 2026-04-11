@@ -17,6 +17,7 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -82,6 +83,7 @@ public class VendaService {
                 ? config.getFiscal().getObsPadraoCupom()
                 : "Consumidor Não Identificado";
 
+        // LÓGICA DE IDENTIFICAÇÃO DO CLIENTE
         if (dto.clienteId() != null) {
             Cliente cliente = clienteRepository.findById(dto.clienteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Cliente não encontrado ID: " + dto.clienteId()));
@@ -95,8 +97,14 @@ public class VendaService {
             Cliente clienteEncontrado = clienteRepository.findByDocumento(docLimpo).orElse(null);
 
             if (clienteEncontrado != null) {
-                if (docLimpo.length() == 14 && dto.clienteIe() != null) {
-                    clienteEncontrado.setInscricaoEstadual(dto.clienteIe());
+                if (docLimpo.length() == 14) {
+                    if (dto.clienteIe() != null) clienteEncontrado.setInscricaoEstadual(dto.clienteIe());
+                    if (dto.clienteLogradouro() != null) clienteEncontrado.setLogradouro(dto.clienteLogradouro());
+                    if (dto.clienteNumero() != null) clienteEncontrado.setNumero(dto.clienteNumero());
+                    if (dto.clienteBairro() != null) clienteEncontrado.setBairro(dto.clienteBairro());
+                    if (dto.clienteCidade() != null) clienteEncontrado.setCidade(dto.clienteCidade());
+                    if (dto.clienteUf() != null) clienteEncontrado.setUf(dto.clienteUf());
+                    if (dto.clienteCep() != null) clienteEncontrado.setCep(dto.clienteCep().replaceAll("\\D", ""));
                     clienteRepository.save(clienteEncontrado);
                 }
                 venda.setCliente(clienteEncontrado);
@@ -113,10 +121,12 @@ public class VendaService {
                     String ieLimpa = dto.clienteIe() != null ? dto.clienteIe().replaceAll("\\D", "") : "";
                     novaEmpresa.setInscricaoEstadual(ieLimpa.isBlank() ? "ISENTO" : ieLimpa);
 
-                    String endCompleto = dto.clienteLogradouro() + ", " + dto.clienteNumero() + " - " +
-                            dto.clienteBairro() + " | " + dto.clienteCidade() + "-" + dto.clienteUf() +
-                            " CEP: " + (dto.clienteCep() != null ? dto.clienteCep().replaceAll("\\D", "") : "");
-                    novaEmpresa.setEndereco(endCompleto);
+                    novaEmpresa.setLogradouro(dto.clienteLogradouro() != null ? dto.clienteLogradouro() : "Nao Informado");
+                    novaEmpresa.setNumero(dto.clienteNumero() != null ? dto.clienteNumero() : "SN");
+                    novaEmpresa.setBairro(dto.clienteBairro() != null ? dto.clienteBairro() : "Centro");
+                    novaEmpresa.setCidade(dto.clienteCidade() != null ? dto.clienteCidade() : "Recife");
+                    novaEmpresa.setUf(dto.clienteUf() != null ? dto.clienteUf() : "PE");
+                    novaEmpresa.setCep(dto.clienteCep() != null ? dto.clienteCep().replaceAll("\\D", "") : "50000000");
 
                     novaEmpresa.setAtivo(true);
                     novaEmpresa.setLimiteCredito(BigDecimal.ZERO);
@@ -149,10 +159,11 @@ public class VendaService {
                 venda.setClienteNome(clienteEncontrado.getNome());
                 venda.setClienteTelefone(clienteEncontrado.getTelefone());
             } else {
+                // 🔥 CRIAÇÃO LIMPA DE CLIENTE B2C (Apenas Nome + Telefone, Documento = null)
                 Cliente novoCliente = new Cliente();
                 novoCliente.setNome(dto.clienteNome().toUpperCase());
                 novoCliente.setTelefone(telLimpo);
-                novoCliente.setDocumento("TL" + telLimpo + (new Random().nextInt(90) + 10));
+                novoCliente.setDocumento(null); // O BD agora permite nulo!
                 novoCliente.setAtivo(true);
                 novoCliente.setLimiteCredito(BigDecimal.ZERO);
 
@@ -253,9 +264,6 @@ public class VendaService {
             }
         }
 
-        // =========================================================================================
-        // 🚨 3. A MÁGICA DA SINCRONIZAÇÃO DE TRANSAÇÕES (ROTEAMENTO INTELIGENTE RESTAURADO)
-        // =========================================================================================
         if (!Boolean.TRUE.equals(dto.ehOrcamento())) {
             final String tipoNota = dto.tipoNota() != null ? dto.tipoNota() : "NFCE";
 
@@ -825,5 +833,73 @@ public class VendaService {
         }
 
         return new ByteArrayResource(out.toByteArray());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public NfceResponseDTO tentarEmissaoSincrona(Long idVenda) {
+        Venda venda = buscarVendaComItens(idVenda);
+        String docCli = venda.getClienteDocumento() != null ? venda.getClienteDocumento().replaceAll("\\D", "") : "";
+
+        try {
+            if (docCli.length() == 14) {
+                return nfeService.emitirNfeModelo55(idVenda); // Tenta NF-e
+            } else {
+                return nfceService.emitirNfce(venda); // Tenta NFC-e
+            }
+        } catch (ValidationException e) {
+            venda.setStatusNfce(StatusFiscal.REJEITADA);
+            venda.setMensagemRejeicao(e.getMessage());
+            vendaRepository.save(venda);
+            throw new ValidationException("SEFAZ Rejeitou: " + e.getMessage());
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public NfceResponseDTO forcarEmissaoNfce(Long idVenda) {
+        Venda venda = buscarVendaComItens(idVenda);
+
+        try {
+            log.info("Operador forçou NFC-e para a Venda B2B #{}", idVenda);
+            return nfceService.emitirNfce(venda);
+        } catch (Exception e) {
+            throw new ValidationException("Erro ao forçar NFC-e: " + e.getMessage());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<HistoricoCompraDTO> buscarHistoricoPorCliente(Long idCliente) {
+        List<Venda> vendas = vendaRepository.findByClienteIdOrderByDataVendaDesc(idCliente);
+        return vendas.stream().map(HistoricoCompraDTO::new).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] gerarPdfVenda(Long id) {
+        Venda venda = buscarVendaComItens(id);
+
+        if (venda.getXmlNota() == null || venda.getXmlNota().isBlank()) {
+            throw new ValidationException("Esta venda ainda não possui nota fiscal emitida e validada.");
+        }
+
+        try {
+            if (isB2B(venda)) {
+                return impressaoService.gerarDanfeA4(venda.getIdVenda());
+            } else {
+                return impressaoService.gerarCupomNfce(venda.getIdVenda());
+            }
+        } catch (Exception e) {
+            log.error("Erro ao gerar PDF da venda {}", id, e);
+            throw new ValidationException("Erro interno ao gerar o documento fiscal: " + e.getMessage());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] obterXmlVenda(Long id) {
+        Venda venda = buscarVendaComItens(id);
+
+        if (venda.getXmlNota() == null || venda.getXmlNota().isBlank()) {
+            throw new ValidationException("O XML desta venda não está disponível ou a nota não foi autorizada.");
+        }
+
+        return venda.getXmlNota().getBytes(StandardCharsets.UTF_8);
     }
 }

@@ -9,7 +9,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosSer
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -35,11 +34,42 @@ public class ProdutoService {
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired private AuditoriaService auditoriaService;
     @Autowired private CosmosService cosmosService;
-    // @Autowired private IaIntegrationService iaService; // Descomente quando plugar a API do Gemini/OpenAI
 
-    @Cacheable(value = "produtos")
-    public Page<ProdutoDTO> listarTodos(Pageable pageable) {
-        return produtoRepository.findAll(pageable).map(ProdutoDTO::new);
+    /**
+     * Nova busca de NCM ultra-rápida baseada na inteligência do próprio banco de dados.
+     * Não depende de APIs externas.
+     */
+    public List<Map<String, String>> buscarNcmsInteligente(String termo) {
+        List<Map<String, String>> resultados = new ArrayList<>();
+
+        try {
+            // 1. Primeiro tenta buscar o NCM mais usado para essa palavra no próprio histórico
+            String ncmSugerido = produtoRepository.findNcmInteligente(termo);
+
+            if (ncmSugerido != null && !ncmSugerido.isBlank() && !ncmSugerido.equals("00000000")) {
+                Map<String, String> sugestao = new HashMap<>();
+                sugestao.put("codigo", ncmSugerido);
+                sugestao.put("descricao", "⭐ Sugestão Baseada no seu Histórico");
+                resultados.add(sugestao);
+            }
+
+            // 2. Se o utilizador digitou números (ex: "3305"), fazemos um "LIKE" rápido no banco
+            if (termo.matches("\\d+")) {
+                // Aqui você pode adicionar uma query rápida que busca NCMs que comecem com esses números
+                // Exemplo prático (mockado para devolver o que o utilizador digitou, forçando a validação posterior):
+                Map<String, String> digitado = new HashMap<>();
+                digitado.put("codigo", termo);
+                digitado.put("descricao", "Utilizar código digitado");
+                if (resultados.isEmpty() || !resultados.get(0).get("codigo").equals(termo)) {
+                    resultados.add(digitado);
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Erro na busca inteligente de NCM: ", e);
+        }
+
+        return resultados;
     }
 
     // =========================================================================

@@ -1,38 +1,40 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoInventarioDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.SugestaoCompraDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.InventarioInteligenteService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/v1/inventario") // <--- ROTA CORRETA
+@RequestMapping("/api/v1/inventario")
 public class InventarioController {
 
     @Autowired
     private ProdutoService produtoService;
 
     @Autowired
+    private InventarioInteligenteService inventarioInteligenteService;
+
+    @Autowired
     private RelatorioService relatorioService;
 
     // 1. LISTAR ESTOQUE (COM FILTROS SIMPLES)
-    // Frontend chama: /api/v1/inventario?busca=&status=todos
     @GetMapping
     public ResponseEntity<List<Produto>> listarInventario(
             @RequestParam(required = false) String busca,
             @RequestParam(required = false, defaultValue = "todos") String status) {
 
-        // Busca todos os produtos ativos
         List<Produto> produtos = produtoService.listarTodosAtivos();
 
-        // Filtra na memória (simples e eficaz para volumes moderados)
-        // Se o volume for gigante, ideal mover para @Query no Repository
         if (busca != null && !busca.isEmpty()) {
             String termo = busca.toLowerCase();
             produtos = produtos.stream()
@@ -42,20 +44,28 @@ public class InventarioController {
         }
 
         if ("vencidos".equalsIgnoreCase(status)) {
-            produtos = produtos.stream().filter(Produto::isVencido).collect(Collectors.toList());
+            LocalDate hoje = LocalDate.now();
+            produtos = produtos.stream()
+                    // 🔥 BLINDAGEM: Ignora nulos e datas falsas (1970)
+                    .filter(p -> p.getValidade() != null &&
+                            p.getValidade().getYear() > 1970 &&
+                            p.getValidade().isBefore(hoje))
+                    .collect(Collectors.toList());
         } else if ("baixo_estoque".equalsIgnoreCase(status)) {
-            produtos = produtos.stream().filter(p -> p.getQuantidadeEmEstoque() <= p.getEstoqueMinimo()).collect(Collectors.toList());
+            produtos = produtos.stream()
+                    // 🔥 BLINDAGEM: Previne NullPointerException se a quantidade ou mínimo vierem nulos do banco
+                    .filter(p -> p.getQuantidadeEmEstoque() != null &&
+                            p.getQuantidadeEmEstoque() <= (p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0))
+                    .collect(Collectors.toList());
         }
 
         return ResponseEntity.ok(produtos);
     }
 
     // 2. EXPORTAR RELATÓRIO PDF
-    // Frontend chama: /api/v1/inventario/exportar
     @GetMapping("/exportar")
     public ResponseEntity<byte[]> exportarRelatorio() {
         try {
-            // Reaproveita a lógica de sugestão de compra ou cria um novo método específico
             List<SugestaoCompraDTO> sugestoes = produtoService.gerarSugestaoCompra();
             byte[] pdfBytes = relatorioService.gerarPdfSugestaoCompras(sugestoes);
 
@@ -69,5 +79,11 @@ public class InventarioController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().build();
         }
+    }
+
+    // 3. O NOVO CÉREBRO DE OPERAÇÕES
+    @GetMapping("/inteligente")
+    public ResponseEntity<List<ProdutoInventarioDTO>> obterInventarioInteligente() {
+        return ResponseEntity.ok(inventarioInteligenteService.gerarRelatorioInteligente());
     }
 }

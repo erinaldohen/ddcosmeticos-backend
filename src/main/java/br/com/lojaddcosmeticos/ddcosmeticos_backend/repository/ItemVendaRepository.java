@@ -15,11 +15,15 @@ import java.util.List;
 @Repository
 public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
 
-    // Busca os itens de uma venda específica
-    List<ItemVenda> findByVendaIdVenda(Long idVenda);
+    // =====================================================================================
+    // 🔥 NOVOS MÉTODOS PARA O MOTOR DE INTELIGÊNCIA DO INVENTÁRIO (CURVA ABC E TENDÊNCIA)
+    // =====================================================================================
 
-    // Conta quantas vezes um produto foi vendido
-    long countByProduto(Produto produto);
+    // Busca todas as vendas de itens após uma data específica (ex: últimos 30 dias)
+    List<ItemVenda> findByVendaDataVendaAfter(LocalDateTime data);
+
+    // Busca todas as vendas de itens num intervalo de datas (ex: do dia 30 ao dia 60 atrás)
+    List<ItemVenda> findByVendaDataVendaBetween(LocalDateTime dataInicio, LocalDateTime dataFim);
 
     // =====================================================================================
     // SOLUÇÃO DE ALTA PERFORMANCE (PROJEÇÃO) PARA EVITAR ERRO DE COMPILAÇÃO NO HIBERNATE 6

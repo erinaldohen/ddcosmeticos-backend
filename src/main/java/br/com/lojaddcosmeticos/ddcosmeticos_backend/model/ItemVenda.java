@@ -65,7 +65,7 @@ public class ItemVenda {
     private String ncm; // NCM daquele exato momento
 
     @Column(length = 4)
-    private String cfop;
+    private String cfop; // CFOP daquele exato momento
 
     @Column(length = 4)
     private String csosn;
@@ -91,12 +91,12 @@ public class ItemVenda {
     private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
 
     // =========================================================================
-    // GATILHOS JPA: Automação do Snapshot
+    // GATILHOS JPA: Automação do Snapshot (Agora 100% blindado para a SEFAZ)
     // =========================================================================
 
     /**
      * Antes de salvar no banco, o Hibernate roda este método.
-     * Ele garante que a "fotografia" do produto seja tirada, mesmo que o dev esqueça de setar no Service.
+     * Ele garante que a "fotografia" do produto (NCM, CFOP, Preço de Custo) seja tirada.
      */
     @PrePersist
     public void registrarFotografiaFiscal() {
@@ -110,7 +110,15 @@ public class ItemVenda {
             if (this.custoUnitarioHistorico == null || this.custoUnitarioHistorico.compareTo(BigDecimal.ZERO) == 0) {
                 this.custoUnitarioHistorico = this.produto.getPrecoCusto();
             }
-            // OBS: Se o seu model de Produto tiver os campos fiscais (NCM, CFOP), pode populá-los aqui também.
+
+            // 🔥 CORREÇÃO: Snapshot das Nomenclaturas Fiscais (Evita notas corrompidas no futuro)
+            if (this.ncm == null || this.ncm.isBlank()) {
+                this.ncm = this.produto.getNcm();
+            }
+            if (this.cfop == null || this.cfop.isBlank()) {
+                this.cfop = this.produto.getCfop();
+            }
+
         } else if (this.descricaoProduto == null || this.descricaoProduto.isBlank()) {
             this.descricaoProduto = "Item Avulso/Desconhecido";
         }

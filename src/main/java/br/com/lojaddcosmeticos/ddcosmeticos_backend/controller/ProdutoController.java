@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -34,7 +35,13 @@ public class ProdutoController {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    // --- LEITURA (MÉTODO UNIFICADO) ---
+    @GetMapping("/ncm/sugestoes")
+    public ResponseEntity<List<Map<String, String>>> buscarSugestoesNcm(@RequestParam String termo) {
+        if (termo == null || termo.length() < 2) {
+            return ResponseEntity.ok(Collections.emptyList());
+        }
+        return ResponseEntity.ok(produtoService.buscarNcmsInteligente(termo));
+    }
 
     @GetMapping
     @Operation(summary = "Lista produtos com filtros avançados")

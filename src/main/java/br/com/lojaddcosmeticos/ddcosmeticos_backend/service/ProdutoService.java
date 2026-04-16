@@ -4,12 +4,14 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ItemVendaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.CosmosService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +36,7 @@ public class ProdutoService {
     @Autowired private CalculadoraFiscalService calculadoraFiscalService;
     @Autowired private AuditoriaService auditoriaService;
     @Autowired private CosmosService cosmosService;
+    @Autowired private ItemVendaRepository itemVendaRepository;
 
     /**
      * Nova busca de NCM ultra-rápida baseada na inteligência do próprio banco de dados.
@@ -55,8 +58,6 @@ public class ProdutoService {
 
             // 2. Se o utilizador digitou números (ex: "3305"), fazemos um "LIKE" rápido no banco
             if (termo.matches("\\d+")) {
-                // Aqui você pode adicionar uma query rápida que busca NCMs que comecem com esses números
-                // Exemplo prático (mockado para devolver o que o utilizador digitou, forçando a validação posterior):
                 Map<String, String> digitado = new HashMap<>();
                 digitado.put("codigo", termo);
                 digitado.put("descricao", "Utilizar código digitado");
@@ -81,15 +82,7 @@ public class ProdutoService {
 
         log.info("🤖 Iniciando análise de IA para o produto: {}", descricao);
 
-        // --------------------------------------------------------------------------------
-        // DICA DE INTEGRAÇÃO: Aqui você chamaria o serviço real da IA (Gemini ou OpenAI)
-        // String prompt = String.format("Aja como um especialista fiscal de cosméticos. Analise este produto: '%s'. " +
-        //        "Retorne APENAS um JSON com as chaves: categoria, subcategoria, ncm, marca.", descricao);
-        // String respostaIaJson = iaService.chamarModelo(prompt);
-        // return parseJsonToMap(respostaIaJson);
-        // --------------------------------------------------------------------------------
-
-        // MOCK TEMPORÁRIO (Simula a resposta da IA para você testar o Frontend agora mesmo)
+        // MOCK TEMPORÁRIO (Simula a resposta da IA)
         Map<String, String> respostaIA = new HashMap<>();
         String descUpper = descricao.toUpperCase();
 
@@ -426,7 +419,7 @@ public class ProdutoService {
     }
 
     // =========================================================================
-    // 🔥 CORREÇÃO: O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
+    // CORREÇÃO: O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
     // =========================================================================
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -438,40 +431,34 @@ public class ProdutoService {
             String ncmAtual = p.getNcm() == null ? "" : p.getNcm().replaceAll("\\D", "");
             String desc = p.getDescricao() != null ? p.getDescricao().toUpperCase() : "";
 
-            // 1. Identifica Anomalias: Produtos de cosmética devem estar no Capítulo 33 ou 34.
-            // Ex: O NCM 12119090 (Plantas/Raízes) para Henna Make-up é um erro comum de cadastro.
             boolean ncmAnomalia = ncmAtual.isEmpty() ||
                     ncmAtual.equals("00000000") ||
                     (!ncmAtual.startsWith("33") && !ncmAtual.startsWith("34"));
 
-            // 2. Inferência de NCM via IA (Regras de Negócio DD Cosméticos)
             String ncmSugerido = ncmAtual;
 
             if (desc.contains("HENNA") || desc.contains("SOBRANCELHA") || desc.contains("MAKE") || desc.contains("BASE ") || desc.contains("PO COMPACTO") || desc.contains("CORRETIVO") || desc.contains("PRIMER") || desc.contains("SERUM")) {
-                ncmSugerido = "33049990"; // Cosméticos diversos / Maquiagem geral
+                ncmSugerido = "33049990";
             } else if (desc.contains("SHAMPOO")) {
                 ncmSugerido = "33051000";
             } else if (desc.contains("CONDICIONADOR") || desc.contains("MASCARA") || desc.contains("ATIVADOR") || desc.contains("CREME CAPILAR") || desc.contains("GELATINA") || desc.contains("LEAVE-IN") || desc.contains("REPARADOR")) {
-                ncmSugerido = "33059000"; // Outras preparações capilares
+                ncmSugerido = "33059000";
             } else if (desc.contains("BATOM") || desc.contains("GLOSS") || desc.contains("LIP")) {
-                ncmSugerido = "33041000"; // Maquiagem lábios
+                ncmSugerido = "33041000";
             } else if (desc.contains("RIMEL") || desc.contains("MASCARA DE CILIOS") || desc.contains("DELINEADOR") || desc.contains("LAPIS DE OLHO")) {
-                ncmSugerido = "33042010"; // Maquiagem olhos
+                ncmSugerido = "33042010";
             } else if (desc.contains("ESMALTE") || desc.contains("ACETONA") || desc.contains("REMOVEDOR")) {
-                ncmSugerido = "33043000"; // Manicuro/Pedicuro
+                ncmSugerido = "33043000";
             } else if (desc.contains("PERFUME") || desc.contains("COLONIA") || desc.contains("FRAGRANCIA")) {
-                ncmSugerido = "33030010"; // Perfumaria
+                ncmSugerido = "33030010";
             } else if (desc.contains("DESODORANTE") || desc.contains("ANTITRANSPIRANTE")) {
-                ncmSugerido = "33072010"; // Desodorantes
+                ncmSugerido = "33072010";
             } else if (desc.contains("SABONETE")) {
-                ncmSugerido = "34011190"; // Sabões
+                ncmSugerido = "34011190";
             }
 
-            // 3. Aplica a correção se sugeriu algo novo ou se o atual for uma anomalia grave
             if (!ncmSugerido.equals(ncmAtual) || ncmAnomalia) {
 
-                // Se a IA não achou palavra-chave exata, mas o NCM atual é anomalia (Ex: 12119090),
-                // tenta um "fallback" buscando por produtos parecidos no banco
                 if (ncmSugerido.equals(ncmAtual) && ncmAnomalia) {
                     try {
                         String ncmBanco = produtoRepository.findNcmInteligente(desc.split(" ")[0]);
@@ -481,11 +468,9 @@ public class ProdutoService {
                     } catch (Exception ignored) {}
                 }
 
-                // Se finalmente temos um NCM diferente, grava-o
                 if (!ncmSugerido.equals(ncmAtual) && !ncmSugerido.isEmpty()) {
                     p.setNcm(ncmSugerido);
 
-                    // Recalcula a tributação Monofásica automaticamente com o NCM novo
                     boolean ehMonofasico = ncmSugerido.startsWith("3303") || ncmSugerido.startsWith("3304") ||
                             ncmSugerido.startsWith("3305") || ncmSugerido.startsWith("3307");
                     p.setIsMonofasico(ehMonofasico);
@@ -585,5 +570,94 @@ public class ProdutoService {
             }
         }
         sugestoes.sort((a, b) -> b.nivelUrgencia().compareTo(a.nivelUrgencia())); return sugestoes;
+    }
+
+    // =======================================================
+    // GAVETA DE CROSS-SELL (PREPARADO PARA IA HÍBRIDA)
+    // =======================================================
+    public List<Produto> buscarSugestoesCrossSell(Long produtoBaseId, int limite) {
+
+        // 🚀 PASSO 1: MACHINE LEARNING ATIVADO! (Aprende com o histórico real da DD Cosméticos)
+        try {
+            List<Long> idsCompradosJuntos = itemVendaRepository.descobrirProdutosMaisCompradosJuntos(produtoBaseId, limite);
+            if (idsCompradosJuntos != null && !idsCompradosJuntos.isEmpty()) {
+                return produtoRepository.findAllById(idsCompradosJuntos);
+            }
+        } catch (Exception e) {
+            log.warn("Erro ao buscar histórico de IA para cross-sell, usando fallback de regras: {}", e.getMessage());
+        }
+
+        // 🧠 PASSO 2: FALLBACK PARA REGRAS (Cold Start)
+        return aplicarRegrasDeNegocio(produtoBaseId, limite);
+    }
+
+    // =======================================================
+    // MOTOR DE REGRAS DE RETAIL (COLD START)
+    // =======================================================
+    private List<Produto> aplicarRegrasDeNegocio(Long produtoBaseId, int limite) {
+        Produto produtoBase = produtoRepository.findById(produtoBaseId).orElse(null);
+
+        // Se o produto não existir, não sugere nada
+        if (produtoBase == null || produtoBase.getSubcategoria() == null || produtoBase.getSubcategoria().trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String subcatBase = produtoBase.getSubcategoria().toUpperCase().trim();
+        List<String> complementosIdeais = new ArrayList<>();
+
+        // MAPA DE ASSOCIAÇÃO DA DD COSMÉTICOS
+        switch (subcatBase) {
+            case "CÍLIOS":
+            case "CILIOS":
+            case "CÍLIOS POSTIÇOS":
+                complementosIdeais.addAll(Arrays.asList("COLA", "COLA PARA CÍLIOS", "PINÇA", "MÁSCARA DE CÍLIOS", "ESCOVINHA"));
+                break;
+            case "HENNA":
+            case "DESIGN DE SOBRANCELHA":
+                complementosIdeais.addAll(Arrays.asList("MISTURADOR", "DAPPEN", "ALGODÃO", "REMOVEDOR", "PINÇA", "LINHA", "PAQUÍMETRO"));
+                break;
+            case "SHAMPOO":
+                complementosIdeais.addAll(Arrays.asList("CONDICIONADOR", "MÁSCARA CAPILAR", "CREME DE PENTEAR", "SÉRUM", "ÓLEO CAPILAR"));
+                break;
+            case "COLORAÇÃO":
+            case "TINTURA":
+                complementosIdeais.addAll(Arrays.asList("ÁGUA OXIGENADA", "OX", "PÓ DESCOLORANTE", "PINCEL", "TIGELA", "LUVAS", "AMPOLA"));
+                break;
+            case "BASE":
+            case "BASE LÍQUIDA":
+            case "CORRETIVO":
+                complementosIdeais.addAll(Arrays.asList("ESPONJA", "PÓ COMPACTO", "PÓ SOLTO", "BRUMA", "PRIMER", "PINCEL"));
+                break;
+            case "ESMALTE":
+                complementosIdeais.addAll(Arrays.asList("ACETONA", "REMOVEDOR DE ESMALTE", "ALGODÃO", "LIXA", "BASE FORTALECEDORA", "EXTRA BRILHO", "PALITO"));
+                break;
+            case "DEPILAÇÃO":
+            case "CERA":
+                complementosIdeais.addAll(Arrays.asList("FOLHA PLÁSTICA", "ÓLEO REMOVEDOR", "LOÇÃO PÓS DEPILAÇÃO", "ESPÁTULA"));
+                break;
+            case "MAQUIAGEM":
+                complementosIdeais.addAll(Arrays.asList("DEMAQUILANTE", "ÁGUA MICELAR", "LENÇO UMEDECIDO"));
+                break;
+            default:
+                break;
+        }
+
+        Pageable limitPage = PageRequest.of(0, limite);
+
+        // 1ª TENTATIVA: Mapeamento Direto
+        if (!complementosIdeais.isEmpty()) {
+            List<Produto> sugestoes = produtoRepository.findComplementares(complementosIdeais, produtoBaseId, limitPage).getContent();
+            if (!sugestoes.isEmpty()) {
+                return sugestoes;
+            }
+        }
+
+        // 2ª TENTATIVA: Fallback Genérico (Mesma categoria, subcategoria diferente)
+        if (produtoBase.getCategoria() != null && !produtoBase.getCategoria().trim().isEmpty()) {
+            return produtoRepository.findByCategoriaAndSubcategoriaNotAndIdNotAndAtivoTrue(
+                    produtoBase.getCategoria(), produtoBase.getSubcategoria(), produtoBaseId, limitPage).getContent();
+        }
+
+        return Collections.emptyList();
     }
 }

@@ -1,7 +1,6 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -16,7 +15,7 @@ import java.util.List;
 public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
 
     // =====================================================================================
-    // 🔥 NOVOS MÉTODOS PARA O MOTOR DE INTELIGÊNCIA DO INVENTÁRIO (CURVA ABC E TENDÊNCIA)
+    // 🔥 MÉTODOS PARA O MOTOR DE INTELIGÊNCIA DO INVENTÁRIO (CURVA ABC E TENDÊNCIA)
     // =====================================================================================
 
     // Busca todas as vendas de itens após uma data específica (ex: últimos 30 dias)
@@ -43,4 +42,23 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
             "GROUP BY i.produto.descricao " +
             "ORDER BY SUM(i.precoUnitario * i.quantidade) DESC")
     List<TopProdutoProjection> findTopProdutos(@Param("dataInicio") LocalDateTime dataInicio, Pageable pageable);
+
+    // =====================================================================================
+    // 🧠 CÉREBRO DE MACHINE LEARNING (MARKET BASKET ANALYSIS - CROSS-SELL)
+    // =====================================================================================
+
+    @Query(value = """
+        SELECT iv2.produto_id 
+        FROM item_venda iv1
+        JOIN item_venda iv2 ON iv1.venda_id = iv2.venda_id
+        JOIN produto p ON iv2.produto_id = p.id
+        WHERE iv1.produto_id = :produtoBaseId 
+          AND iv2.produto_id != :produtoBaseId 
+          AND p.ativo = true
+          AND p.quantidade_em_estoque > 0
+        GROUP BY iv2.produto_id 
+        ORDER BY COUNT(iv2.produto_id) DESC 
+        LIMIT :limite
+    """, nativeQuery = true)
+    List<Long> descobrirProdutosMaisCompradosJuntos(@Param("produtoBaseId") Long produtoBaseId, @Param("limite") int limite);
 }

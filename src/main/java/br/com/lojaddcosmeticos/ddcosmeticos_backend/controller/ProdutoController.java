@@ -215,4 +215,17 @@ public class ProdutoController {
         long pendentes = produtoRepository.countProdutosPendentesDeRevisao();
         return ResponseEntity.ok(pendentes);
     }
+
+    // =======================================================
+    // 🔥 ADICIONE ESTE BLOCO AQUI (Antes do @GetMapping("/{id}"))
+    // =======================================================
+    @GetMapping("/cross-sell")
+    @Operation(summary = "Sugestões inteligentes de produtos complementares (Cross-Sell)")
+    public ResponseEntity<List<Produto>> buscarSugestoesCrossSell(
+            @RequestParam Long produtoBaseId,
+            @RequestParam(defaultValue = "3") int limite) {
+
+        // Retorna as sugestões da IA ou produtos da mesma subcategoria
+        return ResponseEntity.ok(produtoService.buscarSugestoesCrossSell(produtoBaseId, limite));
+    }
 }

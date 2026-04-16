@@ -21,6 +21,8 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     boolean existsByCodigoBarras(String codigoBarras);
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
     List<Produto> findByNcm(String ncm);
+    // --- CROSS-SELL (SUGESTÕES) ---
+    Page<Produto> findBySubcategoriaAndIdNotAndAtivoTrue(String subcategoria, Long id, Pageable pageable);
 
     // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE & CORRIGIDA PARA HIBERNATE 6) ---
     // Utiliza COALESCE para tratar parâmetros booleanos nulos, garantindo compatibilidade PostgreSQL
@@ -160,4 +162,18 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.revisaoPendente = true AND p.ativo = true")
     long countProdutosPendentesDeRevisao();
+
+    // --- CROSS-SELL INTELIGENTE (COMPLEMENTARES) ---
+
+    // 1. Busca por subcategorias complementares exatas mapeadas pela IA
+    @Query("SELECT p FROM Produto p WHERE UPPER(p.subcategoria) IN :subcategorias AND p.id != :id AND p.ativo = true AND p.quantidadeEmEstoque > 0 ORDER BY p.quantidadeEmEstoque DESC")
+    Page<Produto> findComplementares(@Param("subcategorias") List<String> subcategorias, @Param("id") Long id, Pageable pageable);
+
+    // 2. FALLBACK: Mesma Categoria GERAL, mas Subcategoria DIFERENTE (Evita oferecer o mesmo tipo de produto)
+    @Query("SELECT p FROM Produto p WHERE p.categoria = :categoria AND p.subcategoria != :subcategoria AND p.id != :id AND p.ativo = true AND p.quantidadeEmEstoque > 0 ORDER BY p.quantidadeEmEstoque DESC")
+    Page<Produto> findByCategoriaAndSubcategoriaNotAndIdNotAndAtivoTrue(
+            @Param("categoria") String categoria,
+            @Param("subcategoria") String subcategoria,
+            @Param("id") Long id,
+            Pageable pageable);
 }

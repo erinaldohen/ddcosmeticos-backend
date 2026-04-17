@@ -1,0 +1,1 @@
+ALTER TABLE tb_item_venda_aud ADD COLUMN influencia_ia VARCHAR(50);

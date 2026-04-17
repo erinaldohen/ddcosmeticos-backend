@@ -18,10 +18,8 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
     // 🔥 MÉTODOS PARA O MOTOR DE INTELIGÊNCIA DO INVENTÁRIO (CURVA ABC E TENDÊNCIA)
     // =====================================================================================
 
-    // Busca todas as vendas de itens após uma data específica (ex: últimos 30 dias)
     List<ItemVenda> findByVendaDataVendaAfter(LocalDateTime data);
 
-    // Busca todas as vendas de itens num intervalo de datas (ex: do dia 30 ao dia 60 atrás)
     List<ItemVenda> findByVendaDataVendaBetween(LocalDateTime dataInicio, LocalDateTime dataFim);
 
     // =====================================================================================
@@ -61,4 +59,20 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
         LIMIT :limite
     """, nativeQuery = true)
     List<Long> descobrirProdutosMaisCompradosJuntos(@Param("produtoBaseId") Long produtoBaseId, @Param("limite") int limite);
+
+    // =====================================================================================
+    // 📊 QUERIES PARA O DASHBOARD (IMPACTO DA IA) - 🔥 ADICIONADO AQUI 🔥
+    // =====================================================================================
+
+    @Query("SELECT CAST(COALESCE(SUM(i.precoUnitario * i.quantidade), 0) AS bigdecimal) " +
+            "FROM ItemVenda i " +
+            "WHERE i.influenciaIA != br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoInfluenciaIA.NENHUMA " +
+            "AND i.venda.dataVenda >= :dataInicio")
+    BigDecimal calcularRoiIAValor(@Param("dataInicio") LocalDateTime dataInicio);
+
+    @Query("SELECT CAST(COALESCE(SUM(i.quantidade), 0) AS long) " +
+            "FROM ItemVenda i " +
+            "WHERE i.influenciaIA != br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoInfluenciaIA.NENHUMA " +
+            "AND i.venda.dataVenda >= :dataInicio")
+    Long calcularRoiIAItens(@Param("dataInicio") LocalDateTime dataInicio);
 }

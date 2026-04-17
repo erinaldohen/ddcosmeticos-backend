@@ -4,7 +4,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AuditoriaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.DashboardResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.dashboard.FiscalDashboardDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.relatorio.ProdutoRankingDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
@@ -12,7 +11,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,11 +29,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DashboardService {
 
-    private final EntityManager em;
+    private final EntityManager entityManager;
     private final ProdutoRepository produtoRepository;
-    private final VendaRepository vendaRepository;
-    private final ContaPagarRepository contaPagarRepository;
     private final ConfiguracaoLojaRepository configuracaoRepository;
+    private final ItemVendaRepository itemVendaRepository;
 
     @Transactional(readOnly = true)
     public Long contarProdutosPendentesDeRevisao() {
@@ -66,7 +63,6 @@ public class DashboardService {
             config = configuracaoRepository.findAll().stream().findFirst().orElse(null);
         } catch (Exception e) { log.warn("Aviso ao ler Configurações."); }
 
-        // Inicializa com ZERO. O Dashboard só mostrará meta se estiver configurado no banco!
         BigDecimal metaMensal = BigDecimal.ZERO;
         BigDecimal metaDiariaConfig = BigDecimal.ZERO;
 
@@ -80,7 +76,7 @@ public class DashboardService {
         }
 
         // ==============================================================================
-        // EXTRAÇÃO DE DADOS MESTRA
+        // EXTRAÇÃO DE DADOS
         // ==============================================================================
 
         BigDecimal faturamentoPeriodo = BigDecimal.ZERO;
@@ -90,7 +86,7 @@ public class DashboardService {
         Map<String, BigDecimal> mapaDias = new TreeMap<>();
         DateTimeFormatter fmtDia = DateTimeFormatter.ofPattern("dd/MM");
 
-        List<Object[]> vendasRaw = em.createQuery(
+        List<Object[]> vendasRaw = entityManager.createQuery(
                         "SELECT v.valorTotal, v.descontoTotal, v.dataVenda FROM Venda v " +
                                 "WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce <> :statusCancelada", Object[].class)
                 .setParameter("inicio", inicioRef)
@@ -114,7 +110,7 @@ public class DashboardService {
         }
 
         List<Map<String, Object>> formasPagamentoList = new ArrayList<>();
-        List<Object[]> pagamentosRaw = em.createQuery(
+        List<Object[]> pagamentosRaw = entityManager.createQuery(
                         "SELECT p.formaPagamento, SUM(p.valor) FROM PagamentoVenda p JOIN p.venda v " +
                                 "WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce <> :statusCancelada GROUP BY p.formaPagamento", Object[].class)
                 .setParameter("inicio", inicioRef)
@@ -134,7 +130,7 @@ public class DashboardService {
         Map<String, BigDecimal> faturamentoPorCategoria = new HashMap<>();
         Map<String, BigDecimal> faturamentoPorProduto = new HashMap<>();
 
-        List<Object[]> itensRaw = em.createQuery(
+        List<Object[]> itensRaw = entityManager.createQuery(
                         "SELECT p.categoria, p.descricao, SUM(i.precoUnitario * i.quantidade), " +
                                 "SUM(COALESCE(i.custoUnitarioHistorico, p.precoCusto) * i.quantidade), COUNT(i) " +
                                 "FROM ItemVenda i JOIN i.produto p JOIN i.venda v " +
@@ -159,7 +155,7 @@ public class DashboardService {
         }
 
         List<Map<String, Object>> performanceVendedores = new ArrayList<>();
-        List<Object[]> vendRaw = em.createQuery(
+        List<Object[]> vendRaw = entityManager.createQuery(
                         "SELECT u.nome, COUNT(DISTINCT v.idVenda), SUM(v.valorTotal) FROM Venda v JOIN v.usuario u " +
                                 "WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce <> :statusCancelada GROUP BY u.nome", Object[].class)
                 .setParameter("inicio", inicioRef)
@@ -184,12 +180,12 @@ public class DashboardService {
                 diaAtual, daquiA7Dias, StatusConta.PAGO);
 
         Map<String, Object> fluxo7Dias = new HashMap<>();
-        fluxo7Dias.put("receitasPrevistas", faturamentoPeriodo); // Usando fat atual como estimativa
+        fluxo7Dias.put("receitasPrevistas", faturamentoPeriodo);
         fluxo7Dias.put("despesasPrevistas", totalDespesas);
         fluxo7Dias.put("saldoProjetado", faturamentoPeriodo.subtract(totalDespesas));
 
         // ==============================================================================
-        // FORMATAR PARA O FRONTEND
+        // FORMATAR E CALCULAR KPI'S
         // ==============================================================================
         BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoPeriodo.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensPeriodo / quantidadeVendas : 0.0;
@@ -207,35 +203,39 @@ public class DashboardService {
 
         List<Map<String, Object>> vendasPorHora = new ArrayList<>();
         for (int h = 8; h <= 20; h++) {
-            Map<String, Object> m = new HashMap<>(); m.put("horaStr", String.format("%02dh", h)); m.put("qtd", agrupadoPorHora.getOrDefault(h, 0)); vendasPorHora.add(m);
+            Map<String, Object> m = new HashMap<>();
+            m.put("hora", String.format("%02dh", h));
+            m.put("qtd", agrupadoPorHora.getOrDefault(h, 0));
+            vendasPorHora.add(m);
         }
 
         List<Map<String, Object>> graficoVendas = mapaDias.entrySet().stream().map(e -> {
             Map<String, Object> m = new HashMap<>(); m.put("data", e.getKey()); m.put("total", e.getValue()); return m;
         }).collect(Collectors.toList());
 
-        // Gestão Simplificada do Estoque para evitar erro
         Map<String, Object> inventarioNode = new HashMap<>();
         inventarioNode.put("indiceRuptura", "0.0");
-
-        Map<String, Object> riscoVencMap = new HashMap<>();
-        riscoVencMap.put("itens", 0);
-        riscoVencMap.put("valorRisco", BigDecimal.ZERO);
-        inventarioNode.put("produtosVencendo", riscoVencMap);
-
-        Map<String, Object> riscoCMap = new HashMap<>();
-        riscoCMap.put("itens", 0);
-        riscoCMap.put("valorImobilizado", BigDecimal.ZERO);
-        inventarioNode.put("estoqueCurvaC", riscoCMap);
-
-        Map<String, Object> vendasPerdidas = new HashMap<>();
-        vendasPerdidas.put("quantidade", 0);
-        vendasPerdidas.put("valorEstimado", BigDecimal.ZERO);
-        inventarioNode.put("vendasPerdidas", vendasPerdidas);
+        Map<String, Object> riscoVencMap = new HashMap<>(); riscoVencMap.put("itens", 0); riscoVencMap.put("valorRisco", BigDecimal.ZERO); inventarioNode.put("produtosVencendo", riscoVencMap);
+        Map<String, Object> riscoCMap = new HashMap<>(); riscoCMap.put("itens", 0); riscoCMap.put("valorImobilizado", BigDecimal.ZERO); inventarioNode.put("estoqueCurvaC", riscoCMap);
+        Map<String, Object> vendasPerdidas = new HashMap<>(); vendasPerdidas.put("quantidade", 0); vendasPerdidas.put("valorEstimado", BigDecimal.ZERO); inventarioNode.put("vendasPerdidas", vendasPerdidas);
 
         int diasPassados = Math.max(1, ("hoje".equals(periodo) ? 1 : agora.getDayOfMonth()));
         int diasNoMes = YearMonth.from(inicioRef).lengthOfMonth();
         BigDecimal runRate = faturamentoPeriodo.divide(new BigDecimal(diasPassados), 2, RoundingMode.HALF_UP).multiply(new BigDecimal(diasNoMes));
+
+        // 🔥 O VERDADEIRO MOTOR DO IMPACTO DA IA
+        BigDecimal roiValor = BigDecimal.ZERO;
+        Long roiItens = 0L;
+        try {
+            roiValor = itemVendaRepository.calcularRoiIAValor(inicioRef);
+            roiItens = itemVendaRepository.calcularRoiIAItens(inicioRef);
+        } catch (Exception e) {
+            log.error("Erro ao calcular ROI da IA: {}", e.getMessage());
+        }
+
+        Map<String, Object> inteligenciaNode = new HashMap<>();
+        inteligenciaNode.put("roiValor", roiValor != null ? roiValor : BigDecimal.ZERO);
+        inteligenciaNode.put("roiItens", roiItens != null ? roiItens : 0L);
 
         Map<String, Object> financeiro = new HashMap<>();
         financeiro.put("faturamentoHoje", faturamentoPeriodo);
@@ -249,15 +249,9 @@ public class DashboardService {
         financeiro.put("formasPagamento", formasPagamentoList);
         financeiro.put("vendasPorHora", vendasPorHora);
         financeiro.put("graficoVendas", graficoVendas);
-        financeiro.put("origemVendas", new ArrayList<>()); // Removido para evitar erro
-        financeiro.put("taxaRecorrencia", 0.0); // Removido para evitar erro
         financeiro.put("fluxoCaixa7Dias", fluxo7Dias);
         financeiro.put("crescimentoMoM", 0.0);
         financeiro.put("runRate", runRate);
-
-        Map<String, Object> inteligenciaVendas = new HashMap<>();
-        inteligenciaVendas.put("roiValor", BigDecimal.ZERO);
-        inteligenciaVendas.put("roiItens", 0L);
 
         Map<String, Object> response = new HashMap<>();
         response.put("financeiro", financeiro);
@@ -265,16 +259,18 @@ public class DashboardService {
         response.put("topProdutos", topProdutosList);
         response.put("performanceVendedores", performanceVendedores);
         response.put("inventario", inventarioNode);
-        response.put("metaDiaria", metaDiariaConfig.compareTo(BigDecimal.ZERO) > 0 ? metaDiariaConfig : metaMensal.divide(new BigDecimal(diasNoMes), 2, RoundingMode.HALF_UP));
+        response.put("inteligencia", inteligenciaNode); // 🔥 NÓ DA IA ADICIONADO AO RESPONSE
+
+        int diasNoMesFim = diasNoMes;
+        response.put("metaDiaria", metaDiariaConfig.compareTo(BigDecimal.ZERO) > 0 ? metaDiariaConfig : metaMensal.divide(new BigDecimal(diasNoMesFim), 2, RoundingMode.HALF_UP));
         response.put("metaMensal", metaMensal);
-        response.put("inteligencia", inteligenciaVendas);
 
         return response;
     }
 
     private BigDecimal safeQueryVal(String hql, LocalDate inicio, LocalDate fim, Object statusObj) {
         try {
-            BigDecimal res = em.createQuery(hql, BigDecimal.class)
+            BigDecimal res = entityManager.createQuery(hql, BigDecimal.class)
                     .setParameter("h", inicio)
                     .setParameter("d", fim)
                     .setParameter("status", statusObj)
@@ -284,8 +280,6 @@ public class DashboardService {
             return BigDecimal.ZERO;
         }
     }
-
-    private BigDecimal safeBigDecimal(BigDecimal valor) { return valor != null ? valor : BigDecimal.ZERO; }
 
     // Mock Methods para compatibilidade de Interfaces do Controller
     @Transactional(readOnly = true)

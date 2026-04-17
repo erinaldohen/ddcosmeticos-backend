@@ -1,0 +1,1 @@
+ALTER TABLE tb_item_venda ADD COLUMN influencia_ia VARCHAR(50) DEFAULT 'NENHUMA';

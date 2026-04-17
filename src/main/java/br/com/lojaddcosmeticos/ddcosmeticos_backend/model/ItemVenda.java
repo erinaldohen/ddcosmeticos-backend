@@ -51,6 +51,10 @@ public class ItemVenda {
     @Column(precision = 15, scale = 4)
     private BigDecimal custoUnitarioHistorico = BigDecimal.ZERO;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "influencia_ia")
+    private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
+
     // =========================================================================
     // BLINDAGEM FISCAL: Fotografia exata no momento da venda (Imutável)
     // =========================================================================
@@ -85,10 +89,6 @@ public class ItemVenda {
     // =========================================================================
     // INTELIGÊNCIA ARTIFICIAL E RASTREIO DE SUGESTÕES NO PDV
     // =========================================================================
-
-    @Enumerated(EnumType.STRING)
-    @Column(length = 20)
-    private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
 
     // =========================================================================
     // GATILHOS JPA: Automação do Snapshot (Agora 100% blindado para a SEFAZ)

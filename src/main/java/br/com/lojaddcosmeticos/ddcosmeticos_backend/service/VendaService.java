@@ -201,6 +201,12 @@ public class VendaService {
             item.setDesconto(nvl(itemDto.desconto()));
             item.setCustoUnitarioHistorico(nvl(produto.getPrecoCusto()));
 
+            // 🔥 CORREÇÃO: Utilizando a sintaxe de Record (sem 'get')
+            if (itemDto.influenciaIA() != null) {
+                item.setInfluenciaIA(itemDto.influenciaIA());
+            } else {
+                item.setInfluenciaIA(TipoInfluenciaIA.NENHUMA);
+            }
             return item;
         }).collect(Collectors.toList());
 
@@ -599,7 +605,20 @@ public class VendaService {
             Produto p = mapProdutos.get(dto.produtoId());
             if (p == null) throw new ResourceNotFoundException("Produto não encontrado: " + dto.produtoId());
 
-            ItemVenda i = new ItemVenda(); i.setVenda(venda); i.setProduto(p); i.setQuantidade(dto.quantidade()); i.setPrecoUnitario(nvl(dto.precoUnitario())); i.setDesconto(nvl(dto.desconto()));
+            ItemVenda i = new ItemVenda();
+            i.setVenda(venda);
+            i.setProduto(p);
+            i.setQuantidade(dto.quantidade());
+            i.setPrecoUnitario(nvl(dto.precoUnitario()));
+            i.setDesconto(nvl(dto.desconto()));
+
+            // 🔥 CORREÇÃO: Registando a IA também nas vendas suspensas (Orçamentos)
+            if (dto.influenciaIA() != null) {
+                i.setInfluenciaIA(dto.influenciaIA());
+            } else {
+                i.setInfluenciaIA(TipoInfluenciaIA.NENHUMA);
+            }
+
             if (venda.getItens() == null) venda.setItens(new ArrayList<>());
             venda.getItens().add(i);
             total = total.add(i.getPrecoUnitario().multiply(new BigDecimal(String.valueOf(i.getQuantidade()))).subtract(i.getDesconto()));

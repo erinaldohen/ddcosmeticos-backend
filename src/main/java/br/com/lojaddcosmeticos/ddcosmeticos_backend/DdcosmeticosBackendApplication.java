@@ -3,51 +3,56 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.config.NfeConfig;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.SefazDistribuicaoService;
 import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
-import jakarta.annotation.PostConstruct; // Importante
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
-import org.springframework.scheduling.annotation.EnableAsync;
-
-import java.util.TimeZone;
 
 @SpringBootApplication
 @EnableCaching
-@EnableAsync
 public class DdcosmeticosBackendApplication {
 
+    @Autowired
+    private SefazDistribuicaoService sefazDistribuicaoService;
+
+    @Autowired
+    private NfeConfig nfeConfigBuilder;
+
     public static void main(String[] args) {
+
+        // 🔥 A SOLUÇÃO DEFINITIVA PARA A SEFAZ PE 🔥
+        // 1. Força a utilização exclusiva do TLSv1.2 (rejeita o 1.3 que a SEFAZ não suporta bem)
+        System.setProperty("https.protocols", "TLSv1.2");
+        System.setProperty("jdk.tls.client.protocols", "TLSv1.2");
+
+        // 2. Desliga a extensão SNI (Server Name Indication)
+        // Os Load Balancers antigos da SEFAZ rejeitam conexões Java modernas que enviam SNI,
+        // resultando no temido erro "Connection or outbound has closed".
+        System.setProperty("jsse.enableSNIExtension", "false");
+
         SpringApplication.run(DdcosmeticosBackendApplication.class, args);
     }
 
-    // --- ADICIONE ISTO AQUI ---
-    @PostConstruct
-    public void init() {
-        // Força o sistema a rodar no horário de Brasília/Recife, independente do servidor
-        TimeZone.setDefault(TimeZone.getTimeZone("America/Sao_Paulo"));
-    }
-
+    // --- TESTE DE CHOQUE ---
     @Bean
-    public CommandLineRunner testarMotorSefaz(SefazDistribuicaoService sefazService, NfeConfig nfeConfig) {
+    public CommandLineRunner testarMotorSefaz() {
         return args -> {
+            System.out.println("==============================================");
+            System.out.println("🔥 TESTE DE CHOQUE: A ARRANCAR MOTOR SEFAZ...");
             try {
-                System.out.println("==============================================");
-                System.out.println("🔥 TESTE DE CHOQUE: A ARRANCAR MOTOR SEFAZ...");
+                ConfiguracoesNfe config = nfeConfigBuilder.construirConfiguracaoDinamica(true);
+                String cnpjEmpresa = config.getCertificado().getCnpjCpf();
 
-                // Força produção para ver notas reais
-                ConfiguracoesNfe config = nfeConfig.construirConfiguracaoDinamica(true);
-                String cnpjReal = config.getCertificado().getCnpjCpf();
-                sefazService.buscarNovasNotasNaSefaz(config, cnpjReal);
+                sefazDistribuicaoService.buscarNovasNotasNaSefaz(config, cnpjEmpresa);
 
-                System.out.println("✅ TESTE DE CHOQUE CONCLUÍDO!");
-                System.out.println("==============================================");
+                System.out.println("✅ TESTE BEM SUCEDIDO!");
             } catch (Exception e) {
-                System.err.println("❌ FALHA NO TESTE DE CHOQUE:");
+                System.out.println("❌ FALHA NO TESTE DE CHOQUE:");
                 e.printStackTrace();
-                System.out.println("==============================================");
             }
+            System.out.println("==============================================");
         };
     }
 }

@@ -9,7 +9,6 @@ import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
 import br.com.swconsultoria.nfe.dom.enuns.AmbienteEnum;
 import br.com.swconsultoria.nfe.dom.enuns.EstadosEnum;
 import br.com.swconsultoria.nfe.exception.NfeException;
-import org.apache.commons.httpclient.protocol.Protocol;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -35,11 +34,6 @@ public class NfeConfig {
         }
 
         Certificado certificado = CertificadoService.certificadoPfxBytes(bytesCertificado, senhaCertificado);
-
-        // 🔥 CRITICAL FIX: Intercept the Apache Commons HTTP protocol
-        // This forces the underlying Axis2 library used by swconsultoria
-        // to use our custom SSL context (TLSv1.2, accept all certs).
-        Protocol.registerProtocol("https", new Protocol("https", new SefazSslContextFactory(), 443));
 
         return ConfiguracoesNfe.criarConfiguracoes(
                 EstadosEnum.PE,

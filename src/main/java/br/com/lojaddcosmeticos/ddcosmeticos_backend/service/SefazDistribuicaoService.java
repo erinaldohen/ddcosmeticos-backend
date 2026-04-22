@@ -17,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 @Service
@@ -37,7 +40,7 @@ public class SefazDistribuicaoService {
         int lotesProcessados = 0;
         boolean temMaisNotas = true;
 
-        while (temMaisNotas && lotesProcessados < 10) {
+        while (temMaisNotas && lotesProcessados < 50) {
             String ultimoNsu = controleNsu.getUltimoNsu();
             String ultimoNsuFormatado = String.format("%015d", Long.parseLong(ultimoNsu));
 
@@ -47,15 +50,13 @@ public class SefazDistribuicaoService {
 
             System.out.println("🚀 [SEFAZ] NSU Pesquisado: " + ultimoNsuFormatado + " | Status: " + retorno.getCStat() + " (" + retorno.getXMotivo() + ")");
 
-            // 🔥 SURPRESA 2: A MÁGICA DO NSU!
-            // 138 = Achou notas | 137 = Não tem notas neste exato NSU, MAS o ponteiro deve andar!
             if ("138".equals(retorno.getCStat()) || "137".equals(retorno.getCStat())) {
 
-                // Grava o novo NSU independente de ter vindo XML ou não
+                // Atualiza o ponteiro de onde parámos
                 controleNsu.setUltimoNsu(retorno.getUltNSU());
                 nsuRepository.save(controleNsu);
 
-                // Se houver XMLs anexados, descompacta e salva
+                // Descompacta os documentos encontrados
                 if (retorno.getLoteDistDFeInt() != null) {
                     for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
                         String schema = docZip.getSchema();
@@ -70,35 +71,40 @@ public class SefazDistribuicaoService {
                     }
                 }
 
-                // Verifica se já encostou no teto da SEFAZ
                 long ultNsuAtual = Long.parseLong(retorno.getUltNSU());
                 long maxNsuSefaz = Long.parseLong(retorno.getMaxNSU());
+                long distancia = maxNsuSefaz - ultNsuAtual;
+
+                System.out.println("📊 [RADAR NSU] Posição Atual: " + ultNsuAtual + " | Teto SEFAZ: " + maxNsuSefaz + " | Faltam: " + distancia + " eventos.");
 
                 if (ultNsuAtual >= maxNsuSefaz) {
-                    temMaisNotas = false; // Bateu no teto. Sai do loop.
+                    System.out.println("✅ Fila da SEFAZ 100% Esvaziada e Atualizada!");
+                    temMaisNotas = false;
                 }
 
             } else {
-                // Se der erro 656 (Consumo Indevido), paramos imediatamente para não bloquear o CNPJ
+                System.out.println("🛑 Resposta não esperada ou Consumo Indevido. Pausando busca.");
                 temMaisNotas = false;
             }
 
             lotesProcessados++;
 
-            // Pausa de 1 segundo entre chamadas para sermos amigáveis com o servidor do Governo
-            Thread.sleep(1000);
+            if (temMaisNotas) {
+                Thread.sleep(1000);
+            }
         }
     }
 
     // =========================================================
-    // MÉTODOS AUXILIARES
+    // MÉTODOS AUXILIARES CORRIGIDOS
     // =========================================================
 
     private void salvarNotaPendente(String xml, String nsu, String status) {
-        String chaveAcesso = extrairTagXml(xml, "chNFe");
+        String chaveAcesso = extrairComRegex(xml, "chNFe");
 
         if (chaveAcesso == null || notaPendenteRepository.existsByChaveAcesso(chaveAcesso)) {
-            return; // Impede duplicidade
+            System.out.println("⚠️ Nota ignorada. Chave nula ou já existe: " + chaveAcesso);
+            return;
         }
 
         NotaPendenteImportacao nota = new NotaPendenteImportacao();
@@ -106,20 +112,51 @@ public class SefazDistribuicaoService {
         nota.setNsu(nsu);
         nota.setXmlCompleto(xml);
         nota.setStatus(status);
-        nota.setNomeFornecedor(extrairTagXml(xml, "xNome"));
-        nota.setCnpjFornecedor(extrairTagXml(xml, "CNPJ"));
+
+        // Data de captura atual
+        nota.setDataCaptura(LocalDateTime.now());
+
+        // Extrações robustas (Tolerantes a Resumo ou Completa)
+        String nomeFornecedor = extrairComRegex(xml, "xNome");
+        if (nomeFornecedor == null) nomeFornecedor = "Fornecedor da Chave " + chaveAcesso.substring(0, 14); // Fallback
+
+        String cnpjFornecedor = extrairComRegex(xml, "CNPJ");
+        if (cnpjFornecedor == null) cnpjFornecedor = extrairComRegex(xml, "CPF"); // Pode ser produtor rural
+
+        // Extrai a data e o valor (crucial para o frontend não quebrar)
+        String dhEmi = extrairComRegex(xml, "dhEmi");
+        if (dhEmi != null && dhEmi.length() >= 19) {
+            try {
+                // Tenta fazer o parse básico (Ex: 2026-04-20T10:30:00-03:00)
+                nota.setDataEmissao(LocalDateTime.parse(dhEmi.substring(0, 19)));
+            } catch (Exception e) {}
+        }
+
+        String vNF = extrairComRegex(xml, "vNF");
+        if (vNF != null) {
+            try {
+                nota.setValorTotal(new java.math.BigDecimal(vNF));
+            } catch (Exception e) {}
+        }
+
+        nota.setNomeFornecedor(nomeFornecedor);
+        nota.setCnpjFornecedor(cnpjFornecedor);
 
         notaPendenteRepository.save(nota);
+        System.out.println("💾 Nova nota salva no Banco! Chave: " + chaveAcesso);
     }
 
-    private String extrairTagXml(String xml, String tag) {
-        try {
-            String tagAbertura = "<" + tag + ">";
-            String tagFecho = "</" + tag + ">";
-            if (xml.contains(tagAbertura) && xml.contains(tagFecho)) {
-                return xml.split(tagAbertura)[1].split(tagFecho)[0];
-            }
-        } catch (Exception e) { }
+    /**
+     * 🔥 EXTRATOR À PROVA DE BALA (REGEX)
+     * Procura a tag independentemente de namespaces ou quebras de linha.
+     */
+    private String extrairComRegex(String xml, String tagName) {
+        // Regex: procura por <tagName> ou <ns:tagName> e extrai o valor até fechar a tag
+        Pattern pattern = Pattern.compile("<(?:\\w+:)?(" + tagName + ")[^>]*>(.*?)</(?:\\w+:)?\\1>", Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(xml);
+        if (matcher.find()) {
+            return matcher.group(2).trim(); // O conteúdo está no grupo 2
+        }
         return null;
     }
 
@@ -133,33 +170,27 @@ public class SefazDistribuicaoService {
             return bos.toString(StandardCharsets.UTF_8);
         }
     }
-    // 🔥 A NOVA ROTA: Busca direta (Sniper) ignorando a fila
+
     @Transactional
     public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe config, String cnpjEmpresa, String chaveAcesso) throws Exception {
-
-        // Remove espaços ou pontuações que o utilizador possa ter colado
         chaveAcesso = chaveAcesso.replaceAll("\\D", "");
 
         if (chaveAcesso.length() != 44) {
             throw new RuntimeException("A chave de acesso deve ter exatamente 44 números.");
         }
 
-        // Faz o pedido EXATO para essa chave
         RetDistDFeInt retorno = Nfe.distribuicaoDfe(
                 config, PessoaEnum.JURIDICA, cnpjEmpresa, ConsultaDFeEnum.CHAVE, chaveAcesso
         );
 
-        // 138 = Documento Localizado
         if ("138".equals(retorno.getCStat()) && retorno.getLoteDistDFeInt() != null) {
             for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
                 String xml = descompactarGZip(docZip.getValue());
-                // Força o status para PRONTO, pois fomos buscar a nota na íntegra
                 salvarNotaPendente(xml, docZip.getNSU(), "PRONTO_IMPORTACAO");
             }
             return "Nota " + chaveAcesso + " localizada e descarregada com sucesso!";
         }
 
-        // Se a SEFAZ recusar, atira o motivo real (ex: "Nota não existe", "Apenas Resumo Disponível")
         throw new RuntimeException("A SEFAZ respondeu: " + retorno.getXMotivo());
     }
 }

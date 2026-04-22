@@ -10,12 +10,9 @@ import br.com.swconsultoria.nfe.dom.enuns.ConsultaDFeEnum;
 import br.com.swconsultoria.nfe.dom.enuns.PessoaEnum;
 import br.com.swconsultoria.nfe.schema.distdfeint.DistDFeInt;
 import br.com.swconsultoria.nfe.schema.retdistdfeint.RetDistDFeInt;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.PostMapping;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -34,68 +31,62 @@ public class SefazDistribuicaoService {
     @Transactional
     public void buscarNovasNotasNaSefaz(ConfiguracoesNfe config, String cnpjEmpresa) throws Exception {
 
-        // 1. Busca o último NSU na base de dados (se não existir, começa do 0)
         ControleSefazNsu controleNsu = nsuRepository.findByCnpjEmpresa(cnpjEmpresa)
                 .orElse(new ControleSefazNsu(cnpjEmpresa, "0"));
 
-        // 🔥 Lógica da Paginação Corrigida e Declarada!
         int lotesProcessados = 0;
         boolean temMaisNotas = true;
 
-        // O robô vai rodar até a SEFAZ dizer que não tem mais notas, limitado a 10 ciclos por vez (500 notas)
         while (temMaisNotas && lotesProcessados < 10) {
-
-            // Lemos o NSU atualizado a cada volta do loop
             String ultimoNsu = controleNsu.getUltimoNsu();
             String ultimoNsuFormatado = String.format("%015d", Long.parseLong(ultimoNsu));
 
-            // 2. Executa a busca na SEFAZ
             RetDistDFeInt retorno = Nfe.distribuicaoDfe(
-                    config,
-                    PessoaEnum.JURIDICA,  // Tipo de Pessoa
-                    cnpjEmpresa,          // CNPJ da DD Cosméticos
-                    ConsultaDFeEnum.NSU,  // Vamos pesquisar a partir do último NSU
-                    ultimoNsuFormatado    // O número com os 15 zeros à esquerda
+                    config, PessoaEnum.JURIDICA, cnpjEmpresa, ConsultaDFeEnum.NSU, ultimoNsuFormatado
             );
 
-            // 🔥 ADICIONEM ESTAS 3 LINHAS DE LOG AQUI:
-            System.out.println("=========================================");
-            System.out.println("RESPOSTA SEFAZ - Status: " + retorno.getCStat() + " | Motivo: " + retorno.getXMotivo());
-            System.out.println("NSU Pesquisado: " + ultimoNsuFormatado + " | Max NSU SEFAZ: " + retorno.getMaxNSU());
-            System.out.println("=========================================");
+            System.out.println("🚀 [SEFAZ] NSU Pesquisado: " + ultimoNsuFormatado + " | Status: " + retorno.getCStat() + " (" + retorno.getXMotivo() + ")");
 
-            // 3. Processa os documentos encontrados
-            if (retorno.getLoteDistDFeInt() != null) {
-                for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
-                    String schema = docZip.getSchema();
+            // 🔥 SURPRESA 2: A MÁGICA DO NSU!
+            // 138 = Achou notas | 137 = Não tem notas neste exato NSU, MAS o ponteiro deve andar!
+            if ("138".equals(retorno.getCStat()) || "137".equals(retorno.getCStat())) {
 
-                    // Descompacta os bytes zipados da SEFAZ para uma String legível (XML)
-                    String xmlDescompactado = descompactarGZip(docZip.getValue());
-                    String nsuDoDocumento = docZip.getNSU();
-
-                    if (schema.startsWith("resNFe")) {
-                        salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
-                    } else if (schema.startsWith("procNFe")) {
-                        salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
-                    }
-                }
-
-                // 4. Salva o Último NSU devolvido pela SEFAZ para a próxima pesquisa
+                // Grava o novo NSU independente de ter vindo XML ou não
                 controleNsu.setUltimoNsu(retorno.getUltNSU());
                 nsuRepository.save(controleNsu);
 
-                // 5. Verifica se chegou ao fim das notas na SEFAZ
+                // Se houver XMLs anexados, descompacta e salva
+                if (retorno.getLoteDistDFeInt() != null) {
+                    for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
+                        String schema = docZip.getSchema();
+                        String xmlDescompactado = descompactarGZip(docZip.getValue());
+                        String nsuDoDocumento = docZip.getNSU();
+
+                        if (schema.startsWith("resNFe")) {
+                            salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
+                        } else if (schema.startsWith("procNFe")) {
+                            salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
+                        }
+                    }
+                }
+
+                // Verifica se já encostou no teto da SEFAZ
                 long ultNsuAtual = Long.parseLong(retorno.getUltNSU());
                 long maxNsuSefaz = Long.parseLong(retorno.getMaxNSU());
 
                 if (ultNsuAtual >= maxNsuSefaz) {
-                    temMaisNotas = false; // Acabou o histórico! Sair do Loop.
+                    temMaisNotas = false; // Bateu no teto. Sai do loop.
                 }
+
             } else {
-                temMaisNotas = false; // SEFAZ não devolveu lote válido
+                // Se der erro 656 (Consumo Indevido), paramos imediatamente para não bloquear o CNPJ
+                temMaisNotas = false;
             }
 
-            lotesProcessados++; // Conta mais um ciclo
+            lotesProcessados++;
+
+            // Pausa de 1 segundo entre chamadas para sermos amigáveis com o servidor do Governo
+            Thread.sleep(1000);
         }
     }
 
@@ -106,9 +97,8 @@ public class SefazDistribuicaoService {
     private void salvarNotaPendente(String xml, String nsu, String status) {
         String chaveAcesso = extrairTagXml(xml, "chNFe");
 
-        // Se a chave não for encontrada ou a nota já estiver no banco, ignoramos
         if (chaveAcesso == null || notaPendenteRepository.existsByChaveAcesso(chaveAcesso)) {
-            return;
+            return; // Impede duplicidade
         }
 
         NotaPendenteImportacao nota = new NotaPendenteImportacao();
@@ -116,15 +106,12 @@ public class SefazDistribuicaoService {
         nota.setNsu(nsu);
         nota.setXmlCompleto(xml);
         nota.setStatus(status);
-
-        // Tenta extrair o nome e CNPJ do fornecedor do XML (Tags <xNome> e <CNPJ>)
         nota.setNomeFornecedor(extrairTagXml(xml, "xNome"));
         nota.setCnpjFornecedor(extrairTagXml(xml, "CNPJ"));
 
         notaPendenteRepository.save(nota);
     }
 
-    // Extrator rápido de tags usando String (mais leve que instanciar um DocumentBuilder para cada nota)
     private String extrairTagXml(String xml, String tag) {
         try {
             String tagAbertura = "<" + tag + ">";
@@ -132,40 +119,47 @@ public class SefazDistribuicaoService {
             if (xml.contains(tagAbertura) && xml.contains(tagFecho)) {
                 return xml.split(tagAbertura)[1].split(tagFecho)[0];
             }
-        } catch (Exception e) {
-            // Retorna null se não conseguir ler
-        }
+        } catch (Exception e) { }
         return null;
     }
 
-    // Descompactador Nativo de GZIP em Java
     private String descompactarGZip(byte[] bytesCompactados) throws Exception {
         try (ByteArrayInputStream bis = new ByteArrayInputStream(bytesCompactados);
              GZIPInputStream gis = new GZIPInputStream(bis);
              ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-
             byte[] buffer = new byte[1024];
             int len;
-            while ((len = gis.read(buffer)) > 0) {
-                bos.write(buffer, 0, len);
-            }
+            while ((len = gis.read(buffer)) > 0) { bos.write(buffer, 0, len); }
             return bos.toString(StandardCharsets.UTF_8);
         }
     }
-    @PostMapping("/sincronizar")
-    public ResponseEntity<String> forcarSincronizacaoSefaz() {
-        try {
-            // TODO: A vossa equipa deve instanciar a ConfiguracoesNfe e o CNPJ da empresa aqui
-            // (Usando a mesma lógica que o vosso SefazScheduler usa)
-            // ConfiguracoesNfe config = ...
-            // String cnpjEmpresa = ...
+    // 🔥 A NOVA ROTA: Busca direta (Sniper) ignorando a fila
+    @Transactional
+    public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe config, String cnpjEmpresa, String chaveAcesso) throws Exception {
 
-            // Chama o robô manualmente
-            // sefazDistribuicaoService.buscarNovasNotasNaSefaz(config, cnpjEmpresa);
+        // Remove espaços ou pontuações que o utilizador possa ter colado
+        chaveAcesso = chaveAcesso.replaceAll("\\D", "");
 
-            return ResponseEntity.ok("Sincronização com a SEFAZ concluída!");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Erro ao comunicar com a SEFAZ: " + e.getMessage());
+        if (chaveAcesso.length() != 44) {
+            throw new RuntimeException("A chave de acesso deve ter exatamente 44 números.");
         }
+
+        // Faz o pedido EXATO para essa chave
+        RetDistDFeInt retorno = Nfe.distribuicaoDfe(
+                config, PessoaEnum.JURIDICA, cnpjEmpresa, ConsultaDFeEnum.CHAVE, chaveAcesso
+        );
+
+        // 138 = Documento Localizado
+        if ("138".equals(retorno.getCStat()) && retorno.getLoteDistDFeInt() != null) {
+            for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
+                String xml = descompactarGZip(docZip.getValue());
+                // Força o status para PRONTO, pois fomos buscar a nota na íntegra
+                salvarNotaPendente(xml, docZip.getNSU(), "PRONTO_IMPORTACAO");
+            }
+            return "Nota " + chaveAcesso + " localizada e descarregada com sucesso!";
+        }
+
+        // Se a SEFAZ recusar, atira o motivo real (ex: "Nota não existe", "Apenas Resumo Disponível")
+        throw new RuntimeException("A SEFAZ respondeu: " + retorno.getXMotivo());
     }
 }

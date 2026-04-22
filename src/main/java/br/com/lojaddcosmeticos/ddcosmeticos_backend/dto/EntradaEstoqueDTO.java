@@ -11,12 +11,22 @@ public class EntradaEstoqueDTO {
     private LocalDate dataEntrada;
     private List<ItemEntradaDTO> itens;
 
+    // 🔥 NOVO CAMPO: Para vincular a chave da NFe durante a entrada em lote
+    private String chaveAcesso;
+
     // --- NOVOS CAMPOS PARA O FINANCEIRO ---
     private Integer quantidadeParcelas; // Ex: 1, 2, 3...
     private FormaDePagamento formaPagamento; // Ex: BOLETO, PIX, DINHEIRO
     private LocalDate dataVencimento; // Data da 1ª parcela
 
-    // Getters e Setters dos novos campos
+
+    // ==========================================
+    // GETTERS E SETTERS
+    // ==========================================
+
+    public String getChaveAcesso() { return chaveAcesso; }
+    public void setChaveAcesso(String chaveAcesso) { this.chaveAcesso = chaveAcesso; }
+
     public Integer getQuantidadeParcelas() { return quantidadeParcelas; }
     public void setQuantidadeParcelas(Integer quantidadeParcelas) { this.quantidadeParcelas = quantidadeParcelas; }
 
@@ -26,13 +36,15 @@ public class EntradaEstoqueDTO {
     public LocalDate getDataVencimento() { return dataVencimento; }
     public void setDataVencimento(LocalDate dataVencimento) { this.dataVencimento = dataVencimento; }
 
-    // (Mantenha os getters/setters antigos aqui...)
     public Long getFornecedorId() { return fornecedorId; }
     public void setFornecedorId(Long fornecedorId) { this.fornecedorId = fornecedorId; }
+
     public String getNumeroDocumento() { return numeroDocumento; }
     public void setNumeroDocumento(String numeroDocumento) { this.numeroDocumento = numeroDocumento; }
+
     public LocalDate getDataEntrada() { return dataEntrada; }
     public void setDataEntrada(LocalDate dataEntrada) { this.dataEntrada = dataEntrada; }
+
     public List<ItemEntradaDTO> getItens() { return itens; }
     public void setItens(List<ItemEntradaDTO> itens) { this.itens = itens; }
 }

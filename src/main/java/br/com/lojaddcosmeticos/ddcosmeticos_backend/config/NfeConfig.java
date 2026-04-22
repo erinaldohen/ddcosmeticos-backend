@@ -9,6 +9,7 @@ import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
 import br.com.swconsultoria.nfe.dom.enuns.AmbienteEnum;
 import br.com.swconsultoria.nfe.dom.enuns.EstadosEnum;
 import br.com.swconsultoria.nfe.exception.NfeException;
+import org.apache.commons.httpclient.protocol.Protocol;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -35,15 +36,10 @@ public class NfeConfig {
 
         Certificado certificado = CertificadoService.certificadoPfxBytes(bytesCertificado, senhaCertificado);
 
-        // 🔥 A BALA DE PRATA CORRIGIDA: Injetar a segurança diretamente na "veia" do Java
-        // 1. Apontamos para o Cacerts oficial da sua instalação do JDK 21
-        String caminhoCacerts = System.getProperty("java.home") + "/lib/security/cacerts";
-        System.setProperty("javax.net.ssl.trustStore", caminhoCacerts);
-        System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
-
-        // 2. A SEFAZ "corta" ligações modernas de TLS 1.3. Obrigamos o Java a usar o TLS 1.2
-        System.setProperty("jdk.tls.client.protocols", "TLSv1.2");
-        System.setProperty("https.protocols", "TLSv1.2");
+        // 🔥 CRITICAL FIX: Intercept the Apache Commons HTTP protocol
+        // This forces the underlying Axis2 library used by swconsultoria
+        // to use our custom SSL context (TLSv1.2, accept all certs).
+        Protocol.registerProtocol("https", new Protocol("https", new SefazSslContextFactory(), 443));
 
         return ConfiguracoesNfe.criarConfiguracoes(
                 EstadosEnum.PE,

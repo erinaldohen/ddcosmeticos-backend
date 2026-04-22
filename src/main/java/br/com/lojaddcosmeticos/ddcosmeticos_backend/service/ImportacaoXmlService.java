@@ -1,5 +1,8 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.RegraNegocioException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,17 +36,34 @@ public class ImportacaoXmlService {
         }
 
         // =========================================================
-        // 3. LÓGICA DE IMPORTAÇÃO (A implementar pela equipa)
+        // 3. LÓGICA DE IMPORTAÇÃO
         // =========================================================
 
         System.out.println("A iniciar a importação da nota: " + chaveExtraidaDoXml);
 
-        /* TODO para a equipa Java:
-         - Converter a String 'xmlCompleto' usando JAXB ou Jackson XML
-         - Procurar/Cadastrar Fornecedor
-         - Salvar os Movimentos de Estoque (com a chave de acesso)
-         - Gerar o Contas a Pagar
+        /* * TODO para a equipa Java:
+         * 1. Converter a String 'xmlCompleto' usando JAXB ou Jackson XML
+         * 2. Procurar/Cadastrar Fornecedor
+         * 3. Loop nos itens do XML para salvar os Movimentos de Estoque
          */
+
+        // 🔥 EXEMPLO DE COMO A EQUIPA DEVE GRAVAR O MOVIMENTO PARA A CHAVE APARECER NO FRONTEND:
+        /*
+        MovimentoEstoque movimento = new MovimentoEstoque();
+        movimento.setProduto(produtoEncontradoNoXml);
+        movimento.setQuantidadeMovimentada(quantidadeDoXml);
+        movimento.setCustoMovimentado(valorUnitarioDoXml);
+        movimento.setTipoMovimentoEstoque(TipoMovimentoEstoque.ENTRADA);
+        movimento.setMotivoMovimentacaoDeEstoque(MotivoMovimentacaoDeEstoque.COMPRA_FORNECEDOR);
+        movimento.setDocumentoReferencia(numeroDaNotaDoXml);
+
+        // ---> A CORREÇÃO AQUI: Vincular a chave extraída ao movimento <---
+        movimento.setChaveAcesso(chaveExtraidaDoXml);
+
+        movimentoEstoqueRepository.save(movimento);
+        */
+
+        // 4. Gerar o Contas a Pagar
     }
 
     // Método auxiliar rápido para extrair a tag sem precisar de um parser pesado

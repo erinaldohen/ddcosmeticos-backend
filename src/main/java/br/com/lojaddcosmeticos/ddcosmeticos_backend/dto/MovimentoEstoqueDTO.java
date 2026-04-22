@@ -21,4 +21,7 @@ public class MovimentoEstoqueDTO {
     private BigDecimal quantidade;
     private BigDecimal custoUnitario;
     private String documentoReferencia;
+
+    // 🔥 CORREÇÃO: Este é o 9º parâmetro que o Service estava a tentar enviar!
+    private String chaveAcesso;
 }

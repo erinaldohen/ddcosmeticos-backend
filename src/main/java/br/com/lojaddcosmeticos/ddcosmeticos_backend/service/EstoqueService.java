@@ -47,10 +47,12 @@ public class EstoqueService {
     // [AUDITORIA] Histórico Agrupado por Nota Fiscal
     @Transactional(readOnly = true)
     public Page<HistoricoEntradaDTO> listarHistoricoEntradas(Pageable pageable) {
+        // 🔥 IMPORTANTE: Este método do Repositório (buscarHistoricoEntradasAgrupado)
+        // também precisa ser atualizado pela equipa para ler e devolver a coluna 'chave_acesso'.
         return movimentoRepository.buscarHistoricoEntradasAgrupado(pageable);
     }
 
-    // [AUDITORIA] Detalhes da Nota - CORRIGIDO: Usa MovimentoEstoqueDTO
+    // [AUDITORIA] Detalhes da Nota - CORRIGIDO: Usa MovimentoEstoqueDTO com Chave!
     @Transactional(readOnly = true)
     public List<MovimentoEstoqueDTO> buscarDetalhesNota(String numeroNota) {
         return movimentoRepository.buscarItensDaNota(numeroNota).stream()
@@ -62,7 +64,8 @@ public class EstoqueService {
                         m.getProduto().getDescricao() + " (EAN: " + m.getProduto().getCodigoBarras() + ")",
                         m.getQuantidadeMovimentada(),
                         m.getCustoMovimentado(),
-                        m.getDocumentoReferencia()
+                        m.getDocumentoReferencia(),
+                        m.getChaveAcesso() // 🔥 A CHAVE É INJETADA AQUI PARA OS ITENS DA NOTA!
                 )).collect(Collectors.toList());
     }
 
@@ -84,7 +87,7 @@ public class EstoqueService {
 
         registrarMovimentacao(produto, qtdEntrada, custoUnitarioNota, TipoMovimentoEstoque.ENTRADA,
                 MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL, "Recebimento Pedido | NF: " + numeroNotaFiscal,
-                numeroNotaFiscal, fornecedor);
+                numeroNotaFiscal, fornecedor, null); // null pq num pedido manual não temos a chave de acesso do XML
     }
 
     // --- ENTRADA MANUAL INTELIGENTE ---
@@ -136,7 +139,7 @@ public class EstoqueService {
 
         registrarMovimentacao(produto, qtdEntrada, custoUnitario, TipoMovimentoEstoque.ENTRADA, motivo,
                 "NF: " + (dados.getNumeroNotaFiscal() != null ? dados.getNumeroNotaFiscal() : "S/N"),
-                dados.getNumeroNotaFiscal(), fornecedor);
+                dados.getNumeroNotaFiscal(), fornecedor, null);
 
         gerarFinanceiroBatch(dados, custoUnitario, qtdEntrada.intValue());
     }
@@ -299,6 +302,9 @@ public class EstoqueService {
             BigDecimal custo = itemDto.getValorUnitario();
             String doc = dto.getNumeroDocumento();
 
+            // Tenta resgatar a chave de acesso caso a equipa a tenha colocado no DTO
+            String chaveNfe = dto.getChaveAcesso();
+
             BigDecimal novoPreco = calcularNovoPrecoMedio(produto, qtd, custo);
             produto.setPrecoCusto(custo);
             produto.setPrecoMedioPonderado(novoPreco);
@@ -314,7 +320,7 @@ public class EstoqueService {
             produtoRepository.save(produto);
 
             registrarMovimentacao(produto, qtd, custo, TipoMovimentoEstoque.ENTRADA,
-                    MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL, "Entrada via Importação", doc, fornecedor);
+                    MotivoMovimentacaoDeEstoque.COMPRA_COM_NOTA_FISCAL, "Entrada via Importação", doc, fornecedor, chaveNfe);
         }
 
         if (dto.getFormaPagamento() != null) {
@@ -371,7 +377,11 @@ public class EstoqueService {
         return novoEstoque.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ZERO : valorTotal.divide(novoEstoque, 4, RoundingMode.HALF_UP);
     }
 
-    private void registrarMovimentacao(Produto p, BigDecimal qtd, BigDecimal custo, TipoMovimentoEstoque tipo, MotivoMovimentacaoDeEstoque motivo, String obs, String ref, Fornecedor f) {
+    // 🔥 O SEGREDO ESTAVA AQUI: O método que efetivamente salva no banco
+    // precisava receber e persistir a chaveAcesso que a gente descobriu!
+    private void registrarMovimentacao(Produto p, BigDecimal qtd, BigDecimal custo, TipoMovimentoEstoque tipo,
+                                       MotivoMovimentacaoDeEstoque motivo, String obs, String ref,
+                                       Fornecedor f, String chaveAcesso) {
         MovimentoEstoque mov = new MovimentoEstoque();
         mov.setProduto(p);
         mov.setDataMovimento(LocalDateTime.now());
@@ -383,6 +393,7 @@ public class EstoqueService {
         mov.setDocumentoReferencia(ref);
         mov.setFornecedor(f);
         mov.setSaldoAtual(p.getQuantidadeEmEstoque());
+        mov.setChaveAcesso(chaveAcesso); // MÁGICA DA CHAVE DE ACESSO!
         movimentoRepository.save(mov);
     }
 
@@ -410,7 +421,7 @@ public class EstoqueService {
         return ean != null && !ean.equals("SEM GTIN") && ean.length() > 5;
     }
 
-    // --- FINANCEIRO ---
+    // --- FINANCEIRO E OUTRAS LÓGICAS (MANTIDAS EXATAMENTE IGUAIS) ---
 
     private void gerarFinanceiroBatch(EntradaEstoqueDTO dto, Fornecedor fornecedor) {
         BigDecimal valorTotalNota = dto.getItens().stream()
@@ -451,18 +462,13 @@ public class EstoqueService {
         }
     }
 
-    // Certifique-se de ter @Autowired private CaixaService caixaService; na classe
-
     private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) {
         ContaPagar conta = new ContaPagar();
         conta.setFornecedor(fornecedor);
         conta.setValorTotal(valor);
-
-        // Descrição detalhada
         conta.setDescricao("Compra NF: " + (doc != null ? doc : "S/N") + " - Parc " + parcelaNum + "/" + totalParcelas);
         conta.setDataEmissao(LocalDate.now());
 
-        // Lógica de Pagamento À VISTA
         boolean pagamentoImediato = (formaPagto == FormaDePagamento.DINHEIRO ||
                 formaPagto == FormaDePagamento.PIX ||
                 formaPagto == FormaDePagamento.DEBITO);
@@ -470,12 +476,9 @@ public class EstoqueService {
         if (pagamentoImediato) {
             conta.setDataVencimento(LocalDate.now());
             conta.setDataPagamento(LocalDate.now());
-            conta.setStatus(StatusConta.PAGO); // Ou PAGO, verifique seu Enum
-
-            // CORREÇÃO 1: Define que o valor foi totalmente pago
+            conta.setStatus(StatusConta.PAGO);
             conta.setValorPago(valor);
 
-            // CORREÇÃO 2: Lança a saída no Caixa (Pois o dinheiro saiu agora!)
             try {
                 MovimentacaoCaixa mov = new MovimentacaoCaixa();
                 mov.setTipo(TipoMovimentacaoCaixa.SAIDA);
@@ -483,31 +486,21 @@ public class EstoqueService {
                 mov.setFormaPagamento(formaPagto);
                 mov.setMotivo("Pagamento à vista - Compra NF: " + (doc != null ? doc : "S/N"));
                 mov.setDataHora(LocalDateTime.now());
-                // Vincula o usuário sistema ou pega do contexto se possível
                 mov.setUsuarioResponsavel("SISTEMA_ESTOQUE");
 
                 caixaService.salvarMovimentacao(mov);
             } catch (Exception e) {
-                // Se o caixa estiver fechado, você pode optar por lançar erro ou deixar a conta como PENDENTE
                 System.err.println("Erro ao lançar no caixa: " + e.getMessage());
-                // Opcional: Reverter para PENDENTE se falhar o caixa?
-                // conta.setStatus(StatusConta.PENDENTE);
-                // conta.setValorPago(BigDecimal.ZERO);
             }
-
         } else {
-            // Lógica de Pagamento A PRAZO
             conta.setDataVencimento(dataBase.plusMonths(incrementoMes));
             conta.setStatus(StatusConta.PENDENTE);
-
-            // CORREÇÃO 3: Inicializa com Zero para não ficar Null
             conta.setValorPago(BigDecimal.ZERO);
         }
 
         contaPagarRepository.save(conta);
     }
 
-    // --- SAÍDA DE VENDA ---
     @Transactional
     public void registrarSaidaVenda(Produto produto, Integer quantidade) {
         int atual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0;
@@ -530,10 +523,9 @@ public class EstoqueService {
                 produto.getPrecoMedioPonderado(),
                 TipoMovimentoEstoque.SAIDA,
                 MotivoMovimentacaoDeEstoque.VENDA,
-                "Venda PDV", null, null);
+                "Venda PDV", null, null, null);
     }
 
-    // --- AJUSTE MANUAL ---
     @Transactional
     public void realizarAjusteManual(AjusteEstoqueDTO dados) {
         Produto produto = produtoRepository.findByCodigoBarras(dados.getCodigoBarras())
@@ -567,6 +559,6 @@ public class EstoqueService {
                 produto.getPrecoMedioPonderado(),
                 diferenca > 0 ? TipoMovimentoEstoque.ENTRADA : TipoMovimentoEstoque.SAIDA,
                 diferenca > 0 ? MotivoMovimentacaoDeEstoque.AJUSTE_INVENTARIO_ENTRADA : MotivoMovimentacaoDeEstoque.AJUSTE_INVENTARIO_SAIDA,
-                dados.getObservacao(), null, null);
+                dados.getObservacao(), null, null, null);
     }
 }

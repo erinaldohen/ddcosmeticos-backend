@@ -2,14 +2,15 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ItemVenda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Venda;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import com.itextpdf.barcodes.BarcodeQRCode;
 import com.itextpdf.kernel.geom.PageSize;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.borders.Border;
-import com.itextpdf.layout.borders.DashedBorder;
 import com.itextpdf.layout.element.Cell;
 import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
@@ -17,14 +18,20 @@ import com.itextpdf.layout.element.Table;
 import com.itextpdf.layout.properties.HorizontalAlignment;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 @Service
 public class DocumentoFiscalPdfService {
+
+    @Autowired
+    private MovimentoEstoqueRepository movimentoEstoqueRepository;
 
     // ==========================================================
     // 1. GERADOR DE CUPOM FISCAL (NFC-E) - FORMATO TÉRMICO 80mm
@@ -167,5 +174,96 @@ public class DocumentoFiscalPdfService {
 
         document.close();
         return out.toByteArray();
+    }
+
+    // ==========================================================
+    // GERADOR DE DANFE ESPELHO (ENTRADA) - FORMATO A4 PARA EMPRESAS
+    // ==========================================================
+    public byte[] gerarDanfePdf(String numeroNota) {
+
+        // 1. Busca os itens reais desta nota no banco de dados
+        List<MovimentoEstoque> itens = movimentoEstoqueRepository.buscarItensDaNota(numeroNota);
+
+        if (itens == null || itens.isEmpty()) {
+            throw new RuntimeException("Nenhum item encontrado para a nota: " + numeroNota);
+        }
+
+        // 2. Extrai os dados do Fornecedor e Totais usando o primeiro item da lista
+        MovimentoEstoque primeiroItem = itens.get(0);
+        String fornecedorNome = primeiroItem.getFornecedor() != null ? primeiroItem.getFornecedor().getNomeFantasia() : "Fornecedor Não Informado";
+        String fornecedorCnpj = primeiroItem.getFornecedor() != null ? primeiroItem.getFornecedor().getCnpj() : "---";
+        String dataEntrada = primeiroItem.getDataMovimento() != null ? primeiroItem.getDataMovimento().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) : "---";
+
+        BigDecimal valorTotalNota = itens.stream()
+                .map(i -> i.getCustoMovimentado().multiply(i.getQuantidadeMovimentada())) // 🔥 Removido o new BigDecimal
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // 3. Desenha o PDF Oficial
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PdfWriter writer = new PdfWriter(out);
+            PdfDocument pdf = new PdfDocument(writer);
+            pdf.setDefaultPageSize(PageSize.A4);
+            Document document = new Document(pdf);
+            document.setMargins(20, 20, 20, 20);
+
+            // --- BLOCO 1: CABEÇALHO ---
+            Table header = new Table(UnitValue.createPercentArray(new float[]{50, 50})).useAllAvailableWidth();
+
+            Cell emitente = new Cell().add(new Paragraph("DD COSMÉTICOS").setBold().setFontSize(14));
+            emitente.add(new Paragraph("Rastreabilidade Interna / Auditoria").setFontSize(9));
+            emitente.add(new Paragraph("DOCUMENTO AUXILIAR DE ENTRADA").setBold().setFontSize(10));
+            header.addCell(emitente);
+
+            Cell dadosNota = new Cell().add(new Paragraph("DANFE - ENTRADA").setBold().setFontSize(14).setTextAlignment(TextAlignment.CENTER));
+            dadosNota.add(new Paragraph("Nº: " + numeroNota + " | Série: 1").setBold().setFontSize(12).setTextAlignment(TextAlignment.CENTER));
+            dadosNota.add(new Paragraph("Data Processamento: " + dataEntrada).setFontSize(9).setTextAlignment(TextAlignment.CENTER));
+            header.addCell(dadosNota);
+            document.add(header);
+
+            // --- BLOCO 2: DADOS DO FORNECEDOR ---
+            document.add(new Paragraph("\nDADOS DO FORNECEDOR / REMETENTE").setBold().setFontSize(10).setBackgroundColor(com.itextpdf.kernel.colors.ColorConstants.LIGHT_GRAY));
+            Table tableFornecedor = new Table(UnitValue.createPercentArray(new float[]{60, 40})).useAllAvailableWidth();
+            tableFornecedor.addCell(new Cell().add(new Paragraph("RAZÃO SOCIAL: " + fornecedorNome).setFontSize(9)));
+            tableFornecedor.addCell(new Cell().add(new Paragraph("CNPJ: " + fornecedorCnpj).setFontSize(9)));
+            document.add(tableFornecedor);
+
+            // --- BLOCO 3: CÁLCULO E TOTAIS ---
+            document.add(new Paragraph("\nCÁLCULO E TOTAIS").setBold().setFontSize(10).setBackgroundColor(com.itextpdf.kernel.colors.ColorConstants.LIGHT_GRAY));
+            Table tableTotais = new Table(UnitValue.createPercentArray(new float[]{50, 50})).useAllAvailableWidth();
+            tableTotais.addCell(new Cell().add(new Paragraph("QTD TOTAL DE ITENS: " + itens.size()).setFontSize(9)));
+            tableTotais.addCell(new Cell().add(new Paragraph("VALOR TOTAL DA NOTA: R$ " + String.format("%.2f", valorTotalNota)).setBold().setFontSize(10)));
+            document.add(tableTotais);
+
+            // --- BLOCO 4: TABELA DE ITENS DA NOTA ---
+            document.add(new Paragraph("\nDADOS DOS PRODUTOS / SERVIÇOS").setBold().setFontSize(10).setBackgroundColor(com.itextpdf.kernel.colors.ColorConstants.LIGHT_GRAY));
+            Table tableItens = new Table(UnitValue.createPercentArray(new float[]{12, 48, 10, 15, 15})).useAllAvailableWidth();
+
+            // Cabeçalho da Tabela
+            tableItens.addCell(new Cell().add(new Paragraph("CÓDIGO").setFontSize(8).setBold()));
+            tableItens.addCell(new Cell().add(new Paragraph("DESCRIÇÃO DO PRODUTO").setFontSize(8).setBold()));
+            tableItens.addCell(new Cell().add(new Paragraph("QTD").setFontSize(8).setBold().setTextAlignment(TextAlignment.CENTER)));
+            tableItens.addCell(new Cell().add(new Paragraph("V. UNIT").setFontSize(8).setBold().setTextAlignment(TextAlignment.RIGHT)));
+            tableItens.addCell(new Cell().add(new Paragraph("V. TOTAL").setFontSize(8).setBold().setTextAlignment(TextAlignment.RIGHT)));
+
+            // Loop para preencher os itens reais
+            for (MovimentoEstoque item : itens) {
+                String codigo = item.getProduto() != null ? String.valueOf(item.getProduto().getId()) : "N/A";
+                String descricao = item.getProduto() != null ? item.getProduto().getDescricao() : "Produto Indefinido";
+                String qtd = String.valueOf(item.getQuantidadeMovimentada());
+                String vUnit = String.format("%.2f", item.getCustoMovimentado());
+                String vTot = String.format("%.2f", item.getCustoMovimentado().multiply(item.getQuantidadeMovimentada())); // 🔥 Removido o new BigDecimal
+                tableItens.addCell(new Cell().add(new Paragraph(codigo).setFontSize(8)));
+                tableItens.addCell(new Cell().add(new Paragraph(descricao).setFontSize(8)));
+                tableItens.addCell(new Cell().add(new Paragraph(qtd).setFontSize(8).setTextAlignment(TextAlignment.CENTER)));
+                tableItens.addCell(new Cell().add(new Paragraph("R$ " + vUnit).setFontSize(8).setTextAlignment(TextAlignment.RIGHT)));
+                tableItens.addCell(new Cell().add(new Paragraph("R$ " + vTot).setFontSize(8).setTextAlignment(TextAlignment.RIGHT)));
+            }
+            document.add(tableItens);
+
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao desenhar PDF da DANFE", e);
+        }
     }
 }

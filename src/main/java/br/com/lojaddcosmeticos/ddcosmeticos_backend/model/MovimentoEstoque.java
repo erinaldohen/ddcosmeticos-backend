@@ -39,6 +39,10 @@ public class MovimentoEstoque {
     @Column(name = "documento_referencia")
     private String documentoReferencia;
 
+    // 🔥 CAMPO NOVO ADICIONADO: Essencial para auditoria de XML e DANFE
+    @Column(name = "chave_acesso", length = 44)
+    private String chaveAcesso;
+
     @Column(name = "saldo_anterior")
     private Integer saldoAnterior;
 

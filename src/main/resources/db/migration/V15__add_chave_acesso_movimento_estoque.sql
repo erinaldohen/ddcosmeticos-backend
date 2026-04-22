@@ -1,0 +1,1 @@
+ALTER TABLE movimento_estoque ADD COLUMN chave_acesso VARCHAR(44);

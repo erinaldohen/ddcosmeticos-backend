@@ -1,7 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoEntradaDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque; // Importante
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
 import org.springframework.data.domain.Page;
@@ -16,31 +16,30 @@ import java.util.List;
 @Repository
 public interface MovimentoEstoqueRepository extends JpaRepository<MovimentoEstoque, Long> {
 
-    // QUERY DE AUDITORIA E HISTÓRICO AGRUPADO
-    // CORRIGIDO: m.tipo -> m.tipoMovimentoEstoque
-    // CORRIGIDO: m.quantidade -> m.quantidadeMovimentada
-    // CORRIGIDO: m.valorUnitario -> m.custoMovimentado
+    // 1. QUERY DE AUDITORIA E HISTÓRICO AGRUPADO
     @Query("SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoEntradaDTO(" +
-            "   m.documentoReferencia, " +
-            "   MAX(m.dataMovimento), " +
-            "   f.nomeFantasia, " +
-            "   f.cnpj, " +
-            "   COUNT(m), " +
-            "   SUM(m.quantidadeMovimentada * m.custoMovimentado) " +
-            ") " +
-            "FROM MovimentoEstoque m " +
-            "JOIN m.fornecedor f " +
+            "m.documentoReferencia, " +
+            "'1', " +
+            "MAX(m.chaveAcesso), " +   // 🔥 CORREÇÃO: Substituímos o '' pela Chave de Acesso Real!
+            "MAX(m.dataMovimento), " +
+            "f.nomeFantasia, " +
+            "f.cnpj, " +
+            "CAST(SUM(m.quantidadeMovimentada) AS Long), " +
+            "SUM(m.quantidadeMovimentada * m.custoMovimentado)) " +
+            "FROM MovimentoEstoque m JOIN m.fornecedor f " +
             "WHERE m.tipoMovimentoEstoque = 'ENTRADA' " +
             "GROUP BY m.documentoReferencia, f.nomeFantasia, f.cnpj " +
             "ORDER BY MAX(m.dataMovimento) DESC")
     Page<HistoricoEntradaDTO> buscarHistoricoEntradasAgrupado(Pageable pageable);
 
-    // Busca os detalhes (itens) de uma nota específica para auditoria
-    // CORRIGIDO: m.tipo -> m.tipoMovimentoEstoque
+    // 2. BUSCA OS DETALHES (ITENS) DE UMA NOTA ESPECÍFICA
     @Query("SELECT m FROM MovimentoEstoque m WHERE m.documentoReferencia = :numeroNota AND m.tipoMovimentoEstoque = 'ENTRADA'")
     List<MovimentoEstoque> buscarItensDaNota(@Param("numeroNota") String numeroNota);
 
-    // Método auxiliar usado na importação de XML para verificar duplicidade
+    // 3. VALIDAÇÃO DE DUPLICIDADE
+    // (O Spring faz a query automaticamente por causa do nome do método. NÃO usar @Query aqui!)
     boolean existsByDocumentoReferenciaAndFornecedorAndTipoMovimentoEstoque(
             String documentoReferencia, Fornecedor fornecedor, TipoMovimentoEstoque tipoMovimentoEstoque);
+
+    boolean existsByChaveAcesso(String chaveAcesso);
 }

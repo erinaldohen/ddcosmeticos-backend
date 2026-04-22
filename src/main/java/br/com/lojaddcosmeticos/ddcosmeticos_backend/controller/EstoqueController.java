@@ -1,20 +1,26 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.*;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.DocumentoFiscalPdfService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueIntelligenceService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.EstoqueService;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -27,6 +33,9 @@ public class EstoqueController {
 
     @Autowired
     private EstoqueService estoqueService;
+
+    @Autowired
+    private DocumentoFiscalPdfService documentoFiscalPdfService;
 
     // --- 1. RELATÓRIO DE COMPRAS (MANTIDO) ---
     @GetMapping("/sugestao-compras")
@@ -73,5 +82,18 @@ public class EstoqueController {
     @GetMapping("/historico-entradas/{numeroNota}/itens")
     public ResponseEntity<List<MovimentoEstoqueDTO>> detalharNota(@PathVariable String numeroNota) {
         return ResponseEntity.ok(estoqueService.buscarDetalhesNota(numeroNota));
+    }
+    @GetMapping(value = "/historico-entradas/{numeroNota}/danfe-oficial", produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE', 'ESTOQUISTA')")
+    @Operation(summary = "Gerar 2ª Via da DANFE em PDF")
+    public ResponseEntity<byte[]> baixarDanfeOficial(@PathVariable String numeroNota) {
+        try {
+            byte[] pdfBytes = documentoFiscalPdfService.gerarDanfePdf(numeroNota);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"DANFE_" + numeroNota + ".pdf\"")
+                    .body(pdfBytes);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

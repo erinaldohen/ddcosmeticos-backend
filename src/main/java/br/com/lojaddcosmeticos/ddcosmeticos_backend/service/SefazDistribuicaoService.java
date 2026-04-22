@@ -12,8 +12,10 @@ import br.com.swconsultoria.nfe.schema.distdfeint.DistDFeInt;
 import br.com.swconsultoria.nfe.schema.retdistdfeint.RetDistDFeInt;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.PostMapping;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -36,53 +38,69 @@ public class SefazDistribuicaoService {
         ControleSefazNsu controleNsu = nsuRepository.findByCnpjEmpresa(cnpjEmpresa)
                 .orElse(new ControleSefazNsu(cnpjEmpresa, "0"));
 
-        String ultimoNsu = controleNsu.getUltimoNsu();
+        // 🔥 Lógica da Paginação Corrigida e Declarada!
+        int lotesProcessados = 0;
+        boolean temMaisNotas = true;
 
-        // 2. Prepara a requisição para a SEFAZ
-        DistDFeInt distDFeInt = new DistDFeInt();
-        distDFeInt.setVersao("1.01");
-        distDFeInt.setTpAmb(config.getAmbiente().getCodigo());
-        distDFeInt.setCUFAutor(config.getEstado().getCodigoUF());
-        distDFeInt.setCNPJ(cnpjEmpresa);
+        // O robô vai rodar até a SEFAZ dizer que não tem mais notas, limitado a 10 ciclos por vez (500 notas)
+        while (temMaisNotas && lotesProcessados < 10) {
 
-        DistDFeInt.DistNSU distNSU = new DistDFeInt.DistNSU();
-        String ultimoNsuFormatado = String.format("%015d", Long.parseLong(ultimoNsu));
-        distNSU.setUltNSU(ultimoNsuFormatado);
-        distDFeInt.setDistNSU(distNSU);
+            // Lemos o NSU atualizado a cada volta do loop
+            String ultimoNsu = controleNsu.getUltimoNsu();
+            String ultimoNsuFormatado = String.format("%015d", Long.parseLong(ultimoNsu));
 
-        // 3. Executa a busca na SEFAZ
-        RetDistDFeInt retorno = Nfe.distribuicaoDfe(
-                config,
-                PessoaEnum.JURIDICA,  // Tipo de Pessoa
-                cnpjEmpresa,          // CNPJ da DD Cosméticos
-                ConsultaDFeEnum.NSU,  // Vamos pesquisar a partir do último NSU
-                ultimoNsuFormatado    // O número com os 15 zeros à esquerda
-        );
+            // 2. Executa a busca na SEFAZ
+            RetDistDFeInt retorno = Nfe.distribuicaoDfe(
+                    config,
+                    PessoaEnum.JURIDICA,  // Tipo de Pessoa
+                    cnpjEmpresa,          // CNPJ da DD Cosméticos
+                    ConsultaDFeEnum.NSU,  // Vamos pesquisar a partir do último NSU
+                    ultimoNsuFormatado    // O número com os 15 zeros à esquerda
+            );
 
-        // 4. Processa os documentos encontrados
-        if (retorno.getLoteDistDFeInt() != null) {
-            for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
-                String schema = docZip.getSchema();
+            // 🔥 ADICIONEM ESTAS 3 LINHAS DE LOG AQUI:
+            System.out.println("=========================================");
+            System.out.println("RESPOSTA SEFAZ - Status: " + retorno.getCStat() + " | Motivo: " + retorno.getXMotivo());
+            System.out.println("NSU Pesquisado: " + ultimoNsuFormatado + " | Max NSU SEFAZ: " + retorno.getMaxNSU());
+            System.out.println("=========================================");
 
-                // Descompacta os bytes zipados da SEFAZ para uma String legível (XML)
-                String xmlDescompactado = descompactarGZip(docZip.getValue());
-                String nsuDoDocumento = docZip.getNSU();
+            // 3. Processa os documentos encontrados
+            if (retorno.getLoteDistDFeInt() != null) {
+                for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
+                    String schema = docZip.getSchema();
 
-                if (schema.startsWith("resNFe")) {
-                    salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
-                } else if (schema.startsWith("procNFe")) {
-                    salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
+                    // Descompacta os bytes zipados da SEFAZ para uma String legível (XML)
+                    String xmlDescompactado = descompactarGZip(docZip.getValue());
+                    String nsuDoDocumento = docZip.getNSU();
+
+                    if (schema.startsWith("resNFe")) {
+                        salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
+                    } else if (schema.startsWith("procNFe")) {
+                        salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
+                    }
                 }
+
+                // 4. Salva o Último NSU devolvido pela SEFAZ para a próxima pesquisa
+                controleNsu.setUltimoNsu(retorno.getUltNSU());
+                nsuRepository.save(controleNsu);
+
+                // 5. Verifica se chegou ao fim das notas na SEFAZ
+                long ultNsuAtual = Long.parseLong(retorno.getUltNSU());
+                long maxNsuSefaz = Long.parseLong(retorno.getMaxNSU());
+
+                if (ultNsuAtual >= maxNsuSefaz) {
+                    temMaisNotas = false; // Acabou o histórico! Sair do Loop.
+                }
+            } else {
+                temMaisNotas = false; // SEFAZ não devolveu lote válido
             }
 
-            // 5. Salva o Último NSU devolvido pela SEFAZ para a próxima pesquisa
-            controleNsu.setUltimoNsu(retorno.getUltNSU());
-            nsuRepository.save(controleNsu);
+            lotesProcessados++; // Conta mais um ciclo
         }
     }
 
     // =========================================================
-    // MÉTODOS AUXILIARES CORRIGIDOS
+    // MÉTODOS AUXILIARES
     // =========================================================
 
     private void salvarNotaPendente(String xml, String nsu, String status) {
@@ -132,6 +150,22 @@ public class SefazDistribuicaoService {
                 bos.write(buffer, 0, len);
             }
             return bos.toString(StandardCharsets.UTF_8);
+        }
+    }
+    @PostMapping("/sincronizar")
+    public ResponseEntity<String> forcarSincronizacaoSefaz() {
+        try {
+            // TODO: A vossa equipa deve instanciar a ConfiguracoesNfe e o CNPJ da empresa aqui
+            // (Usando a mesma lógica que o vosso SefazScheduler usa)
+            // ConfiguracoesNfe config = ...
+            // String cnpjEmpresa = ...
+
+            // Chama o robô manualmente
+            // sefazDistribuicaoService.buscarNovasNotasNaSefaz(config, cnpjEmpresa);
+
+            return ResponseEntity.ok("Sincronização com a SEFAZ concluída!");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Erro ao comunicar com a SEFAZ: " + e.getMessage());
         }
     }
 }

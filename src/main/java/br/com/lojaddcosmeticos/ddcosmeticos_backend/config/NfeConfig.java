@@ -1,16 +1,55 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 
-import org.springframework.context.annotation.Configuration;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
+import br.com.swconsultoria.certificado.Certificado;
+import br.com.swconsultoria.certificado.CertificadoService;
+import br.com.swconsultoria.certificado.exception.CertificadoException;
+import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
+import br.com.swconsultoria.nfe.dom.enuns.AmbienteEnum;
+import br.com.swconsultoria.nfe.dom.enuns.EstadosEnum;
+import br.com.swconsultoria.nfe.exception.NfeException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
-@Configuration
+@Component
 public class NfeConfig {
-    /* * 🚀 OTIMIZAÇÃO FISCAL:
-     * A configuração do Certificado e do SWConsultoria foi movida inteiramente
-     * para dentro do NfceService.java.
-     * * Porquê? Para garantir "Hot-Swap". Assim, quando o administrador fizer
-     * o upload de um novo certificado PFX pelo Frontend, o sistema não
-     * precisará ser reiniciado. A próxima nota fiscal a ser emitida já vai
-     * consultar o banco de dados, pegar os bytes do certificado atualizado
-     * e assinar a nota corretamente em tempo real.
-     */
+
+    @Autowired
+    private ConfiguracaoLojaRepository configuracaoLojaRepository;
+
+    public ConfiguracoesNfe construirConfiguracaoDinamica(boolean forcarProducao) throws NfeException, CertificadoException {
+
+        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L)
+                .orElseThrow(() -> new RuntimeException("Configuração da loja não encontrada na base de dados."));
+
+        AmbienteEnum ambiente = forcarProducao ? AmbienteEnum.PRODUCAO :
+                (configLoja.isProducao() ? AmbienteEnum.PRODUCAO : AmbienteEnum.HOMOLOGACAO);
+
+        byte[] bytesCertificado = configLoja.getFiscal().getArquivoCertificado();
+        String senhaCertificado = configLoja.getFiscal().getSenhaCert();
+
+        if (bytesCertificado == null || bytesCertificado.length == 0) {
+            throw new RuntimeException("O Certificado Digital não está cadastrado na base de dados!");
+        }
+
+        Certificado certificado = CertificadoService.certificadoPfxBytes(bytesCertificado, senhaCertificado);
+
+        // 🔥 A BALA DE PRATA CORRIGIDA: Injetar a segurança diretamente na "veia" do Java
+        // 1. Apontamos para o Cacerts oficial da sua instalação do JDK 21
+        String caminhoCacerts = System.getProperty("java.home") + "/lib/security/cacerts";
+        System.setProperty("javax.net.ssl.trustStore", caminhoCacerts);
+        System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
+
+        // 2. A SEFAZ "corta" ligações modernas de TLS 1.3. Obrigamos o Java a usar o TLS 1.2
+        System.setProperty("jdk.tls.client.protocols", "TLSv1.2");
+        System.setProperty("https.protocols", "TLSv1.2");
+
+        return ConfiguracoesNfe.criarConfiguracoes(
+                EstadosEnum.PE,
+                ambiente,
+                certificado,
+                "schemas"
+        );
+    }
 }

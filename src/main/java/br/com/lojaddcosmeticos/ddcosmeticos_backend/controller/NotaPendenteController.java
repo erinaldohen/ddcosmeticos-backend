@@ -11,11 +11,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/estoque/notas-pendentes")
+@CrossOrigin(origins = "*")
 public class NotaPendenteController {
 
     @Autowired
@@ -30,27 +32,30 @@ public class NotaPendenteController {
     @Autowired
     private NfeConfig nfeConfigBuilder;
 
-    // 🔥 ROTA ÚNICA DE LISTAGEM COM FILTRO DE DATAS OPCIONAIS
+    // 🔥 ROTA ÚNICA DE LISTAGEM COM FILTRO DE DATAS OPCIONAIS (CORRIGIDA)
     @GetMapping
     public ResponseEntity<List<NotaPendenteImportacao>> listarNotasProntasParaImportar(
             @RequestParam(required = false) String dataInicio,
             @RequestParam(required = false) String dataFim) {
 
-        // Busca todas as notas pendentes
+        // Busca TODAS as notas, ordena da mais recente para a mais antiga
         List<NotaPendenteImportacao> notas = notaPendenteRepository.findAll().stream()
                 .filter(n -> !"IMPORTADO".equals(n.getStatus()))
+                .sorted(Comparator.comparing(NotaPendenteImportacao::getDataCaptura).reversed())
                 .toList();
 
-        // Filtra por período se as datas vieram na requisição
+        // Filtra por período SE as datas vieram na requisição (Blindagem contra Nulos)
         if (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty()) {
             notas = notas.stream().filter(nota -> {
                 try {
+                    // Usa a data de emissão se existir, se não, usa a de captura para nunca falhar
                     Object dataEmissaoObj = nota.getDataEmissao() != null ? nota.getDataEmissao() : nota.getDataCaptura();
-                    if (dataEmissaoObj == null) return false;
+                    if (dataEmissaoObj == null) return false; // Falha de segurança
+
                     String dataString = dataEmissaoObj.toString().substring(0, 10);
                     return dataString.compareTo(dataInicio) >= 0 && dataString.compareTo(dataFim) <= 0;
                 } catch (Exception e) {
-                    return true;
+                    return true; // Se der erro ao ler a data, deixa passar para a tela
                 }
             }).toList();
         }
@@ -58,7 +63,7 @@ public class NotaPendenteController {
         return ResponseEntity.ok(notas);
     }
 
-    // 2. Importação efetiva
+    // 2. Importação efetiva (No NotaPendenteController)
     @PostMapping("/{id}/importar")
     public ResponseEntity<String> efetivarImportacao(@PathVariable Long id) {
         Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
@@ -70,7 +75,9 @@ public class NotaPendenteController {
         NotaPendenteImportacao nota = notaOpt.get();
 
         try {
-            // importacaoXmlService.processarImportacaoXmlString(nota.getXmlCompleto());
+            // 🔥 REMOVA AS BARRAS DE COMENTÁRIO DESTA LINHA:
+            importacaoXmlService.processarImportacaoXmlString(nota.getXmlCompleto());
+
             nota.setStatus("IMPORTADO");
             notaPendenteRepository.save(nota);
             return ResponseEntity.ok("Nota importada com sucesso para o estoque e financeiro!");
@@ -104,6 +111,25 @@ public class NotaPendenteController {
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+    @GetMapping("/{id}/xml-parse")
+    public ResponseEntity<?> fazerParseDeXmlGuardado(@PathVariable Long id) {
+        Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
+
+        if (notaOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        try {
+            String xml = notaOpt.get().getXmlCompleto();
+            // O ImportacaoXmlService já tem uma função para fazer parse de String (usada no botão anterior)
+            Object resultadoParse = importacaoXmlService.simularImportacaoXmlString(xml);
+
+            // Depois que for tudo conferido na tela, a nota muda de status
+            return ResponseEntity.ok(resultadoParse);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Erro ao ler o XML da base: " + e.getMessage());
         }
     }
 }

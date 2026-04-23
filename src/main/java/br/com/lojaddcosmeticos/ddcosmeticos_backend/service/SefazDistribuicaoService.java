@@ -1,23 +1,32 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ControleSefazNsu;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.NotaPendenteImportacao;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ControleSefazNsuRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.NotaPendenteImportacaoRepository;
-import br.com.swconsultoria.nfe.Nfe;
 import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
-import br.com.swconsultoria.nfe.dom.enuns.ConsultaDFeEnum;
-import br.com.swconsultoria.nfe.dom.enuns.PessoaEnum;
-import br.com.swconsultoria.nfe.schema.distdfeint.DistDFeInt;
-import br.com.swconsultoria.nfe.schema.retdistdfeint.RetDistDFeInt;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -31,79 +40,210 @@ public class SefazDistribuicaoService {
     @Autowired
     private ControleSefazNsuRepository nsuRepository;
 
-    @Transactional
-    public void buscarNovasNotasNaSefaz(ConfiguracoesNfe config, String cnpjEmpresa) throws Exception {
+    @Autowired
+    private ConfiguracaoLojaRepository configuracaoLojaRepository;
 
+    @Transactional
+    public void buscarNovasNotasNaSefaz(ConfiguracoesNfe configPlaceholder, String cnpjEmpresa) throws Exception {
+
+        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L).orElseThrow();
         ControleSefazNsu controleNsu = nsuRepository.findByCnpjEmpresa(cnpjEmpresa)
                 .orElse(new ControleSefazNsu(cnpjEmpresa, "0"));
+
+        HttpClient client = criarHttpClientComCertificado(
+                configLoja.getFiscal().getArquivoCertificado(),
+                configLoja.getFiscal().getSenhaCert()
+        );
 
         int lotesProcessados = 0;
         boolean temMaisNotas = true;
 
+        System.out.println("🚀 [MOTOR NATIVO] Iniciando varredura na SEFAZ para: " + cnpjEmpresa);
+
         while (temMaisNotas && lotesProcessados < 50) {
-            String ultimoNsu = controleNsu.getUltimoNsu();
-            String ultimoNsuFormatado = String.format("%015d", Long.parseLong(ultimoNsu));
+            String ultimoNsuFormatado = String.format("%015d", Long.parseLong(controleNsu.getUltimoNsu()));
 
-            RetDistDFeInt retorno = Nfe.distribuicaoDfe(
-                    config, PessoaEnum.JURIDICA, cnpjEmpresa, ConsultaDFeEnum.NSU, ultimoNsuFormatado
-            );
+            String soapRequest = construirEnvelopeSOAPDistNSU(cnpjEmpresa, ultimoNsuFormatado, "1");
 
-            System.out.println("🚀 [SEFAZ] NSU Pesquisado: " + ultimoNsuFormatado + " | Status: " + retorno.getCStat() + " (" + retorno.getXMotivo() + ")");
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx"))
+                    .header("Content-Type", "application/soap+xml; charset=utf-8; action=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse\"")
+                    .POST(HttpRequest.BodyPublishers.ofString(soapRequest))
+                    .build();
 
-            if ("138".equals(retorno.getCStat()) || "137".equals(retorno.getCStat())) {
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String responseBody = response.body();
 
-                // Atualiza o ponteiro de onde parámos
-                controleNsu.setUltimoNsu(retorno.getUltNSU());
+            String cStat = extrairComRegex(responseBody, "cStat");
+            String xMotivo = extrairComRegex(responseBody, "xMotivo");
+            String maxNsu = extrairComRegex(responseBody, "maxNSU");
+            String ultNsu = extrairComRegex(responseBody, "ultNSU");
+
+            System.out.println("📦 Lote Retornado | Status: " + cStat + " - " + xMotivo);
+
+            if ("138".equals(cStat) || "137".equals(cStat)) {
+
+                controleNsu.setUltimoNsu(ultNsu);
                 nsuRepository.save(controleNsu);
 
-                // Descompacta os documentos encontrados
-                if (retorno.getLoteDistDFeInt() != null) {
-                    for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
-                        String schema = docZip.getSchema();
-                        String xmlDescompactado = descompactarGZip(docZip.getValue());
-                        String nsuDoDocumento = docZip.getNSU();
+                processarDocumentosDoLote(responseBody);
 
-                        if (schema.startsWith("resNFe")) {
-                            salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
-                        } else if (schema.startsWith("procNFe")) {
-                            salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
-                        }
-                    }
-                }
+                long maxNsuL = maxNsu != null ? Long.parseLong(maxNsu) : 0;
+                long ultNsuL = ultNsu != null ? Long.parseLong(ultNsu) : 0;
+                System.out.println("📊 Faltam: " + (maxNsuL - ultNsuL) + " eventos na SEFAZ.");
 
-                long ultNsuAtual = Long.parseLong(retorno.getUltNSU());
-                long maxNsuSefaz = Long.parseLong(retorno.getMaxNSU());
-                long distancia = maxNsuSefaz - ultNsuAtual;
-
-                System.out.println("📊 [RADAR NSU] Posição Atual: " + ultNsuAtual + " | Teto SEFAZ: " + maxNsuSefaz + " | Faltam: " + distancia + " eventos.");
-
-                if (ultNsuAtual >= maxNsuSefaz) {
-                    System.out.println("✅ Fila da SEFAZ 100% Esvaziada e Atualizada!");
+                if (ultNsuL >= maxNsuL) {
+                    System.out.println("✅ Fila 100% Esvaziada!");
                     temMaisNotas = false;
                 }
-
             } else {
-                System.out.println("🛑 Resposta não esperada ou Consumo Indevido. Pausando busca.");
+                System.out.println("🛑 Parando busca. SEFAZ respondeu: " + xMotivo);
                 temMaisNotas = false;
             }
 
             lotesProcessados++;
+            if (temMaisNotas) Thread.sleep(1500);
+        }
+    }
 
-            if (temMaisNotas) {
-                Thread.sleep(1000);
+    @Transactional
+    public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe configPlaceholder, String cnpjEmpresa, String chaveAcesso) throws Exception {
+        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L).orElseThrow();
+        chaveAcesso = chaveAcesso.replaceAll("\\D", "");
+
+        if (chaveAcesso.length() != 44) {
+            throw new RuntimeException("A chave de acesso deve ter exatamente 44 números.");
+        }
+
+        HttpClient client = criarHttpClientComCertificado(
+                configLoja.getFiscal().getArquivoCertificado(),
+                configLoja.getFiscal().getSenhaCert()
+        );
+
+        System.out.println("🎯 [SNIPER] Buscando chave: " + chaveAcesso);
+
+        String soapRequest = construirEnvelopeSOAPConsChNFe(cnpjEmpresa, chaveAcesso, "1");
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx"))
+                .header("Content-Type", "application/soap+xml; charset=utf-8; action=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse\"")
+                .POST(HttpRequest.BodyPublishers.ofString(soapRequest))
+                .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        String responseBody = response.body();
+
+        String cStat = extrairComRegex(responseBody, "cStat");
+        String xMotivo = extrairComRegex(responseBody, "xMotivo");
+
+        if ("138".equals(cStat)) {
+            processarDocumentosDoLote(responseBody);
+            return "Nota " + chaveAcesso + " localizada e guardada com sucesso!";
+        }
+
+        throw new RuntimeException("A SEFAZ respondeu: " + xMotivo + " (Status: " + cStat + ")");
+    }
+
+    private void processarDocumentosDoLote(String responseBody) throws Exception {
+        Pattern docZipPattern = Pattern.compile("<docZip[^>]*NSU=\"([0-9]+)\"[^>]*schema=\"([^\"]+)\"[^>]*>(.*?)</docZip>");
+        Matcher matcher = docZipPattern.matcher(responseBody);
+
+        while (matcher.find()) {
+            String nsuDoDocumento = matcher.group(1);
+            String schema = matcher.group(2);
+            String base64Zip = matcher.group(3);
+
+            byte[] zipBytes = Base64.getDecoder().decode(base64Zip);
+            String xmlDescompactado = descompactarGZip(zipBytes);
+
+            if (schema.startsWith("resNFe")) {
+                salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PENDENTE_MANIFESTACAO");
+            } else if (schema.startsWith("procNFe")) {
+                salvarNotaPendente(xmlDescompactado, nsuDoDocumento, "PRONTO_IMPORTACAO");
             }
         }
     }
 
-    // =========================================================
-    // MÉTODOS AUXILIARES CORRIGIDOS
-    // =========================================================
+    private HttpClient criarHttpClientComCertificado(byte[] pfxBytes, String senha) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(new ByteArrayInputStream(pfxBytes), senha.toCharArray());
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, senha.toCharArray());
+
+        TrustManager[] trustAll = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return null; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                }
+        };
+
+        SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
+        sslContext.init(kmf.getKeyManagers(), trustAll, new SecureRandom());
+
+        return HttpClient.newBuilder()
+                .sslContext(sslContext)
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
+    }
+
+    private String construirEnvelopeSOAPDistNSU(String cnpj, String nsu, String amb) {
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                "<soap12:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap12=\"http://www.w3.org/2003/05/soap-envelope\">\n" +
+                "  <soap12:Header>\n" +
+                "    <nfeCabecMsg xmlns=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe\">\n" +
+                "      <cUF>26</cUF>\n" +
+                "      <versaoDados>1.01</versaoDados>\n" +
+                "    </nfeCabecMsg>\n" +
+                "  </soap12:Header>\n" +
+                "  <soap12:Body>\n" +
+                "    <nfeDistDFeInteresse xmlns=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe\">\n" +
+                "      <nfeDadosMsg>\n" +
+                "        <distDFeInt versao=\"1.01\" xmlns=\"http://www.portalfiscal.inf.br/nfe\">\n" +
+                "          <tpAmb>" + amb + "</tpAmb>\n" +
+                "          <cUFAutor>26</cUFAutor>\n" +
+                "          <CNPJ>" + cnpj + "</CNPJ>\n" +
+                "          <distNSU>\n" +
+                "            <ultNSU>" + nsu + "</ultNSU>\n" +
+                "          </distNSU>\n" +
+                "        </distDFeInt>\n" +
+                "      </nfeDadosMsg>\n" +
+                "    </nfeDistDFeInteresse>\n" +
+                "  </soap12:Body>\n" +
+                "</soap12:Envelope>";
+    }
+
+    private String construirEnvelopeSOAPConsChNFe(String cnpj, String chave, String amb) {
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                "<soap12:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap12=\"http://www.w3.org/2003/05/soap-envelope\">\n" +
+                "  <soap12:Header>\n" +
+                "    <nfeCabecMsg xmlns=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe\">\n" +
+                "      <cUF>26</cUF>\n" +
+                "      <versaoDados>1.01</versaoDados>\n" +
+                "    </nfeCabecMsg>\n" +
+                "  </soap12:Header>\n" +
+                "  <soap12:Body>\n" +
+                "    <nfeDistDFeInteresse xmlns=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe\">\n" +
+                "      <nfeDadosMsg>\n" +
+                "        <distDFeInt versao=\"1.01\" xmlns=\"http://www.portalfiscal.inf.br/nfe\">\n" +
+                "          <tpAmb>" + amb + "</tpAmb>\n" +
+                "          <cUFAutor>26</cUFAutor>\n" +
+                "          <CNPJ>" + cnpj + "</CNPJ>\n" +
+                "          <consChNFe>\n" +
+                "            <chNFe>" + chave + "</chNFe>\n" +
+                "          </consChNFe>\n" +
+                "        </distDFeInt>\n" +
+                "      </nfeDadosMsg>\n" +
+                "    </nfeDistDFeInteresse>\n" +
+                "  </soap12:Body>\n" +
+                "</soap12:Envelope>";
+    }
 
     private void salvarNotaPendente(String xml, String nsu, String status) {
         String chaveAcesso = extrairComRegex(xml, "chNFe");
 
         if (chaveAcesso == null || notaPendenteRepository.existsByChaveAcesso(chaveAcesso)) {
-            System.out.println("⚠️ Nota ignorada. Chave nula ou já existe: " + chaveAcesso);
             return;
         }
 
@@ -112,85 +252,53 @@ public class SefazDistribuicaoService {
         nota.setNsu(nsu);
         nota.setXmlCompleto(xml);
         nota.setStatus(status);
-
-        // Data de captura atual
         nota.setDataCaptura(LocalDateTime.now());
 
-        // Extrações robustas (Tolerantes a Resumo ou Completa)
-        String nomeFornecedor = extrairComRegex(xml, "xNome");
-        if (nomeFornecedor == null) nomeFornecedor = "Fornecedor da Chave " + chaveAcesso.substring(0, 14); // Fallback
+        String nome = extrairComRegex(xml, "xNome");
+        String cnpj = extrairComRegex(xml, "CNPJ");
+        if (cnpj == null) cnpj = extrairComRegex(xml, "CPF");
 
-        String cnpjFornecedor = extrairComRegex(xml, "CNPJ");
-        if (cnpjFornecedor == null) cnpjFornecedor = extrairComRegex(xml, "CPF"); // Pode ser produtor rural
+        nota.setNomeFornecedor(nome != null ? nome : "FORNECEDOR " + chaveAcesso.substring(0, 14));
+        nota.setCnpjFornecedor(cnpj != null ? cnpj : "N/D");
 
-        // Extrai a data e o valor (crucial para o frontend não quebrar)
         String dhEmi = extrairComRegex(xml, "dhEmi");
         if (dhEmi != null && dhEmi.length() >= 19) {
             try {
-                // Tenta fazer o parse básico (Ex: 2026-04-20T10:30:00-03:00)
                 nota.setDataEmissao(LocalDateTime.parse(dhEmi.substring(0, 19)));
-            } catch (Exception e) {}
+            } catch (Exception e) {
+                nota.setDataEmissao(LocalDateTime.now());
+            }
+        } else {
+            nota.setDataEmissao(LocalDateTime.now());
         }
 
         String vNF = extrairComRegex(xml, "vNF");
         if (vNF != null) {
             try {
                 nota.setValorTotal(new java.math.BigDecimal(vNF));
-            } catch (Exception e) {}
+            } catch (Exception e) {
+            }
         }
-
-        nota.setNomeFornecedor(nomeFornecedor);
-        nota.setCnpjFornecedor(cnpjFornecedor);
 
         notaPendenteRepository.save(nota);
-        System.out.println("💾 Nova nota salva no Banco! Chave: " + chaveAcesso);
+        System.out.println("💾 GRAVADO COM SUCESSO! Chave: " + chaveAcesso);
     }
 
-    /**
-     * 🔥 EXTRATOR À PROVA DE BALA (REGEX)
-     * Procura a tag independentemente de namespaces ou quebras de linha.
-     */
     private String extrairComRegex(String xml, String tagName) {
-        // Regex: procura por <tagName> ou <ns:tagName> e extrai o valor até fechar a tag
         Pattern pattern = Pattern.compile("<(?:\\w+:)?(" + tagName + ")[^>]*>(.*?)</(?:\\w+:)?\\1>", Pattern.DOTALL);
         Matcher matcher = pattern.matcher(xml);
-        if (matcher.find()) {
-            return matcher.group(2).trim(); // O conteúdo está no grupo 2
-        }
+        if (matcher.find()) return matcher.group(2).trim();
         return null;
     }
 
-    private String descompactarGZip(byte[] bytesCompactados) throws Exception {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytesCompactados);
+    private String descompactarGZip(byte[] bytes) throws Exception {
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
              GZIPInputStream gis = new GZIPInputStream(bis);
              ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[1024];
             int len;
-            while ((len = gis.read(buffer)) > 0) { bos.write(buffer, 0, len); }
+            while ((len = gis.read(buffer)) > 0) bos.write(buffer, 0, len);
             return bos.toString(StandardCharsets.UTF_8);
         }
-    }
-
-    @Transactional
-    public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe config, String cnpjEmpresa, String chaveAcesso) throws Exception {
-        chaveAcesso = chaveAcesso.replaceAll("\\D", "");
-
-        if (chaveAcesso.length() != 44) {
-            throw new RuntimeException("A chave de acesso deve ter exatamente 44 números.");
-        }
-
-        RetDistDFeInt retorno = Nfe.distribuicaoDfe(
-                config, PessoaEnum.JURIDICA, cnpjEmpresa, ConsultaDFeEnum.CHAVE, chaveAcesso
-        );
-
-        if ("138".equals(retorno.getCStat()) && retorno.getLoteDistDFeInt() != null) {
-            for (RetDistDFeInt.LoteDistDFeInt.DocZip docZip : retorno.getLoteDistDFeInt().getDocZip()) {
-                String xml = descompactarGZip(docZip.getValue());
-                salvarNotaPendente(xml, docZip.getNSU(), "PRONTO_IMPORTACAO");
-            }
-            return "Nota " + chaveAcesso + " localizada e descarregada com sucesso!";
-        }
-
-        throw new RuntimeException("A SEFAZ respondeu: " + retorno.getXMotivo());
     }
 }

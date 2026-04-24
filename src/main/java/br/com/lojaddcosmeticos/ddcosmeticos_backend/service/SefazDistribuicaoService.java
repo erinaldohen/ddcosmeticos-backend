@@ -6,7 +6,11 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.NotaPendenteImportacao
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ConfiguracaoLojaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ControleSefazNsuRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.NotaPendenteImportacaoRepository;
+import br.com.swconsultoria.nfe.Nfe;
 import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
+import br.com.swconsultoria.nfe.dom.Evento;
+import br.com.swconsultoria.nfe.dom.enuns.ManifestacaoEnum;
+import br.com.swconsultoria.nfe.schema.envConfRecebto.TRetEnvEvento;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,6 +110,36 @@ public class SefazDistribuicaoService {
         }
     }
 
+    // 🔥 NOVO: MÉTODO PARA MANIFESTAÇÃO (Ciência da Operação) 🔥
+    @Transactional
+    public String manifestarEBaixarXmlCompleto(ConfiguracoesNfe config, String chaveAcesso) throws Exception {
+        String cnpjEmpresa = config.getCertificado().getCnpjCpf();
+        System.out.println("⏳ Iniciando Manifestação para a chave: " + chaveAcesso);
+
+        Evento evento = new Evento();
+        evento.setChave(chaveAcesso);
+        evento.setCnpj(cnpjEmpresa);
+        evento.setDataEvento(LocalDateTime.now());
+        evento.setTipoManifestacao(ManifestacaoEnum.CIENCIA_DA_OPERACAO);
+
+        br.com.swconsultoria.nfe.schema.envConfRecebto.TEnvEvento envEvento =
+                br.com.swconsultoria.nfe.util.ManifestacaoUtil.montaManifestacao(evento, config);
+
+        TRetEnvEvento retorno = Nfe.manifestacao(config, envEvento, false);
+
+        String cStat = retorno.getRetEvento().get(0).getInfEvento().getCStat();
+        String xMotivo = retorno.getRetEvento().get(0).getInfEvento().getXMotivo();
+
+        if (!"135".equals(cStat) && !"573".equals(cStat)) {
+            throw new RuntimeException("Falha na SEFAZ ao registrar Ciência: " + xMotivo);
+        }
+
+        System.out.println("✅ Ciência registrada! A aguardar 3 segundos para a SEFAZ gerar o XML...");
+        Thread.sleep(3000);
+
+        return buscarNotaPorChaveEspecifca(config, cnpjEmpresa, chaveAcesso);
+    }
+
     @Transactional
     public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe configPlaceholder, String cnpjEmpresa, String chaveAcesso) throws Exception {
         ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L).orElseThrow();
@@ -138,7 +172,7 @@ public class SefazDistribuicaoService {
 
         if ("138".equals(cStat)) {
             processarDocumentosDoLote(responseBody);
-            return "Nota " + chaveAcesso + " localizada e guardada com sucesso!";
+            return "XML Completo descarregado com sucesso!"; // Mensagem alterada para indicar sucesso no download
         }
 
         throw new RuntimeException("A SEFAZ respondeu: " + xMotivo + " (Status: " + cStat + ")");
@@ -243,20 +277,37 @@ public class SefazDistribuicaoService {
     private void salvarNotaPendente(String xml, String nsu, String status) {
         String chaveAcesso = extrairComRegex(xml, "chNFe");
 
-        if (chaveAcesso == null || notaPendenteRepository.existsByChaveAcesso(chaveAcesso)) {
+        if (chaveAcesso == null) {
             return;
         }
 
-        NotaPendenteImportacao nota = new NotaPendenteImportacao();
-        nota.setChaveAcesso(chaveAcesso);
+        // Verifica se a nota já existe para poder ATUALIZAR de PENDENTE para PRONTO
+        NotaPendenteImportacao nota = notaPendenteRepository.findByChaveAcesso(chaveAcesso).orElse(null);
+
+        if (nota != null && "PRONTO_IMPORTACAO".equals(nota.getStatus()) && "PENDENTE_MANIFESTACAO".equals(status)) {
+            // Se já tem o XML completo, não esmaga com o resumo
+            return;
+        }
+
+        if (nota == null) {
+            nota = new NotaPendenteImportacao();
+            nota.setChaveAcesso(chaveAcesso);
+            nota.setDataCaptura(LocalDateTime.now());
+        }
+
         nota.setNsu(nsu);
         nota.setXmlCompleto(xml);
         nota.setStatus(status);
-        nota.setDataCaptura(LocalDateTime.now());
 
         String nome = extrairComRegex(xml, "xNome");
         String cnpj = extrairComRegex(xml, "CNPJ");
         if (cnpj == null) cnpj = extrairComRegex(xml, "CPF");
+
+        // 🔥 CORREÇÃO: Limpa o CNPJ para caber no Banco (VARCHAR 14) 🔥
+        if (cnpj != null) {
+            cnpj = cnpj.replaceAll("\\D", "");
+            if (cnpj.length() > 14) cnpj = cnpj.substring(0, 14);
+        }
 
         nota.setNomeFornecedor(nome != null ? nome : "FORNECEDOR " + chaveAcesso.substring(0, 14));
         nota.setCnpjFornecedor(cnpj != null ? cnpj : "N/D");

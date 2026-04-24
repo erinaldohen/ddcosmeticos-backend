@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/estoque/notas-pendentes")
@@ -32,38 +33,44 @@ public class NotaPendenteController {
     @Autowired
     private NfeConfig nfeConfigBuilder;
 
-    // 🔥 ROTA ÚNICA DE LISTAGEM COM FILTRO DE DATAS OPCIONAIS (CORRIGIDA)
     @GetMapping
     public ResponseEntity<List<NotaPendenteImportacao>> listarNotasProntasParaImportar(
             @RequestParam(required = false) String dataInicio,
             @RequestParam(required = false) String dataFim) {
 
-        // Busca TODAS as notas, ordena da mais recente para a mais antiga
         List<NotaPendenteImportacao> notas = notaPendenteRepository.findAll().stream()
                 .filter(n -> !"IMPORTADO".equals(n.getStatus()))
                 .sorted(Comparator.comparing(NotaPendenteImportacao::getDataCaptura).reversed())
-                .toList();
+                .collect(Collectors.toList());
 
-        // Filtra por período SE as datas vieram na requisição (Blindagem contra Nulos)
         if (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty()) {
             notas = notas.stream().filter(nota -> {
                 try {
-                    // Usa a data de emissão se existir, se não, usa a de captura para nunca falhar
                     Object dataEmissaoObj = nota.getDataEmissao() != null ? nota.getDataEmissao() : nota.getDataCaptura();
-                    if (dataEmissaoObj == null) return false; // Falha de segurança
+                    if (dataEmissaoObj == null) return false;
 
                     String dataString = dataEmissaoObj.toString().substring(0, 10);
                     return dataString.compareTo(dataInicio) >= 0 && dataString.compareTo(dataFim) <= 0;
                 } catch (Exception e) {
-                    return true; // Se der erro ao ler a data, deixa passar para a tela
+                    return true;
                 }
-            }).toList();
+            }).collect(Collectors.toList());
         }
+
+        // 🔥 O TRUQUE DE FORMATAÇÃO DO CNPJ SEM MEXER NO BANCO 🔥
+        // A tela vai receber o CNPJ bonitinho, mas no banco continua sujo (14 chars) para não dar erro!
+        notas.forEach(nota -> {
+            if (nota.getCnpjFornecedor() != null && nota.getCnpjFornecedor().length() >= 14 && !nota.getCnpjFornecedor().contains(".")) {
+                String num = nota.getCnpjFornecedor().replaceAll("\\D", "");
+                if(num.length() == 14){
+                    nota.setCnpjFornecedor(num.substring(0, 2) + "." + num.substring(2, 5) + "." + num.substring(5, 8) + "/" + num.substring(8, 12) + "-" + num.substring(12, 14));
+                }
+            }
+        });
 
         return ResponseEntity.ok(notas);
     }
 
-    // 2. Importação efetiva (No NotaPendenteController)
     @PostMapping("/{id}/importar")
     public ResponseEntity<String> efetivarImportacao(@PathVariable Long id) {
         Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
@@ -75,9 +82,7 @@ public class NotaPendenteController {
         NotaPendenteImportacao nota = notaOpt.get();
 
         try {
-            // 🔥 REMOVA AS BARRAS DE COMENTÁRIO DESTA LINHA:
-            importacaoXmlService.processarImportacaoXmlString(nota.getXmlCompleto());
-
+            // A linha de processamento antigo comentada, pois quem salva os itens agora é o React
             nota.setStatus("IMPORTADO");
             notaPendenteRepository.save(nota);
             return ResponseEntity.ok("Nota importada com sucesso para o estoque e financeiro!");
@@ -86,7 +91,6 @@ public class NotaPendenteController {
         }
     }
 
-    // 3. Forçar Sincronização
     @PostMapping("/sincronizar")
     public ResponseEntity<String> forcarSincronizacaoSefaz() {
         try {
@@ -100,7 +104,6 @@ public class NotaPendenteController {
         }
     }
 
-    // 4. 🔥 O NOVO "SNIPER": Busca Direta por Chave de Acesso
     @PostMapping("/buscar-chave/{chave}")
     public ResponseEntity<String> buscarNotaPorChave(@PathVariable String chave) {
         try {
@@ -113,6 +116,22 @@ public class NotaPendenteController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
+
+    @PostMapping("/{id}/manifestar")
+    public ResponseEntity<String> solicitarXmlCompletoSeFaltante(@PathVariable Long id) {
+        try {
+            NotaPendenteImportacao nota = notaPendenteRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Nota não encontrada na base."));
+
+            ConfiguracoesNfe config = nfeConfigBuilder.construirConfiguracaoDinamica(true);
+            String msg = sefazDistribuicaoService.manifestarEBaixarXmlCompleto(config, nota.getChaveAcesso());
+            return ResponseEntity.ok(msg);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body("Erro ao processar a Ciência da Operação: " + e.getMessage());
+        }
+    }
+
     @GetMapping("/{id}/xml-parse")
     public ResponseEntity<?> fazerParseDeXmlGuardado(@PathVariable Long id) {
         Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
@@ -123,10 +142,7 @@ public class NotaPendenteController {
 
         try {
             String xml = notaOpt.get().getXmlCompleto();
-            // O ImportacaoXmlService já tem uma função para fazer parse de String (usada no botão anterior)
             Object resultadoParse = importacaoXmlService.simularImportacaoXmlString(xml);
-
-            // Depois que for tudo conferido na tela, a nota muda de status
             return ResponseEntity.ok(resultadoParse);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Erro ao ler o XML da base: " + e.getMessage());

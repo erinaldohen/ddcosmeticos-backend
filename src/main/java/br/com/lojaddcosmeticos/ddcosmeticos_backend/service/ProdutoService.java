@@ -215,38 +215,96 @@ public class ProdutoService {
 
     private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa, String ean) {
         Produto p = produtoRepository.findByEanIrrestrito(ean).stream().findFirst().orElse(new Produto());
+
         if (p.getId() == null) {
-            p.setCodigoBarras(ean); p.setSku(ean); p.setAtivo(true); p.setOrigem("0"); p.setCst("102"); p.setNcm("00000000");
-            p.setQuantidadeEmEstoque(0); p.setEstoqueFiscal(0); p.setEstoqueNaoFiscal(0);
+            p.setCodigoBarras(ean);
+            p.setSku(ean);
+            p.setAtivo(true);
+            p.setOrigem("0");
+            p.setCst("102");
+            p.setNcm("00000000");
+            p.setQuantidadeEmEstoque(0);
+            p.setEstoqueFiscal(0);
+            p.setEstoqueNaoFiscal(0);
         } else {
-            if (mapa.containsKey("ativo")) { String a = getVal(dados, mapa.get("ativo")).toUpperCase(); p.setAtivo(a.startsWith("S") || a.equals("1") || a.equals("TRUE")); }
+            if (mapa.containsKey("ativo")) {
+                String a = getVal(dados, mapa.get("ativo")).toUpperCase();
+                p.setAtivo(a.startsWith("S") || a.equals("1") || a.equals("TRUE"));
+            }
         }
-        if (mapa.containsKey("desc")) { String desc = getVal(dados, mapa.get("desc")); if (desc != null && !desc.trim().isEmpty()) { p.setDescricao(truncar(desc.trim().toUpperCase(), 250)); } }
+
+        if (mapa.containsKey("desc")) {
+            String desc = getVal(dados, mapa.get("desc"));
+            if (desc != null && !desc.trim().isEmpty()) {
+                p.setDescricao(truncar(desc.trim().toUpperCase(), 250));
+            }
+        }
+
         if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) p.setDescricao("PRODUTO " + ean);
+
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
         if (mapa.containsKey("qtd")) p.setQuantidadeEmEstoque(lerDecimal(getVal(dados, mapa.get("qtd"))).intValue());
         if (mapa.containsKey("fiscal")) p.setEstoqueFiscal(lerDecimal(getVal(dados, mapa.get("fiscal"))).intValue());
+
         if (p.getEstoqueFiscal() == null) p.setEstoqueFiscal(0);
-        if (mapa.containsKey("naofiscal")) { p.setEstoqueNaoFiscal(lerDecimal(getVal(dados, mapa.get("naofiscal"))).intValue()); } else { p.setEstoqueNaoFiscal(Math.max(0, (p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0) - p.getEstoqueFiscal())); }
-        if (mapa.containsKey("min")) { BigDecimal min = lerDecimal(getVal(dados, mapa.get("min"))); if(min!=null) p.setEstoqueMinimo(min.intValue()); }
+        if (mapa.containsKey("naofiscal")) {
+            p.setEstoqueNaoFiscal(lerDecimal(getVal(dados, mapa.get("naofiscal"))).intValue());
+        } else {
+            p.setEstoqueNaoFiscal(Math.max(0, (p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0) - p.getEstoqueFiscal()));
+        }
+
+        if (mapa.containsKey("min")) {
+            BigDecimal min = lerDecimal(getVal(dados, mapa.get("min")));
+            if(min!=null) p.setEstoqueMinimo(min.intValue());
+        }
+
         if (p.getEstoqueMinimo() == null) p.setEstoqueMinimo(5);
         if (mapa.containsKey("marca")) p.setMarca(truncar(getVal(dados, mapa.get("marca")).toUpperCase(), 50));
         if (mapa.containsKey("cat")) p.setCategoria(truncar(getVal(dados, mapa.get("cat")), 50));
         if (mapa.containsKey("sub")) p.setSubcategoria(truncar(getVal(dados, mapa.get("sub")), 50));
         if (mapa.containsKey("unidade")) p.setUnidade(truncar(getVal(dados, mapa.get("unidade")), 10));
-        String ncmArquivo = ""; if (mapa.containsKey("ncm")) ncmArquivo = truncar(getVal(dados, mapa.get("ncm")).replaceAll("[^0-9]", ""), 8);
+
+        String ncmArquivo = "";
+        if (mapa.containsKey("ncm")) ncmArquivo = truncar(getVal(dados, mapa.get("ncm")).replaceAll("[^0-9]", ""), 8);
+
         boolean ncmSuspeito = ncmArquivo.isEmpty() || ncmArquivo.equals("00000000") || (ncmArquivo.startsWith("3304") && !p.getDescricao().contains("BATOM"));
-        if (!ncmSuspeito) { p.setNcm(ncmArquivo); } else {
-            String ncmInteligente = null; String[] palavras = p.getDescricao().split(" ");
-            for (String palavra : palavras) { String pl = palavra.replaceAll("[^a-zA-Z0-9]", ""); if (pl.length() > 3) { try { ncmInteligente = produtoRepository.findNcmInteligente(pl); if (ncmInteligente != null) break; } catch (Exception ignored) {} } }
+
+        if (!ncmSuspeito) {
+            p.setNcm(ncmArquivo);
+        } else {
+            String ncmInteligente = null;
+            String[] palavras = p.getDescricao().split(" ");
+            for (String palavra : palavras) {
+                String pl = palavra.replaceAll("[^a-zA-Z0-9]", "");
+                if (pl.length() > 3) {
+                    try {
+                        ncmInteligente = produtoRepository.findNcmInteligente(pl);
+                        if (ncmInteligente != null) break;
+                    } catch (Exception ignored) {}
+                }
+            }
             if (ncmInteligente != null) p.setNcm(ncmInteligente); else if (!ncmArquivo.isEmpty()) p.setNcm(ncmArquivo);
         }
+
         if (mapa.containsKey("cest")) p.setCest(truncar(getVal(dados, mapa.get("cest")).replaceAll("[^0-9]", ""), 7));
-        if (mapa.containsKey("origem")) { String o = getVal(dados, mapa.get("origem")).replaceAll("[^0-9]", ""); if(!o.isEmpty()) p.setOrigem(o.substring(0, 1)); }
-        if (p.getNcm() != null && !p.getNcm().equals("00000000")) { try { calculadoraFiscalService.aplicarRegrasFiscais(p); } catch (Exception ignored) {} }
+        if (mapa.containsKey("origem")) {
+            String o = getVal(dados, mapa.get("origem")).replaceAll("[^0-9]", "");
+            if(!o.isEmpty()) p.setOrigem(o.substring(0, 1));
+        }
+
+        if (p.getNcm() != null && !p.getNcm().equals("00000000")) {
+            try {
+                calculadoraFiscalService.aplicarRegrasFiscais(p);
+            } catch (Exception ignored) {}
+        }
+
+        // 🛡️ Prevenção de Nulls Fiscais e Financeiros
         if (p.getPrecoCusto() == null) p.setPrecoCusto(BigDecimal.ZERO);
-        if (p.getPrecoVenda() == null || p.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) { p.setPrecoVenda(p.getPrecoCusto().multiply(new BigDecimal("1.5"))); }
+        if (p.getPrecoVenda() == null || p.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) {
+            p.setPrecoVenda(p.getPrecoCusto().multiply(new BigDecimal("1.5")));
+        }
+
         return p;
     }
 
@@ -351,11 +409,13 @@ public class ProdutoService {
         p.setCest(d.cest());
         p.setCst(d.cst());
         p.setOrigem(d.origem());
+
+        // 🔥 CORREÇÃO: Utilizando setters adequados para booleanos
         p.setIsMonofasico(d.monofasico() != null ? d.monofasico() : false);
         p.setClassificacaoReforma(d.classificacaoReforma());
         p.setIsImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
-        p.setPrecoVenda(d.precoVenda() != null ? d.precoVenda() : BigDecimal.ZERO);
 
+        p.setPrecoVenda(d.precoVenda() != null ? d.precoVenda() : BigDecimal.ZERO);
         if (d.precoCusto() != null) { p.setPrecoCusto(d.precoCusto()); } else if (p.getPrecoCusto() == null) { p.setPrecoCusto(BigDecimal.ZERO); }
 
         p.setEstoqueMinimo(d.estoqueMinimo());
@@ -419,7 +479,7 @@ public class ProdutoService {
     }
 
     // =========================================================================
-    // CORREÇÃO: O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
+    // O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
     // =========================================================================
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -473,6 +533,8 @@ public class ProdutoService {
 
                     boolean ehMonofasico = ncmSugerido.startsWith("3303") || ncmSugerido.startsWith("3304") ||
                             ncmSugerido.startsWith("3305") || ncmSugerido.startsWith("3307");
+
+                    // 🔥 CORREÇÃO: Utilizando os setters blindados
                     p.setIsMonofasico(ehMonofasico);
                     if (ehMonofasico) p.setCst("04");
 
@@ -544,7 +606,7 @@ public class ProdutoService {
                 ProdutoExternoDTO ext = dadosExternos.get();
                 return new ProdutoDTO(
                         null, ext.getNome(), ext.getEan(), null, ext.getMarca(), ext.getCategoria(), null, "UN", null, null, ext.getNcm(), ext.getCest(), "102", "0", ext.getMonofasico(), TipoTributacaoReforma.PADRAO, false,
-                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0), BigDecimal.ZERO, 0, 0, 0, 5, 0, ext.getUrlImagem(), true, false
+                        BigDecimal.valueOf(ext.getPrecoMedio() != null ? ext.getPrecoMedio() : 0.0), BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, 0, 5, 0, ext.getUrlImagem(), true, false
                 );
             }
         } catch (Exception e) { log.error("Erro ao consultar API externa: {}", e.getMessage()); }

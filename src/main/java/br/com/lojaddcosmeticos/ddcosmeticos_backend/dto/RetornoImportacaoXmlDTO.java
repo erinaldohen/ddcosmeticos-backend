@@ -10,7 +10,9 @@ public class RetornoImportacaoXmlDTO {
     private Long fornecedorId;
     private String nomeFornecedor;
     private String razaoSocialFornecedor; // Importante para o Front atualizar o dropdown
+    private String cnpjFornecedor;        // 🔥 ADICIONADO (Essencial para a lógica de bypass/cadastro)
     private String numeroNota;
+    private String dataEmissao;           // 🔥 ADICIONADO (Necessário para registrar o movimento/financeiro)
 
     // Inicializa a lista para evitar NullPointerException
     private List<ItemXmlDTO> itensXml = new ArrayList<>();
@@ -25,8 +27,14 @@ public class RetornoImportacaoXmlDTO {
     public String getRazaoSocialFornecedor() { return razaoSocialFornecedor; }
     public void setRazaoSocialFornecedor(String razaoSocialFornecedor) { this.razaoSocialFornecedor = razaoSocialFornecedor; }
 
+    public String getCnpjFornecedor() { return cnpjFornecedor; }
+    public void setCnpjFornecedor(String cnpjFornecedor) { this.cnpjFornecedor = cnpjFornecedor; }
+
     public String getNumeroNota() { return numeroNota; }
     public void setNumeroNota(String numeroNota) { this.numeroNota = numeroNota; }
+
+    public String getDataEmissao() { return dataEmissao; }
+    public void setDataEmissao(String dataEmissao) { this.dataEmissao = dataEmissao; }
 
     public List<ItemXmlDTO> getItensXml() { return itensXml; }
     public void setItensXml(List<ItemXmlDTO> itensXml) { this.itensXml = itensXml; }

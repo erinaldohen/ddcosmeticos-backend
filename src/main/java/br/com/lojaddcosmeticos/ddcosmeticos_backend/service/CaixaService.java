@@ -2,10 +2,12 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfirmacaoFechamentoDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.PerfilDoUsuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ConfiguracaoLoja;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.CaixaDiarioRepository;
@@ -38,6 +40,69 @@ public class CaixaService {
     private final MovimentacaoCaixaRepository movimentacaoCaixaRepository;
     private final AuditoriaService auditoriaService;
     private final CaixaAuditorIaService caixaAuditorIaService;
+    private final ConfiguracaoLojaService configuracaoLojaService;
+
+    // ==================================================================================
+    //  BLINDAGEM E RESUMO DO FECHAMENTO
+    // ==================================================================================
+
+    @Transactional(readOnly = true)
+    public FechamentoCaixaDTO obterResumoFechamento(Long caixaId) {
+        CaixaDiario caixa = caixaDiarioRepository.findById(caixaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Caixa não encontrado."));
+
+        ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
+
+        // 1. Calcula o que deveria ter de dinheiro na gaveta
+        BigDecimal saldoGavetaEsperado = nvl(caixa.getSaldoInicial())
+                .add(nvl(caixa.getTotalEntradas()))
+                .add(nvl(caixa.getTotalVendasDinheiro()))
+                .subtract(nvl(caixa.getTotalSaidas()));
+
+        BigDecimal brutoTotal = nvl(caixa.getTotalVendasDinheiro())
+                .add(nvl(caixa.getTotalVendasPix()))
+                .add(nvl(caixa.getTotalVendasCredito()))
+                .add(nvl(caixa.getTotalVendasDebito()));
+
+        // 2. Constrói o DTO Padrão (Sem a limitação de Setter)
+        FechamentoCaixaDTO dtoBase = FechamentoCaixaDTO.builder()
+                .caixaId(caixa.getId())
+                .operador(caixa.getUsuarioAbertura() != null ? caixa.getUsuarioAbertura().getNome() : "Operador")
+                .dataAbertura(caixa.getDataAbertura())
+                .dataFechamento(caixa.getDataFechamento())
+                .saldoInicial(nvl(caixa.getSaldoInicial()))
+                .totalSuprimentos(nvl(caixa.getTotalEntradas()))
+                .totalSangrias(nvl(caixa.getTotalSaidas()))
+                .totalVendasDinheiro(nvl(caixa.getTotalVendasDinheiro()))
+                .totalVendasPix(nvl(caixa.getTotalVendasPix()))
+                .totalVendasCredito(nvl(caixa.getTotalVendasCredito()))
+                .totalVendasDebito(nvl(caixa.getTotalVendasDebito()))
+                .totalVendasCrediario(BigDecimal.ZERO) // Ajuste se armazenar Fiado no caixa futuramente
+                .quantidadeVendas(0L) // Preencha se tiver a query de count
+                .totalVendasBruto(brutoTotal)
+                .saldoEsperadoDinheiroGaveta(saldoGavetaEsperado)
+                .fechamentoCegoAtivo(false)
+                .mensagemSistema("Resumo gerado com sucesso.")
+                .build();
+
+        // 🔥 3. A MÁGICA DA BLINDAGEM DO FECHAMENTO CEGO 🔥
+        if (config != null && config.getFinanceiro() != null && Boolean.TRUE.equals(config.getFinanceiro().getFechamentoCego())) {
+            // Usa o toBuilder() para clonar o objeto, apagar o valor sensível e reescrever a mensagem
+            return dtoBase.toBuilder()
+                    .saldoEsperadoDinheiroGaveta(null) // Esconde do Frontend!
+                    .fechamentoCegoAtivo(true)
+                    .mensagemSistema("FECHAMENTO CEGO ATIVO: Conte o dinheiro e as vias de cartão fisicamente e declare os valores abaixo.")
+                    .build();
+        }
+
+        return dtoBase;
+    }
+
+    // Função utilitária para evitar NullPointerException em matemática
+    private BigDecimal nvl(BigDecimal valor) {
+        return valor != null ? valor : BigDecimal.ZERO;
+    }
+
 
     // ==================================================================================
     //  MÉTODOS DE INTEGRAÇÃO (USADOS POR OUTROS SERVICES)
@@ -51,7 +116,6 @@ public class CaixaService {
         } catch (Exception e) {
             // Ignora erro
         }
-        // 🚨 CORREÇÃO: Usando findFirstByStatus para respeitar a atualização do Repository
         return caixaDiarioRepository.findFirstByStatus(StatusCaixa.ABERTO).orElse(null);
     }
 
@@ -195,7 +259,6 @@ public class CaixaService {
         if (caixaProprio.isPresent()) {
             caixa = caixaProprio.get();
         } else if (operadorLogado.getPerfilDoUsuario() == PerfilDoUsuario.ROLE_ADMIN) {
-            // 🚨 CORREÇÃO: Usando findFirstByStatus para o Administrador forçar o fecho de qualquer caixa aberto
             caixa = caixaDiarioRepository.findFirstByStatus(StatusCaixa.ABERTO)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Não há nenhum caixa aberto no sistema."));
         } else {
@@ -319,6 +382,7 @@ public class CaixaService {
 
         return paginaCaixas.map(this::converterParaDTOCompleto);
     }
+
     // ==================================================================================
     //  MÉTODOS DE AUDITORIA E ALERTAS
     // ==================================================================================

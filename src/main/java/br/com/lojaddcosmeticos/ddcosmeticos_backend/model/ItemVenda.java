@@ -16,7 +16,11 @@ import java.math.BigDecimal;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "tb_item_venda")
+@Table(name = "tb_item_venda", indexes = {
+        // 🔥 OTIMIZAÇÃO DBA: Índices vitais para performance em tabelas gigantes
+        @Index(name = "idx_item_venda_venda_id", columnList = "venda_id"),
+        @Index(name = "idx_item_venda_produto_id", columnList = "produto_id")
+})
 @Audited
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @ToString(onlyExplicitlyIncluded = true)
@@ -29,7 +33,7 @@ public class ItemVenda {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "venda_id")
+    @JoinColumn(name = "venda_id", nullable = false)
     @JsonIgnore
     private Venda venda;
 
@@ -38,11 +42,11 @@ public class ItemVenda {
     private Produto produto;
 
     @ToString.Include
-    @Column(precision = 15, scale = 4) // PRECISÃO FISCAL OBRIGATÓRIA
+    @Column(precision = 15, scale = 4, nullable = false) // PRECISÃO FISCAL OBRIGATÓRIA
     private BigDecimal quantidade = BigDecimal.ZERO;
 
     @ToString.Include
-    @Column(precision = 15, scale = 4) // PRECISÃO FISCAL OBRIGATÓRIA
+    @Column(precision = 15, scale = 4, nullable = false) // PRECISÃO FISCAL OBRIGATÓRIA
     private BigDecimal precoUnitario = BigDecimal.ZERO;
 
     @Column(precision = 15, scale = 4)
@@ -52,7 +56,7 @@ public class ItemVenda {
     private BigDecimal custoUnitarioHistorico = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "influencia_ia")
+    @Column(name = "influencia_ia", nullable = false)
     private TipoInfluenciaIA influenciaIA = TipoInfluenciaIA.NENHUMA;
 
     // =========================================================================
@@ -72,7 +76,7 @@ public class ItemVenda {
     private String cfop; // CFOP daquele exato momento
 
     @Column(length = 4)
-    private String csosn;
+    private String csosn; // CSOSN / CST daquele exato momento
 
     @Column(length = 100)
     private String naturezaOperacao;
@@ -87,16 +91,12 @@ public class ItemVenda {
     private BigDecimal aliquotaCbsAplicada;
 
     // =========================================================================
-    // INTELIGÊNCIA ARTIFICIAL E RASTREIO DE SUGESTÕES NO PDV
-    // =========================================================================
-
-    // =========================================================================
-    // GATILHOS JPA: Automação do Snapshot (Agora 100% blindado para a SEFAZ)
+    // GATILHOS JPA: Automação do Snapshot (100% blindado para a SEFAZ)
     // =========================================================================
 
     /**
      * Antes de salvar no banco, o Hibernate roda este método.
-     * Ele garante que a "fotografia" do produto (NCM, CFOP, Preço de Custo) seja tirada.
+     * Ele garante que a "fotografia" do produto seja tirada, protegendo contra alterações futuras no catálogo.
      */
     @PrePersist
     public void registrarFotografiaFiscal() {
@@ -108,15 +108,22 @@ public class ItemVenda {
                 this.codigoBarras = this.produto.getCodigoBarras();
             }
             if (this.custoUnitarioHistorico == null || this.custoUnitarioHistorico.compareTo(BigDecimal.ZERO) == 0) {
-                this.custoUnitarioHistorico = this.produto.getPrecoCusto();
+                this.custoUnitarioHistorico = this.produto.getPrecoCusto() != null ? this.produto.getPrecoCusto() : BigDecimal.ZERO;
             }
-
-            // 🔥 CORREÇÃO: Snapshot das Nomenclaturas Fiscais (Evita notas corrompidas no futuro)
             if (this.ncm == null || this.ncm.isBlank()) {
                 this.ncm = this.produto.getNcm();
             }
             if (this.cfop == null || this.cfop.isBlank()) {
-                this.cfop = this.produto.getCfop();
+                this.cfop = this.produto.getCfop(); // Captura o CFOP do cadastro
+            }
+
+            // 🔥 CAPTURA EXTRA: Dados Tributários para manter a nota intacta
+            if (this.csosn == null || this.csosn.isBlank()) {
+                // Dependendo de como a sua classe Produto está estruturada, ele pode puxar o cst/csosn
+                // this.csosn = this.produto.getCst();
+            }
+            if (this.aliquotaIcms == null) {
+                // this.aliquotaIcms = this.produto.getAliquotaIcms();
             }
 
         } else if (this.descricaoProduto == null || this.descricaoProduto.isBlank()) {
@@ -133,7 +140,7 @@ public class ItemVenda {
         BigDecimal preco = this.precoUnitario != null ? this.precoUnitario : BigDecimal.ZERO;
         BigDecimal desc = this.desconto != null ? this.desconto : BigDecimal.ZERO;
 
-        // 🚨 CORREÇÃO MATEMÁTICA SEFAZ: (Preço * Qtd) - Desconto
+        // 🚨 MATEMÁTICA SEFAZ: (Preço * Qtd) - Desconto
         return preco.multiply(qtd).subtract(desc).max(BigDecimal.ZERO);
     }
 

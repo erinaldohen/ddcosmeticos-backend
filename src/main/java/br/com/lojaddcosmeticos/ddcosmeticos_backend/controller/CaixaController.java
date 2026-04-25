@@ -1,6 +1,7 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.CaixaDiarioDTO;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.FechamentoCaixaRequestDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.MovimentacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.CaixaDiario;
@@ -44,6 +45,7 @@ public class CaixaController {
     private final CaixaRelatorioService relatorioService;
     private final VendaRepository vendaRepository;
     private final VendaPerdidaRepository vendaPerdidaRepository;
+
     // --- OPERACIONAL ---
 
     @GetMapping("/alertas")
@@ -53,32 +55,53 @@ public class CaixaController {
     }
 
     // ==================================================================================
-    // NOVO: MOTOR DE SUGESTÕES DE VENDA (IA DE BALCÃO)
+    // MOTOR DE SUGESTÕES DE VENDA (IA DE BALCÃO)
     // ==================================================================================
 
     @GetMapping("/sugestao-ia/{produtoId}")
     @Operation(summary = "Gera sugestões de cross-sell baseadas no carrinho atual")
-    @PreAuthorize("isAuthenticated()") // Qualquer operador pode aceder
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<String>> getSugestaoIA(@PathVariable Long produtoId) {
         try {
             List<String> sugestoes = vendaRepository.buscarSugestoesParaProduto(produtoId);
             return ResponseEntity.ok(sugestoes);
         } catch (Exception e) {
             log.error("Erro ao gerar sugestão de IA para o produto {}: {}", produtoId, e.getMessage());
-            // Em caso de erro do banco de dados, retorna lista vazia para não travar o PDV
             return ResponseEntity.ok(List.of());
         }
     }
 
+    // ==================================================================================
+    // FLUXO DE FECHAMENTO (COM BLINDAGEM ANTI-FRAUDE)
+    // ==================================================================================
+
+    /**
+     * Rota chamada pela tela ResumoFechamento.jsx ANTES de fechar o caixa.
+     * Ela devolve o DTO que pode esconder o saldo se o "Fechamento Cego" estiver ativo.
+     */
+    @GetMapping("/resumo-fechamento")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Busca o resumo do caixa aberto do usuário para conferência")
+    public ResponseEntity<FechamentoCaixaDTO> obterResumoParaFechamento() {
+        CaixaDiario caixaAberto = caixaService.buscarCaixaAberto();
+        if (caixaAberto == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        FechamentoCaixaDTO resumo = caixaService.obterResumoFechamento(caixaAberto.getId());
+        return ResponseEntity.ok(resumo);
+    }
+
     @PostMapping("/fechar")
-    public ResponseEntity<Void> fecharCaixa(
-            @Valid @RequestBody FechamentoCaixaRequestDTO request) {
-        // CORREÇÃO: Agora passamos os dois campos para o Service
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Executa o fechamento e grava a declaração física do operador")
+    public ResponseEntity<Void> fecharCaixa(@Valid @RequestBody FechamentoCaixaRequestDTO request) {
         caixaService.fecharCaixa(request.valorFisicoInformado(), request.justificativaDiferenca());
         return ResponseEntity.ok().build();
     }
 
     @GetMapping("/status")
+    @Operation(summary = "Verifica se o operador logado tem um caixa aberto")
     public ResponseEntity<?> verificarStatusCaixa() {
         try {
             CaixaDiarioDTO caixa = caixaService.buscarStatusAtual();
@@ -179,13 +202,14 @@ public class CaixaController {
     }
 
     @GetMapping("/{id}")
-    @Transactional(readOnly = true) // <-- ESSA ANOTAÇÃO SALVA O DIA! Mantém a conexão aberta para ler o Usuário
+    @Transactional(readOnly = true)
     public ResponseEntity<CaixaDiarioDTO> buscarPorId(@PathVariable Long id) {
         return caixaRepository.findById(id)
                 .map(caixaService::converterParaDTOCompleto)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
+
     // ==================================================================================
     // RUPTURA: REGISTO DE VENDA PERDIDA NO PDV
     // ==================================================================================
@@ -196,10 +220,6 @@ public class CaixaController {
         VendaPerdida vp = new VendaPerdida();
         vp.setProdutoProcurado(payload.get("produto"));
         vp.setDataRegistro(LocalDateTime.now());
-
-        // (Opcional) Capturar o nome do utilizador autenticado
-        // vp.setOperador(usuarioAutenticado.getNome());
-
         vendaPerdidaRepository.save(vp);
         return ResponseEntity.ok().build();
     }

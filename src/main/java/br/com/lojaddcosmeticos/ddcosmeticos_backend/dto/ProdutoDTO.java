@@ -3,25 +3,32 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.dto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoTributacaoReforma;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import com.fasterxml.jackson.annotation.JsonFormat;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/**
+ * DTO para transporte e validação de dados de Produto.
+ * Alinhado com a blindagem do modelo e regras de performance do banco.
+ */
 public record ProdutoDTO(
         Long id,
 
-        @NotBlank(message = "A descrição é obrigatória")
+        @NotBlank(message = "A descrição do produto é obrigatória")
+        @Size(min = 3, max = 255, message = "A descrição deve ter entre 3 e 255 caracteres")
         String descricao,
 
         String codigoBarras,
-        String sku, // Código interno
+
+        String sku,
 
         String marca,
+
         String categoria,
+
         String subcategoria,
+
         String unidade,
 
         // INVENTÁRIO & RASTREABILIDADE
@@ -30,12 +37,15 @@ public record ProdutoDTO(
         @JsonFormat(pattern = "yyyy-MM-dd")
         LocalDate validade,
 
-        // FISCAL
+        // FISCAL (Essencial para a SEFAZ)
+        @Size(max = 10, message = "NCM inválido")
         String ncm,
+
         String cest,
+
         String cst,
 
-        @Size(max = 1, message = "A origem deve ter apenas 1 dígito")
+        @Size(max = 1, message = "A origem deve ter apenas 1 dígito (ex: 0 para nacional)")
         String origem,
 
         Boolean monofasico,
@@ -44,25 +54,38 @@ public record ProdutoDTO(
 
         Boolean impostoSeletivo,
 
-        // FINANCEIRO
+        // FINANCEIRO (Com travas de valor positivo)
         @NotNull(message = "O preço de venda é obrigatório")
+        @PositiveOrZero(message = "O preço de venda não pode ser negativo")
         BigDecimal precoVenda,
 
+        @PositiveOrZero(message = "O preço de custo não pode ser negativo")
         BigDecimal precoCusto,
 
+        BigDecimal precoMedioPonderado,
+
         // ESTOQUE
-        Integer quantidadeEmEstoque, // Saldo total
-        Integer estoqueFiscal,       // Com Nota
-        Integer estoqueNaoFiscal,    // Sem Nota
+        @Min(value = 0, message = "A quantidade em estoque não pode ser negativa")
+        Integer quantidadeEmEstoque,
+
+        Integer estoqueFiscal,
+
+        Integer estoqueNaoFiscal,
+
         Integer estoqueMinimo,
+
         Integer diasParaReposicao,
 
         String urlImagem,
+
         boolean ativo,
 
-        // 🚩 NOVO: Flag de revisão para produtos cadastrados rapidamente no PDV
+        // 🚩 Flag de revisão para produtos cadastrados rapidamente no balcão/PDV
         Boolean revisaoPendente
 ) {
+    /**
+     * Construtor de mapeamento: Converte a Entidade JPA para o DTO de forma segura.
+     */
     public ProdutoDTO(Produto p) {
         this(
                 p.getId(),
@@ -79,11 +102,12 @@ public record ProdutoDTO(
                 p.getCest(),
                 p.getCst(),
                 p.getOrigem(),
-                p.isMonofasico(),
+                p.getIsMonofasico(), // Ajustado para o nome correto do campo booleano
                 p.getClassificacaoReforma(),
                 p.getIsImpostoSeletivo(),
                 p.getPrecoVenda(),
                 p.getPrecoCusto(),
+                p.getPrecoMedioPonderado(),
                 p.getQuantidadeEmEstoque(),
                 p.getEstoqueFiscal(),
                 p.getEstoqueNaoFiscal(),
@@ -91,7 +115,7 @@ public record ProdutoDTO(
                 p.getDiasParaReposicao(),
                 p.getUrlImagem(),
                 p.isAtivo(),
-                p.getRevisaoPendente() // 🚩 Mapeamento da nova flag
+                p.getRevisaoPendente()
         );
     }
 }

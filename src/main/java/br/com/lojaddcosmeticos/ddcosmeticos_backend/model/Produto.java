@@ -19,7 +19,15 @@ import java.time.LocalDateTime;
 @Setter
 @NoArgsConstructor
 @Audited
-@Table(name = "produto")
+@Table(name = "produto", indexes = {
+        // 🔥 OTIMIZAÇÃO DBA: Índices vitais para PDV rápido e relatórios de BI instantâneos
+        @Index(name = "idx_produto_cod_barras", columnList = "codigo_barras"),
+        @Index(name = "idx_produto_sku", columnList = "sku"),
+        @Index(name = "idx_produto_fornecedor", columnList = "fornecedor_id"),
+        @Index(name = "idx_produto_categoria", columnList = "categoria"),
+        @Index(name = "idx_produto_marca", columnList = "marca"),
+        @Index(name = "idx_produto_ativo", columnList = "ativo")
+})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @ToString(onlyExplicitlyIncluded = true)
 public class Produto {
@@ -31,7 +39,7 @@ public class Produto {
     private Long id;
 
     // --- DADOS BÁSICOS ---
-    @Column(columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT", nullable = false)
     @ToString.Include
     private String descricao;
 
@@ -82,32 +90,33 @@ public class Produto {
     @Column(length = 50)
     private String origem;
 
-    private Boolean isMonofasico;
-    private Boolean isImpostoSeletivo;
+    private Boolean isMonofasico = false;
+    private Boolean isImpostoSeletivo = false;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50)
     private TipoTributacaoReforma classificacaoReforma;
 
     // --- DADOS FINANCEIROS ---
+    // 🛡️ Segurança: Inicializado em ZERO para evitar NullPointerException em relatórios
     @Column(precision = 15, scale = 4)
-    private BigDecimal precoVenda;
+    private BigDecimal precoVenda = BigDecimal.ZERO;
 
     @Column(precision = 15, scale = 4)
-    private BigDecimal precoCusto;
+    private BigDecimal precoCusto = BigDecimal.ZERO;
 
     @Column(precision = 15, scale = 4)
-    private BigDecimal precoMedioPonderado;
+    private BigDecimal precoMedioPonderado = BigDecimal.ZERO;
 
     // --- ESTOQUE ---
-    private Integer quantidadeEmEstoque;
-    private Integer estoqueFiscal;
-    private Integer estoqueNaoFiscal;
-    private Integer estoqueMinimo;
-    private Integer diasParaReposicao; // Lead time para inteligência de compra
+    private Integer quantidadeEmEstoque = 0;
+    private Integer estoqueFiscal = 0;
+    private Integer estoqueNaoFiscal = 0;
+    private Integer estoqueMinimo = 0;
+    private Integer diasParaReposicao = 7; // Lead time para inteligência de compra
 
     @Column(precision = 10, scale = 4)
-    private BigDecimal vendaMediaDiaria;
+    private BigDecimal vendaMediaDiaria = BigDecimal.ZERO;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fornecedor_id")
@@ -120,6 +129,7 @@ public class Produto {
     private LocalDateTime dataAtualizacao;
 
     private LocalDate dataUltimaVenda;
+
     // --- EVENTOS DO CICLO DE VIDA ---
 
     @PrePersist
@@ -133,6 +143,11 @@ public class Produto {
         if (this.vendaMediaDiaria == null) this.vendaMediaDiaria = BigDecimal.ZERO;
         if (this.diasParaReposicao == null) this.diasParaReposicao = 7;
         if (this.sku == null && this.codigoBarras != null) this.sku = this.codigoBarras;
+
+        // Garante que não guardamos nulo nos valores (Cão de guarda financeiro)
+        if (this.precoCusto == null) this.precoCusto = BigDecimal.ZERO;
+        if (this.precoVenda == null) this.precoVenda = BigDecimal.ZERO;
+        if (this.precoMedioPonderado == null) this.precoMedioPonderado = BigDecimal.ZERO;
     }
 
     @PreUpdate
@@ -145,7 +160,8 @@ public class Produto {
 
     // --- MÉTODOS AUXILIARES ---
 
-    public Boolean isMonofasico() {
+    // Renomeado ligeiramente para não dar conflito com a geração de Getters do Lombok
+    public Boolean verificarSeMonofasico() {
         return isMonofasico != null && isMonofasico;
     }
 

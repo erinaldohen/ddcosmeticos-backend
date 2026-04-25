@@ -46,7 +46,7 @@ public class RelatorioService {
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ConfiguracaoRepository configuracaoRepository;
+    @Autowired private ConfiguracaoLojaRepository configuracaoRepository; // Alterado para bater com o padrão
     @Autowired private CaixaDiarioRepository caixaRepository;
     @Autowired private EmailService emailService;
 
@@ -104,6 +104,9 @@ public class RelatorioService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDate.now().minusDays(30).atStartOfDay();
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
 
+        // NOTA DBA: Numa loja gigante (> 50k produtos), este findAll() deverá ser convertido
+        // para JPQL (ex: SELECT SUM(p.precoCusto * p.quantidadeEmEstoque) FROM Produto p).
+        // Para a realidade atual de varejo padrão, a stream lida bem.
         List<Produto> todosProdutos = produtoRepository.findAll();
 
         BigDecimal custoEstoque = todosProdutos.stream()
@@ -215,7 +218,6 @@ public class RelatorioService {
         if (faturamentoPeriodo.compareTo(new BigDecimal("15000")) > 0) aliquota = 7.3;
         if (faturamentoPeriodo.compareTo(new BigDecimal("30000")) > 0) aliquota = 9.5;
 
-        // 🚨 CORREÇÃO: Substituído o método apagado do Motor Fiscal por uma contagem básica na tabela de produtos
         Long produtosSemNcmCest = produtoRepository.findAll().stream()
                 .filter(p -> p.isAtivo() && (p.getNcm() == null || p.getNcm().isBlank()))
                 .count();
@@ -238,17 +240,20 @@ public class RelatorioService {
     }
 
     // =========================================================================
-    // 5. BI COMISSÕES DE VENDEDORES (NOVO)
+    // 5. BI COMISSÕES DE VENDEDORES (NOVO & BLINDADO)
     // =========================================================================
 
     @Transactional(readOnly = true)
     public RelatorioComissaoDTO gerarRelatorioComissoes(LocalDateTime inicio, LocalDateTime fim, Long vendedorId) {
 
-        ConfiguracaoLoja config = configuracaoRepository.findFirstByOrderByIdAsc();
+        ConfiguracaoLoja config = configuracaoRepository.findById(1L).orElse(null);
+
         BigDecimal percentualComissao = BigDecimal.ZERO;
         boolean sobreLucro = true;
         boolean descontarTaxas = false;
+
         BigDecimal taxaCredito = BigDecimal.ZERO;
+        BigDecimal taxaDebito = BigDecimal.ZERO;
 
         if (config != null && config.getComissoes() != null) {
             percentualComissao = nvl(config.getComissoes().getPercentualGeral());
@@ -257,11 +262,11 @@ public class RelatorioService {
 
             if (config.getFinanceiro() != null) {
                 taxaCredito = nvl(config.getFinanceiro().getTaxaCredito());
+                taxaDebito = nvl(config.getFinanceiro().getTaxaDebito()); // 🚨 Bate na taxa correta de débito!
             }
         }
 
         List<Venda> vendas;
-        // 🚨 CORREÇÃO: Alterado de CONCLUIDA para AUTORIZADA (Enum atualizado)
         if (vendedorId != null) {
             vendas = vendaRepository.findByDataVendaBetweenAndUsuarioIdAndStatusNfce(inicio, fim, vendedorId, StatusFiscal.AUTORIZADA);
         } else {
@@ -286,9 +291,21 @@ public class RelatorioService {
 
             if (valorBase.compareTo(BigDecimal.ZERO) < 0) valorBase = BigDecimal.ZERO;
 
-            if (descontarTaxas && ("CREDITO".equalsIgnoreCase(venda.getFormaPagamento()) || "DEBITO".equalsIgnoreCase(venda.getFormaPagamento()))) {
-                BigDecimal valorDesconto = valorBase.multiply(taxaCredito).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
-                valorBase = valorBase.subtract(valorDesconto);
+            // 🚨 CORREÇÃO CRÍTICA FINANCEIRA: Aplica a taxa correta baseada no método de pagamento
+            if (descontarTaxas && venda.getFormaDePagamento() != null) {
+                String formaPgto = venda.getFormaDePagamento().name();
+                BigDecimal taxaAplicar = BigDecimal.ZERO;
+
+                if (formaPgto.contains("CREDITO")) {
+                    taxaAplicar = taxaCredito;
+                } else if (formaPgto.contains("DEBITO")) {
+                    taxaAplicar = taxaDebito;
+                }
+
+                if (taxaAplicar.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal valorDesconto = valorBase.multiply(taxaAplicar).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+                    valorBase = valorBase.subtract(valorDesconto);
+                }
             }
 
             BigDecimal comissaoDaVenda = valorBase.multiply(percentualComissao).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
@@ -331,12 +348,14 @@ public class RelatorioService {
 
             String termo = (search != null) ? search.toLowerCase() : "";
 
+            // 🚨 CORREÇÃO DBA: Limitamos a busca de auditoria para proteger a RAM do servidor
+            // O correto futuramente seria um PageRequest direto no Repository.
             List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc().stream()
                     .filter(a -> a.getDataHora().isAfter(dataInicioFilter) && a.getDataHora().isBefore(dataFimFilter))
                     .filter(a -> termo.isEmpty() ||
                             (a.getUsuarioResponsavel() != null && a.getUsuarioResponsavel().toLowerCase().contains(termo)) ||
                             (a.getMensagem() != null && a.getMensagem().toLowerCase().contains(termo)))
-                    .limit(500)
+                    .limit(300) // Trava de Segurança OOM (Out Of Memory)
                     .collect(Collectors.toList());
 
             PdfPTable table = new PdfPTable(4);
@@ -715,7 +734,7 @@ public class RelatorioService {
 
     private void gerarEEnviarRelatorioMensal(LocalDateTime inicio, LocalDateTime fim, String mesReferencia) {
         try {
-            ConfiguracaoLoja config = configuracaoRepository.findFirstByOrderByIdAsc();
+            ConfiguracaoLoja config = configuracaoRepository.findById(1L).orElse(null); // Consistência de Configuração
             String emailAdmin = (config != null && config.getLoja() != null && config.getLoja().getEmail() != null && !config.getLoja().getEmail().isBlank())
                     ? config.getLoja().getEmail().trim() : "lojaddcosmeticos@gmail.com";
 

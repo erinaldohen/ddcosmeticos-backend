@@ -33,15 +33,15 @@ public class NotaPendenteController {
     @Autowired
     private NfeConfig nfeConfigBuilder;
 
+    @Autowired
+    private NotaPendenteImportacaoRepository notaPendenteImportacaoRepository;
+
     @GetMapping
     public ResponseEntity<List<NotaPendenteImportacao>> listarNotasProntasParaImportar(
             @RequestParam(required = false) String dataInicio,
             @RequestParam(required = false) String dataFim) {
 
-        List<NotaPendenteImportacao> notas = notaPendenteRepository.findAll().stream()
-                .filter(n -> !"IMPORTADO".equals(n.getStatus()))
-                .sorted(Comparator.comparing(NotaPendenteImportacao::getDataCaptura).reversed())
-                .collect(Collectors.toList());
+        List<NotaPendenteImportacao> notas = notaPendenteImportacaoRepository.buscarPendentesOrdenadas();
 
         if (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty()) {
             notas = notas.stream().filter(nota -> {

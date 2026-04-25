@@ -83,7 +83,12 @@ public class CalculadoraFiscalService {
         if (!Objects.equals(p.getNcm(), dados.getNcm())) { p.setNcm(dados.getNcm()); alterou = true; }
         if (!Objects.equals(p.getCest(), dados.getCest())) { p.setCest(dados.getCest()); alterou = true; }
         if (!Objects.equals(p.getCst(), dados.getCst())) { p.setCst(dados.getCst()); alterou = true; }
-        if (p.isMonofasico() != dados.isMonofasico()) { p.setIsMonofasico(dados.isMonofasico()); alterou = true; }
+
+        // 🚨 OTIMIZAÇÃO: Chamando o getter protegido que criámos na entidade Produto
+        if (!Objects.equals(p.verificarSeMonofasico(), dados.isMonofasico())) {
+            p.setIsMonofasico(dados.isMonofasico());
+            alterou = true;
+        }
 
         RegraFiscalResultado regrasCalculadas = calcularRegras(p.getNcm());
         if (p.getClassificacaoReforma() != regrasCalculadas.classificacaoReforma()) {
@@ -169,8 +174,9 @@ public class CalculadoraFiscalService {
 
         for (ItemVenda item : itens) {
             Produto p = item.getProduto();
-            BigDecimal qtd = (item.getQuantidade() != null) ? item.getQuantidade() : BigDecimal.ZERO;
-            BigDecimal subtotal = item.getPrecoUnitario().multiply(qtd);
+
+            // 🚨 SEGURANÇA: Usando o método blindado getValorTotalItem da entidade ItemVenda
+            BigDecimal subtotal = item.getValorTotalItem();
 
             BigDecimal aliqIbs = ALIQ_IBS_PADRAO;
             BigDecimal aliqCbs = ALIQ_CBS_PADRAO;
@@ -229,8 +235,7 @@ public class CalculadoraFiscalService {
         BigDecimal totalImposto = BigDecimal.ZERO;
 
         for (ItemVenda item : itens) {
-            BigDecimal qtd = (item.getQuantidade() != null) ? item.getQuantidade() : BigDecimal.ZERO;
-            BigDecimal subtotal = item.getPrecoUnitario().multiply(qtd);
+            BigDecimal subtotal = item.getValorTotalItem();
             totalVenda = totalVenda.add(subtotal);
 
             BigDecimal aliqAplicavel = ALIQ_TOTAL_PADRAO;
@@ -242,7 +247,7 @@ public class CalculadoraFiscalService {
                 aliqAplicavel = BigDecimal.ZERO;
             }
 
-            if (!item.getProduto().isMonofasico()) {
+            if (!item.getProduto().verificarSeMonofasico()) {
                 totalImposto = totalImposto.add(subtotal.multiply(aliqAplicavel));
             }
         }

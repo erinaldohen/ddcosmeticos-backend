@@ -2,9 +2,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RetornoImportacaoXmlDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RetornoImportacaoXmlDTO.ItemXmlDTO;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.MotivoMovimentacaoDeEstoque;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentoEstoque;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.MovimentoEstoque;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Fornecedor;
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.FornecedorRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.MovimentoEstoqueRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.RegraNegocioException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,10 +23,9 @@ public class ImportacaoXmlService {
     @Autowired
     private MovimentoEstoqueRepository movimentoEstoqueRepository;
 
-    /**
-     * Este método processa o XML que o Robô da SEFAZ já baixou e guardou no banco.
-     * Originalmente projetado para importação direta sem revisão.
-     */
+    @Autowired
+    private FornecedorRepository fornecedorRepository;
+
     @Transactional
     public void processarImportacaoXmlString(String xmlCompleto) {
         String chaveExtraidaDoXml = extrairTagXml(xmlCompleto, "chNFe");
@@ -40,27 +39,113 @@ public class ImportacaoXmlService {
         }
 
         System.out.println("A iniciar a importação da nota: " + chaveExtraidaDoXml);
-        // A lógica efetiva de salvar itens e financeiro foi migrada para a Entrada Inteligente no React.
     }
 
     /**
-     * 🔥 NOVO MÉTODO PARA A TELA DE ENTRADA INTELIGENTE 🔥
-     * Lê o XML da base de dados e transforma no DTO que a tela React Entende
+     * 🔥 MOTOR ATUALIZADO: Extração de Dados Reais do Fornecedor 🔥
      */
+    @Transactional
     public RetornoImportacaoXmlDTO simularImportacaoXmlString(String xmlCompleto) {
 
         RetornoImportacaoXmlDTO dto = new RetornoImportacaoXmlDTO();
 
-        // Dados do Cabeçalho
+        // 1. Localiza a tag raiz do Emitente no XML
+        String emitenteBloco = extrairTagXml(xmlCompleto, "emit");
+        String cnpjFornecedor = null;
+        String razaoSocial = null;
+        String ieForn = "ISENTO";
+        String emailForn = "";
+        String foneForn = "";
+        String cepForn = "";
+        String logradouroForn = "DADOS CAPTURADOS VIA XML";
+        String numeroForn = "S/N";
+        String bairroForn = "";
+        String cidadeForn = "";
+        String ufForn = "";
+
+        if (emitenteBloco != null) {
+            cnpjFornecedor = extrairTagXml(emitenteBloco, "CNPJ");
+            if (cnpjFornecedor == null) cnpjFornecedor = extrairTagXml(emitenteBloco, "CPF");
+
+            razaoSocial = extrairTagXml(emitenteBloco, "xNome");
+
+            String ieExtract = extrairTagXml(emitenteBloco, "IE");
+            if (ieExtract != null && !ieExtract.trim().isEmpty()) ieForn = ieExtract;
+
+            // Extração de Contatos e Endereço Reais
+            String enderEmit = extrairTagXml(emitenteBloco, "enderEmit");
+            if (enderEmit != null) {
+                foneForn = extrairTagXml(enderEmit, "fone");
+                cepForn = extrairTagXml(enderEmit, "CEP");
+                logradouroForn = extrairTagXml(enderEmit, "xLgr");
+                numeroForn = extrairTagXml(enderEmit, "nro");
+                bairroForn = extrairTagXml(enderEmit, "xBairro");
+                cidadeForn = extrairTagXml(enderEmit, "xMun");
+                ufForn = extrairTagXml(enderEmit, "UF");
+            }
+
+            // O Email pode vir no bloco principal do emitente ou dentro do endereço
+            emailForn = extrairTagXml(emitenteBloco, "email");
+            if (emailForn == null && enderEmit != null) emailForn = extrairTagXml(enderEmit, "email");
+        } else {
+            cnpjFornecedor = extrairTagXml(xmlCompleto, "CNPJ");
+            razaoSocial = extrairTagXml(xmlCompleto, "xNome");
+        }
+
+        // Tratamento anti-null (Evita crash no banco)
+        foneForn = (foneForn != null) ? foneForn : "";
+        emailForn = (emailForn != null) ? emailForn : "";
+        cepForn = (cepForn != null) ? cepForn : "";
+        logradouroForn = (logradouroForn != null) ? logradouroForn : "DADOS CAPTURADOS VIA XML";
+        numeroForn = (numeroForn != null) ? numeroForn : "S/N";
+        bairroForn = (bairroForn != null) ? bairroForn : "";
+        cidadeForn = (cidadeForn != null) ? cidadeForn : "";
+        ufForn = (ufForn != null) ? ufForn : "";
+
+        Long fornecedorIdFinal = null;
+
+        // 2. A MÁGICA: Verifica e Auto-Cadastra o Fornecedor com os Dados REAIS
+        if (cnpjFornecedor != null && !cnpjFornecedor.trim().isEmpty()) {
+            Optional<Fornecedor> fornOpt = fornecedorRepository.findByCnpj(cnpjFornecedor);
+
+            if (fornOpt.isPresent()) {
+                fornecedorIdFinal = fornOpt.get().getId();
+                razaoSocial = fornOpt.get().getRazaoSocial();
+            } else {
+                Fornecedor novoForn = new Fornecedor();
+                novoForn.setCnpj(cnpjFornecedor);
+                novoForn.setRazaoSocial(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor);
+                novoForn.setNomeFantasia(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor);
+                novoForn.setInscricaoEstadual(ieForn);
+
+                // Injeta os dados limpos extraídos da SEFAZ
+                novoForn.setEmail(emailForn);
+                novoForn.setTelefone(foneForn);
+                novoForn.setCep(cepForn);
+                novoForn.setLogradouro(logradouroForn);
+                novoForn.setNumero(numeroForn);
+                novoForn.setBairro(bairroForn);
+                novoForn.setCidade(cidadeForn);
+                novoForn.setUf(ufForn);
+                novoForn.setAtivo(true);
+
+                novoForn = fornecedorRepository.save(novoForn);
+                fornecedorIdFinal = novoForn.getId();
+            }
+        }
+
+        // 3. Preenchimento do DTO que vai para o Frontend
+        dto.setFornecedorId(fornecedorIdFinal);
+        dto.setCnpjFornecedor(cnpjFornecedor);
+        dto.setRazaoSocialFornecedor(razaoSocial != null ? razaoSocial : "Fornecedor Desconhecido");
+
         String numNota = extrairTagXml(xmlCompleto, "nNF");
-        String razaoSocial = extrairTagXml(xmlCompleto, "xNome"); // Pode pegar o primeiro que é o Emitente
         String dataEmissao = extrairTagXml(xmlCompleto, "dhEmi");
 
         dto.setNumeroNota(numNota != null ? numNota : "S/N");
-        dto.setRazaoSocialFornecedor(razaoSocial != null ? razaoSocial : "Fornecedor Desconhecido");
-        // Opcional: Se for preciso enviar a data de emissão para o DTO (caso o frontend espere)
+        dto.setDataEmissao(dataEmissao);
 
-        // Regex para apanhar os blocos <det> (Detalhes dos itens)
+        // 4. Mapeamento de Itens
         List<ItemXmlDTO> itensList = new ArrayList<>();
         Pattern detPattern = Pattern.compile("<det\\b[^>]*>(.*?)</det>", Pattern.DOTALL);
         Matcher detMatcher = detPattern.matcher(xmlCompleto);
@@ -71,7 +156,6 @@ public class ImportacaoXmlService {
 
             itemDto.setCodigoNoFornecedor(extrairTagXml(blocoDet, "cProd"));
 
-            // O código de barras pode vir em cEAN. Se vier "SEM GTIN", retornamos null ou vazio.
             String cEAN = extrairTagXml(blocoDet, "cEAN");
             if (cEAN != null && (cEAN.equalsIgnoreCase("SEM GTIN") || cEAN.trim().isEmpty())) {
                 cEAN = "";
@@ -95,13 +179,10 @@ public class ImportacaoXmlService {
         }
 
         dto.setItensXml(itensList);
-
         return dto;
     }
 
-    // Método auxiliar rápido para extrair a tag sem precisar de um parser pesado
     private String extrairTagXml(String xml, String tag) {
-        // Regex mais robusto que lida com possíveis namespaces (ex: <ns:tag> ou <tag>)
         Pattern pattern = Pattern.compile("<(?:\\w+:)?(" + tag + ")[^>]*>(.*?)</(?:\\w+:)?\\1>", Pattern.DOTALL);
         Matcher matcher = pattern.matcher(xml);
         if (matcher.find()) {

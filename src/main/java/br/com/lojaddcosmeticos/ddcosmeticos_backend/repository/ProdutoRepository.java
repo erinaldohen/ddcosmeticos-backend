@@ -176,4 +176,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             @Param("subcategoria") String subcategoria,
             @Param("id") Long id,
             Pageable pageable);
+    // =========================================================================================
+    // 🔥 BUSCA CIRÚRGICA PARA O ROBÔ DE SANEAMENTO GS1 🔥
+    // =========================================================================================
+    @Query("SELECT p FROM Produto p WHERE p.codigoBarras LIKE '2%' AND length(p.codigoBarras) = 13")
+    List<Produto> findProdutosComEanInterno();
 }

@@ -228,4 +228,18 @@ public class ProdutoController {
         // Retorna as sugestões da IA ou produtos da mesma subcategoria
         return ResponseEntity.ok(produtoService.buscarSugestoesCrossSell(produtoBaseId, limite));
     }
+    // =========================================================================
+    // 🔥 ROTA DO ROBÔ DE EANs INTERNOS 🔥
+    // =========================================================================
+    @PostMapping("/corrigir-eans-internos-ia")
+    public ResponseEntity<?> corrigirEansInternosIa() {
+        try {
+            return ResponseEntity.ok(produtoService.corrigirEansInternosIa());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of(
+                    "sucesso", false,
+                    "mensagem", "Erro na IA de EAN: " + e.getMessage()
+            ));
+        }
+    }
 }

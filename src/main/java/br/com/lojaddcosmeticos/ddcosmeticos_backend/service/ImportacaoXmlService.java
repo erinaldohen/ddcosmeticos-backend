@@ -26,6 +26,9 @@ public class ImportacaoXmlService {
     @Autowired
     private FornecedorRepository fornecedorRepository;
 
+    @Autowired
+    private ProdutoService produtoService; // 🔥 Injetado o Validador GS1
+
     @Transactional
     public void processarImportacaoXmlString(String xmlCompleto) {
         String chaveExtraidaDoXml = extrairTagXml(xmlCompleto, "chNFe");
@@ -41,9 +44,6 @@ public class ImportacaoXmlService {
         System.out.println("A iniciar a importação da nota: " + chaveExtraidaDoXml);
     }
 
-    /**
-     * 🔥 MOTOR ATUALIZADO: Extração de Dados Reais do Fornecedor 🔥
-     */
     @Transactional
     public RetornoImportacaoXmlDTO simularImportacaoXmlString(String xmlCompleto) {
 
@@ -66,89 +66,41 @@ public class ImportacaoXmlService {
         if (emitenteBloco != null) {
             cnpjFornecedor = extrairTagXml(emitenteBloco, "CNPJ");
             if (cnpjFornecedor == null) cnpjFornecedor = extrairTagXml(emitenteBloco, "CPF");
-
             razaoSocial = extrairTagXml(emitenteBloco, "xNome");
-
             String ieExtract = extrairTagXml(emitenteBloco, "IE");
             if (ieExtract != null && !ieExtract.trim().isEmpty()) ieForn = ieExtract;
-
-            // Extração de Contatos e Endereço Reais
             String enderEmit = extrairTagXml(emitenteBloco, "enderEmit");
             if (enderEmit != null) {
-                foneForn = extrairTagXml(enderEmit, "fone");
-                cepForn = extrairTagXml(enderEmit, "CEP");
-                logradouroForn = extrairTagXml(enderEmit, "xLgr");
-                numeroForn = extrairTagXml(enderEmit, "nro");
-                bairroForn = extrairTagXml(enderEmit, "xBairro");
-                cidadeForn = extrairTagXml(enderEmit, "xMun");
-                ufForn = extrairTagXml(enderEmit, "UF");
+                foneForn = extrairTagXml(enderEmit, "fone"); cepForn = extrairTagXml(enderEmit, "CEP"); logradouroForn = extrairTagXml(enderEmit, "xLgr"); numeroForn = extrairTagXml(enderEmit, "nro"); bairroForn = extrairTagXml(enderEmit, "xBairro"); cidadeForn = extrairTagXml(enderEmit, "xMun"); ufForn = extrairTagXml(enderEmit, "UF");
             }
-
-            // O Email pode vir no bloco principal do emitente ou dentro do endereço
             emailForn = extrairTagXml(emitenteBloco, "email");
             if (emailForn == null && enderEmit != null) emailForn = extrairTagXml(enderEmit, "email");
         } else {
-            cnpjFornecedor = extrairTagXml(xmlCompleto, "CNPJ");
-            razaoSocial = extrairTagXml(xmlCompleto, "xNome");
+            cnpjFornecedor = extrairTagXml(xmlCompleto, "CNPJ"); razaoSocial = extrairTagXml(xmlCompleto, "xNome");
         }
 
-        // Tratamento anti-null (Evita crash no banco)
-        foneForn = (foneForn != null) ? foneForn : "";
-        emailForn = (emailForn != null) ? emailForn : "";
-        cepForn = (cepForn != null) ? cepForn : "";
-        logradouroForn = (logradouroForn != null) ? logradouroForn : "DADOS CAPTURADOS VIA XML";
-        numeroForn = (numeroForn != null) ? numeroForn : "S/N";
-        bairroForn = (bairroForn != null) ? bairroForn : "";
-        cidadeForn = (cidadeForn != null) ? cidadeForn : "";
-        ufForn = (ufForn != null) ? ufForn : "";
+        foneForn = (foneForn != null) ? foneForn : ""; emailForn = (emailForn != null) ? emailForn : ""; cepForn = (cepForn != null) ? cepForn : ""; logradouroForn = (logradouroForn != null) ? logradouroForn : "DADOS CAPTURADOS VIA XML"; numeroForn = (numeroForn != null) ? numeroForn : "S/N"; bairroForn = (bairroForn != null) ? bairroForn : ""; cidadeForn = (cidadeForn != null) ? cidadeForn : ""; ufForn = (ufForn != null) ? ufForn : "";
 
         Long fornecedorIdFinal = null;
 
-        // 2. A MÁGICA: Verifica e Auto-Cadastra o Fornecedor com os Dados REAIS
         if (cnpjFornecedor != null && !cnpjFornecedor.trim().isEmpty()) {
             Optional<Fornecedor> fornOpt = fornecedorRepository.findByCnpj(cnpjFornecedor);
-
             if (fornOpt.isPresent()) {
-                fornecedorIdFinal = fornOpt.get().getId();
-                razaoSocial = fornOpt.get().getRazaoSocial();
+                fornecedorIdFinal = fornOpt.get().getId(); razaoSocial = fornOpt.get().getRazaoSocial();
             } else {
                 Fornecedor novoForn = new Fornecedor();
-                novoForn.setCnpj(cnpjFornecedor);
-                novoForn.setRazaoSocial(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor);
-                novoForn.setNomeFantasia(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor);
-                novoForn.setInscricaoEstadual(ieForn);
-
-                // Injeta os dados limpos extraídos da SEFAZ
-                novoForn.setEmail(emailForn);
-                novoForn.setTelefone(foneForn);
-                novoForn.setCep(cepForn);
-                novoForn.setLogradouro(logradouroForn);
-                novoForn.setNumero(numeroForn);
-                novoForn.setBairro(bairroForn);
-                novoForn.setCidade(cidadeForn);
-                novoForn.setUf(ufForn);
-                novoForn.setAtivo(true);
-
-                novoForn = fornecedorRepository.save(novoForn);
-                fornecedorIdFinal = novoForn.getId();
+                novoForn.setCnpj(cnpjFornecedor); novoForn.setRazaoSocial(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor); novoForn.setNomeFantasia(razaoSocial != null ? razaoSocial : "FORNECEDOR " + cnpjFornecedor); novoForn.setInscricaoEstadual(ieForn); novoForn.setEmail(emailForn); novoForn.setTelefone(foneForn); novoForn.setCep(cepForn); novoForn.setLogradouro(logradouroForn); novoForn.setNumero(numeroForn); novoForn.setBairro(bairroForn); novoForn.setCidade(cidadeForn); novoForn.setUf(ufForn); novoForn.setAtivo(true);
+                novoForn = fornecedorRepository.save(novoForn); fornecedorIdFinal = novoForn.getId();
             }
         }
 
-        // 3. Preenchimento do DTO que vai para o Frontend
-        dto.setFornecedorId(fornecedorIdFinal);
-        dto.setCnpjFornecedor(cnpjFornecedor);
-        dto.setRazaoSocialFornecedor(razaoSocial != null ? razaoSocial : "Fornecedor Desconhecido");
+        dto.setFornecedorId(fornecedorIdFinal); dto.setCnpjFornecedor(cnpjFornecedor); dto.setRazaoSocialFornecedor(razaoSocial != null ? razaoSocial : "Fornecedor Desconhecido");
 
-        String numNota = extrairTagXml(xmlCompleto, "nNF");
-        String dataEmissao = extrairTagXml(xmlCompleto, "dhEmi");
+        String numNota = extrairTagXml(xmlCompleto, "nNF"); String dataEmissao = extrairTagXml(xmlCompleto, "dhEmi");
+        dto.setNumeroNota(numNota != null ? numNota : "S/N"); dto.setDataEmissao(dataEmissao);
 
-        dto.setNumeroNota(numNota != null ? numNota : "S/N");
-        dto.setDataEmissao(dataEmissao);
-
-        // 4. Mapeamento de Itens
         List<ItemXmlDTO> itensList = new ArrayList<>();
-        Pattern detPattern = Pattern.compile("<det\\b[^>]*>(.*?)</det>", Pattern.DOTALL);
-        Matcher detMatcher = detPattern.matcher(xmlCompleto);
+        Pattern detPattern = Pattern.compile("<det\\b[^>]*>(.*?)</det>", Pattern.DOTALL); Matcher detMatcher = detPattern.matcher(xmlCompleto);
 
         while (detMatcher.find()) {
             String blocoDet = detMatcher.group(1);
@@ -159,21 +111,19 @@ public class ImportacaoXmlService {
             String cEAN = extrairTagXml(blocoDet, "cEAN");
             if (cEAN != null && (cEAN.equalsIgnoreCase("SEM GTIN") || cEAN.trim().isEmpty())) {
                 cEAN = "";
+            } else {
+                // 🔥 GATILHO DA BARREIRA DE ENTRADA: O EAN do XML é filtrado antes de ir para a tela!
+                cEAN = produtoService.auditarECorrigirEanGs1(cEAN);
             }
-            itemDto.setCodigoBarras(cEAN);
 
+            itemDto.setCodigoBarras(cEAN);
             itemDto.setDescricao(extrairTagXml(blocoDet, "xProd"));
             itemDto.setNcm(extrairTagXml(blocoDet, "NCM"));
             itemDto.setUnidade(extrairTagXml(blocoDet, "uCom"));
 
-            String qCom = extrairTagXml(blocoDet, "qCom");
-            if (qCom != null) itemDto.setQuantidade(new BigDecimal(qCom));
-
-            String vUnCom = extrairTagXml(blocoDet, "vUnCom");
-            if (vUnCom != null) itemDto.setPrecoCusto(new BigDecimal(vUnCom));
-
-            String vProd = extrairTagXml(blocoDet, "vProd");
-            if (vProd != null) itemDto.setTotal(new BigDecimal(vProd));
+            String qCom = extrairTagXml(blocoDet, "qCom"); if (qCom != null) itemDto.setQuantidade(new BigDecimal(qCom));
+            String vUnCom = extrairTagXml(blocoDet, "vUnCom"); if (vUnCom != null) itemDto.setPrecoCusto(new BigDecimal(vUnCom));
+            String vProd = extrairTagXml(blocoDet, "vProd"); if (vProd != null) itemDto.setTotal(new BigDecimal(vProd));
 
             itensList.add(itemDto);
         }
@@ -183,11 +133,7 @@ public class ImportacaoXmlService {
     }
 
     private String extrairTagXml(String xml, String tag) {
-        Pattern pattern = Pattern.compile("<(?:\\w+:)?(" + tag + ")[^>]*>(.*?)</(?:\\w+:)?\\1>", Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(xml);
-        if (matcher.find()) {
-            return matcher.group(2).trim();
-        }
-        return null;
+        Pattern pattern = Pattern.compile("<(?:\\w+:)?(" + tag + ")[^>]*>(.*?)</(?:\\w+:)?\\1>", Pattern.DOTALL); Matcher matcher = pattern.matcher(xml);
+        if (matcher.find()) { return matcher.group(2).trim(); } return null;
     }
 }

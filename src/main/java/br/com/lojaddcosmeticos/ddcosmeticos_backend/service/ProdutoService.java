@@ -38,25 +38,16 @@ public class ProdutoService {
     @Autowired private CosmosService cosmosService;
     @Autowired private ItemVendaRepository itemVendaRepository;
 
-    /**
-     * Nova busca de NCM ultra-rápida baseada na inteligência do próprio banco de dados.
-     * Não depende de APIs externas.
-     */
     public List<Map<String, String>> buscarNcmsInteligente(String termo) {
         List<Map<String, String>> resultados = new ArrayList<>();
-
         try {
-            // 1. Primeiro tenta buscar o NCM mais usado para essa palavra no próprio histórico
             String ncmSugerido = produtoRepository.findNcmInteligente(termo);
-
             if (ncmSugerido != null && !ncmSugerido.isBlank() && !ncmSugerido.equals("00000000")) {
                 Map<String, String> sugestao = new HashMap<>();
                 sugestao.put("codigo", ncmSugerido);
                 sugestao.put("descricao", "⭐ Sugestão Baseada no seu Histórico");
                 resultados.add(sugestao);
             }
-
-            // 2. Se o utilizador digitou números (ex: "3305"), fazemos um "LIKE" rápido no banco
             if (termo.matches("\\d+")) {
                 Map<String, String> digitado = new HashMap<>();
                 digitado.put("codigo", termo);
@@ -65,24 +56,18 @@ public class ProdutoService {
                     resultados.add(digitado);
                 }
             }
-
         } catch (Exception e) {
             log.error("Erro na busca inteligente de NCM: ", e);
         }
-
         return resultados;
     }
 
-    // =========================================================================
-    // INTELIGÊNCIA ARTIFICIAL: CLASSIFICAÇÃO DE PRODUTOS
-    // =========================================================================
     public Map<String, String> analisarProdutoComIA(Map<String, String> payload) {
         String descricao = payload.getOrDefault("descricao", "");
         String codigoBarras = payload.getOrDefault("codigoBarras", "");
 
         log.info("🤖 Iniciando análise de IA para o produto: {}", descricao);
 
-        // MOCK TEMPORÁRIO (Simula a resposta da IA)
         Map<String, String> respostaIA = new HashMap<>();
         String descUpper = descricao.toUpperCase();
 
@@ -112,9 +97,6 @@ public class ProdutoService {
         return respostaIA;
     }
 
-    // =========================================================================
-    // IMPORTAÇÃO INTELIGENTE (CSV, XLS, XLSX)
-    // =========================================================================
     public Map<String, Object> importarProdutos(MultipartFile file) {
         Map<String, Object> response = new HashMap<>();
         if (file.isEmpty()) { response.put("sucesso", false); response.put("mensagem", "Arquivo vazio."); return response; }
@@ -148,11 +130,19 @@ public class ProdutoService {
                 try {
                     String eanBruto = getVal(dados, mapa.get("ean"));
                     if (eanBruto.toUpperCase().contains("E+")) { listaErros.add("Linha " + (i+1) + ": EAN em notação científica."); continue; }
-                    String ean = eanBruto.replaceAll("[^0-9]", "");
-                    if (ean.isEmpty()) { listaErros.add("Linha " + (i+1) + ": EAN vazio."); continue; }
-                    if (produtosNoLote.containsKey(ean)) { listaErros.add("Linha " + (i+1) + ": EAN duplicado."); continue; }
-                    Produto p = criarProdutoDaLinha(dados, mapa, ean);
-                    if (p != null) { produtosNoLote.put(ean, p); lote.add(p); }
+                    String eanRaw = eanBruto.replaceAll("[^0-9]", "");
+                    if (eanRaw.isEmpty()) { listaErros.add("Linha " + (i+1) + ": EAN vazio."); continue; }
+
+                    // 🔥 A MÁGICA FOI MOVIDA PARA CÁ: Sanitizamos ANTES de checar a duplicidade!
+                    String eanCorrigido = auditarECorrigirEanGs1(eanRaw);
+
+                    if (produtosNoLote.containsKey(eanCorrigido)) {
+                        listaErros.add("Linha " + (i+1) + ": EAN " + eanCorrigido + " duplicado no lote (Colisão matemática).");
+                        continue;
+                    }
+
+                    Produto p = criarProdutoDaLinha(dados, mapa, eanCorrigido);
+                    if (p != null) { produtosNoLote.put(eanCorrigido, p); lote.add(p); }
                 } catch (Exception e) { listaErros.add("Linha " + (i+1) + ": Erro (" + e.getMessage() + ")"); }
             }
             if (!lote.isEmpty()) { produtoRepository.saveAll(lote); salvos = lote.size(); }
@@ -175,11 +165,20 @@ public class ProdutoService {
             for (int i = 1; i < linhas.length; i++) {
                 String linha = linhas[i].trim(); if (linha.isEmpty()) continue; String[] dados = linha.split(delimitador, -1);
                 try {
-                    String eanBruto = getVal(dados, mapa.get("ean")); String ean = eanBruto.replaceAll("[^0-9]", "");
-                    if (ean.isEmpty()) { listaErros.add("Linha " + (i+1) + ": Código vazio."); continue; }
-                    if (produtosNoLote.containsKey(ean)) { listaErros.add("Linha " + (i+1) + ": EAN duplicado."); continue; }
-                    Produto p = criarProdutoDaLinha(dados, mapa, ean);
-                    if (p != null) { produtosNoLote.put(ean, p); lote.add(p); }
+                    String eanBruto = getVal(dados, mapa.get("ean"));
+                    String eanRaw = eanBruto.replaceAll("[^0-9]", "");
+                    if (eanRaw.isEmpty()) { listaErros.add("Linha " + (i+1) + ": Código vazio."); continue; }
+
+                    // 🔥 SANITIZAÇÃO AQUI TAMBÉM
+                    String eanCorrigido = auditarECorrigirEanGs1(eanRaw);
+
+                    if (produtosNoLote.containsKey(eanCorrigido)) {
+                        listaErros.add("Linha " + (i+1) + ": EAN duplicado (Colisão matemática).");
+                        continue;
+                    }
+
+                    Produto p = criarProdutoDaLinha(dados, mapa, eanCorrigido);
+                    if (p != null) { produtosNoLote.put(eanCorrigido, p); lote.add(p); }
                 } catch (Exception e) { listaErros.add("Linha " + (i+1) + ": Erro."); }
             }
             if (!lote.isEmpty()) { produtoRepository.saveAll(lote); salvos = lote.size(); }
@@ -188,37 +187,13 @@ public class ProdutoService {
         return resultado;
     }
 
-    private Map<String, Integer> criarMapaColunasInteligente(String[] headers) {
-        Map<String, Integer> mapa = new HashMap<>();
-        for (int i = 0; i < headers.length; i++) {
-            String h = normalizarTexto(headers[i]);
-            if (h.contains("EAN") || h.contains("BARRAS") || h.contains("GTIN") || h.equals("CODIGO")) mapa.put("ean", i);
-            else if (h.contains("CUSTO") || h.contains("COMPRA")) mapa.put("custo", i);
-            else if (h.contains("VENDA") || h.contains("PRECO")) mapa.put("venda", i);
-            else if (h.contains("MIN") || h.contains("ALERTA")) mapa.put("min", i);
-            else if (h.contains("FISCAL") && !h.contains("NAO")) mapa.put("fiscal", i);
-            else if (h.contains("NAOFISCAL")) mapa.put("naofiscal", i);
-            else if (h.contains("ESTOQUE") || h.contains("QTD")) mapa.put("qtd", i);
-            else if (h.contains("CST")) mapa.put("cst", i);
-            else if (h.contains("ORIGEM")) mapa.put("origem", i);
-            else if (h.contains("NCM")) mapa.put("ncm", i);
-            else if (h.contains("CEST")) mapa.put("cest", i);
-            else if (h.contains("SUBCATEGORIA")) mapa.put("sub", i);
-            else if (h.contains("CATEGORIA")) mapa.put("cat", i);
-            else if (h.contains("MARCA")) mapa.put("marca", i);
-            else if (h.contains("UNIDADE")) mapa.put("unidade", i);
-            else if (h.contains("ATIVO")) mapa.put("ativo", i);
-            else if (!mapa.containsKey("desc") && (h.contains("DESC") || h.contains("NOME") || h.equals("PRODUTO") || h.equals("NOMEDOPRODUTO") || h.contains("ARTIGO") || h.contains("ITEM")) && !h.contains("CATEGORIA") && !h.contains("SUBCATEGORIA")) { mapa.put("desc", i); }
-        }
-        return mapa;
-    }
-
-    private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa, String ean) {
-        Produto p = produtoRepository.findByEanIrrestrito(ean).stream().findFirst().orElse(new Produto());
+    private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa, String eanCorrigido) {
+        // O eanCorrigido já vem limpo, matemático e verificado contra duplicidade no lote.
+        Produto p = produtoRepository.findByEanIrrestrito(eanCorrigido).stream().findFirst().orElse(new Produto());
 
         if (p.getId() == null) {
-            p.setCodigoBarras(ean);
-            p.setSku(ean);
+            p.setCodigoBarras(eanCorrigido);
+            p.setSku(eanCorrigido);
             p.setAtivo(true);
             p.setOrigem("0");
             p.setCst("102");
@@ -240,7 +215,7 @@ public class ProdutoService {
             }
         }
 
-        if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) p.setDescricao("PRODUTO " + ean);
+        if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) p.setDescricao("PRODUTO " + eanCorrigido);
 
         if (mapa.containsKey("custo")) p.setPrecoCusto(lerDecimal(getVal(dados, mapa.get("custo"))));
         if (mapa.containsKey("venda")) p.setPrecoVenda(lerDecimal(getVal(dados, mapa.get("venda"))));
@@ -280,7 +255,7 @@ public class ProdutoService {
                 if (pl.length() > 3) {
                     try {
                         ncmInteligente = produtoRepository.findNcmInteligente(pl);
-                        if (ncmInteligente != null) break;
+                        break;
                     } catch (Exception ignored) {}
                 }
             }
@@ -299,13 +274,37 @@ public class ProdutoService {
             } catch (Exception ignored) {}
         }
 
-        // 🛡️ Prevenção de Nulls Fiscais e Financeiros
         if (p.getPrecoCusto() == null) p.setPrecoCusto(BigDecimal.ZERO);
         if (p.getPrecoVenda() == null || p.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) {
             p.setPrecoVenda(p.getPrecoCusto().multiply(new BigDecimal("1.5")));
         }
 
         return p;
+    }
+
+    private Map<String, Integer> criarMapaColunasInteligente(String[] headers) {
+        Map<String, Integer> mapa = new HashMap<>();
+        for (int i = 0; i < headers.length; i++) {
+            String h = normalizarTexto(headers[i]);
+            if (h.contains("EAN") || h.contains("BARRAS") || h.contains("GTIN") || h.equals("CODIGO")) mapa.put("ean", i);
+            else if (h.contains("CUSTO") || h.contains("COMPRA")) mapa.put("custo", i);
+            else if (h.contains("VENDA") || h.contains("PRECO")) mapa.put("venda", i);
+            else if (h.contains("MIN") || h.contains("ALERTA")) mapa.put("min", i);
+            else if (h.contains("FISCAL") && !h.contains("NAO")) mapa.put("fiscal", i);
+            else if (h.contains("NAOFISCAL")) mapa.put("naofiscal", i);
+            else if (h.contains("ESTOQUE") || h.contains("QTD")) mapa.put("qtd", i);
+            else if (h.contains("CST")) mapa.put("cst", i);
+            else if (h.contains("ORIGEM")) mapa.put("origem", i);
+            else if (h.contains("NCM")) mapa.put("ncm", i);
+            else if (h.contains("CEST")) mapa.put("cest", i);
+            else if (h.contains("SUBCATEGORIA")) mapa.put("sub", i);
+            else if (h.contains("CATEGORIA")) mapa.put("cat", i);
+            else if (h.contains("MARCA")) mapa.put("marca", i);
+            else if (h.contains("UNIDADE")) mapa.put("unidade", i);
+            else if (h.contains("ATIVO")) mapa.put("ativo", i);
+            else if (!mapa.containsKey("desc") && (h.contains("DESC") || h.contains("NOME") || h.equals("PRODUTO") || h.equals("NOMEDOPRODUTO") || h.contains("ARTIGO") || h.contains("ITEM")) && !h.contains("CATEGORIA") && !h.contains("SUBCATEGORIA")) { mapa.put("desc", i); }
+        }
+        return mapa;
     }
 
     private String getVal(String[] dados, Integer idx) { return (idx == null || idx < 0 || idx >= dados.length) ? "" : dados[idx].replace("\"", "").trim(); }
@@ -322,10 +321,6 @@ public class ProdutoService {
 
     private String truncar(String str, int max) { return (str == null || str.length() <= max) ? (str == null ? "" : str) : str.substring(0, max); }
     private String normalizarTexto(String str) { return str == null ? "" : Normalizer.normalize(str.replace("\uFEFF", "").toUpperCase(), Normalizer.Form.NFD).replaceAll("[\\p{InCombiningDiacriticalMarks}]", "").replaceAll("[^A-Z0-9]", ""); }
-
-    // =========================================================================
-    // RESTANTE MANTIDO INTACTO (CRUD, SANEAMENTO, EXPORTAÇÃO)
-    // =========================================================================
 
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(
@@ -376,6 +371,8 @@ public class ProdutoService {
     public ProdutoDTO salvar(ProdutoDTO dto) {
         Produto produto = new Produto();
         atualizarDados(produto, dto);
+        // 🔥 GATILHO DA BARREIRA FISCAL AQUI: Criação unitária de produto
+        produto.setCodigoBarras(auditarECorrigirEanGs1(produto.getCodigoBarras()));
         Produto salvo = salvar(produto);
         return new ProdutoDTO(salvo);
     }
@@ -383,6 +380,8 @@ public class ProdutoService {
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public Produto salvar(Produto produto) {
+        // 🔥 Dupla Checagem na Raiz
+        produto.setCodigoBarras(auditarECorrigirEanGs1(produto.getCodigoBarras()));
         calculadoraFiscalService.aplicarRegrasFiscais(produto);
         return produtoRepository.save(produto);
     }
@@ -409,23 +408,16 @@ public class ProdutoService {
         p.setCest(d.cest());
         p.setCst(d.cst());
         p.setOrigem(d.origem());
-
-        // 🔥 CORREÇÃO: Utilizando setters adequados para booleanos
         p.setIsMonofasico(d.monofasico() != null ? d.monofasico() : false);
         p.setClassificacaoReforma(d.classificacaoReforma());
         p.setIsImpostoSeletivo(d.impostoSeletivo() != null ? d.impostoSeletivo() : false);
-
         p.setPrecoVenda(d.precoVenda() != null ? d.precoVenda() : BigDecimal.ZERO);
         if (d.precoCusto() != null) { p.setPrecoCusto(d.precoCusto()); } else if (p.getPrecoCusto() == null) { p.setPrecoCusto(BigDecimal.ZERO); }
-
         p.setEstoqueMinimo(d.estoqueMinimo());
         p.setDiasParaReposicao(d.diasParaReposicao());
         p.setUrlImagem(d.urlImagem());
         p.setAtivo(d.ativo());
-
-        if (d.revisaoPendente() != null) {
-            p.setRevisaoPendente(d.revisaoPendente());
-        }
+        if (d.revisaoPendente() != null) { p.setRevisaoPendente(d.revisaoPendente()); }
     }
 
     @Transactional
@@ -478,9 +470,6 @@ public class ProdutoService {
         Map<String, Object> resultado = new HashMap<>(); resultado.put("sucesso", true); resultado.put("totalAtualizado", alterados); resultado.put("mensagem", "Custos zerados foram preenchidos com 50% do valor de venda."); return resultado;
     }
 
-    // =========================================================================
-    // O VERDADEIRO MOTOR DA IA FISCAL DE COSMÉTICOS
-    // =========================================================================
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
     public Map<String, Object> corrigirNcmsEmMassa() {
@@ -534,7 +523,6 @@ public class ProdutoService {
                     boolean ehMonofasico = ncmSugerido.startsWith("3303") || ncmSugerido.startsWith("3304") ||
                             ncmSugerido.startsWith("3305") || ncmSugerido.startsWith("3307");
 
-                    // 🔥 CORREÇÃO: Utilizando os setters blindados
                     p.setIsMonofasico(ehMonofasico);
                     if (ehMonofasico) p.setCst("04");
 
@@ -634,12 +622,7 @@ public class ProdutoService {
         sugestoes.sort((a, b) -> b.nivelUrgencia().compareTo(a.nivelUrgencia())); return sugestoes;
     }
 
-    // =======================================================
-    // GAVETA DE CROSS-SELL (PREPARADO PARA IA HÍBRIDA)
-    // =======================================================
     public List<Produto> buscarSugestoesCrossSell(Long produtoBaseId, int limite) {
-
-        // 🚀 PASSO 1: MACHINE LEARNING ATIVADO! (Aprende com o histórico real da DD Cosméticos)
         try {
             List<Long> idsCompradosJuntos = itemVendaRepository.descobrirProdutosMaisCompradosJuntos(produtoBaseId, limite);
             if (idsCompradosJuntos != null && !idsCompradosJuntos.isEmpty()) {
@@ -648,26 +631,16 @@ public class ProdutoService {
         } catch (Exception e) {
             log.warn("Erro ao buscar histórico de IA para cross-sell, usando fallback de regras: {}", e.getMessage());
         }
-
-        // 🧠 PASSO 2: FALLBACK PARA REGRAS (Cold Start)
         return aplicarRegrasDeNegocio(produtoBaseId, limite);
     }
 
-    // =======================================================
-    // MOTOR DE REGRAS DE RETAIL (COLD START)
-    // =======================================================
     private List<Produto> aplicarRegrasDeNegocio(Long produtoBaseId, int limite) {
         Produto produtoBase = produtoRepository.findById(produtoBaseId).orElse(null);
-
-        // Se o produto não existir, não sugere nada
         if (produtoBase == null || produtoBase.getSubcategoria() == null || produtoBase.getSubcategoria().trim().isEmpty()) {
             return Collections.emptyList();
         }
-
         String subcatBase = produtoBase.getSubcategoria().toUpperCase().trim();
         List<String> complementosIdeais = new ArrayList<>();
-
-        // MAPA DE ASSOCIAÇÃO DA DD COSMÉTICOS
         switch (subcatBase) {
             case "CÍLIOS":
             case "CILIOS":
@@ -705,21 +678,77 @@ public class ProdutoService {
         }
 
         Pageable limitPage = PageRequest.of(0, limite);
-
-        // 1ª TENTATIVA: Mapeamento Direto
         if (!complementosIdeais.isEmpty()) {
             List<Produto> sugestoes = produtoRepository.findComplementares(complementosIdeais, produtoBaseId, limitPage).getContent();
-            if (!sugestoes.isEmpty()) {
-                return sugestoes;
-            }
+            if (!sugestoes.isEmpty()) { return sugestoes; }
         }
-
-        // 2ª TENTATIVA: Fallback Genérico (Mesma categoria, subcategoria diferente)
         if (produtoBase.getCategoria() != null && !produtoBase.getCategoria().trim().isEmpty()) {
             return produtoRepository.findByCategoriaAndSubcategoriaNotAndIdNotAndAtivoTrue(
                     produtoBase.getCategoria(), produtoBase.getSubcategoria(), produtoBaseId, limitPage).getContent();
         }
-
         return Collections.emptyList();
+    }
+
+    // =========================================================================
+    // 🔥 MOTOR DE SANEAMENTO: CORREÇÃO DE EAN INTERNO (GS1 - MÓDULO 10) 🔥
+    // =========================================================================
+    @Transactional
+    public java.util.Map<String, Object> corrigirEansInternosIa() {
+        // Query ultra-rápida (Evita Full Table Scan)
+        List<Produto> produtos = produtoRepository.findProdutosComEanInterno();
+        int corrigidos = 0;
+        int conflitosIgnorados = 0;
+
+        for (Produto produto : produtos) {
+            String ean = produto.getCodigoBarras();
+            String eanCorreto = auditarECorrigirEanGs1(ean);
+
+            if (!ean.equals(eanCorreto)) {
+                Optional<Produto> produtoExistente = produtoRepository.findByCodigoBarras(eanCorreto);
+
+                if (produtoExistente.isEmpty() || produtoExistente.get().getId().equals(produto.getId())) {
+                    try {
+                        produto.setCodigoBarras(eanCorreto);
+                        produtoRepository.saveAndFlush(produto);
+                        corrigidos++;
+                    } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                        System.out.println("⚠️ Robô EAN: Conflito capturado ao salvar EAN " + eanCorreto + ". Ignorando.");
+                        conflitosIgnorados++;
+                    }
+                } else {
+                    conflitosIgnorados++;
+                }
+            }
+        }
+
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("sucesso", true);
+        response.put("qtdCorrigidos", corrigidos);
+        response.put("qtdConflitos", conflitosIgnorados);
+
+        if (conflitosIgnorados > 0) {
+            response.put("mensagem", "Saneamento concluído: " + corrigidos + " corrigidos. " + conflitosIgnorados + " ignorados por já existirem no banco.");
+        } else {
+            response.put("mensagem", "Saneamento de EANs internos concluído com " + corrigidos + " correções.");
+        }
+
+        return response;
+    }
+
+    /**
+     * 🔥 BARREIRA DE ENTRADA: Corrige EANs internos on-the-fly durante importações e criações.
+     */
+    public String auditarECorrigirEanGs1(String eanRaw) {
+        if (eanRaw != null && eanRaw.startsWith("2") && eanRaw.length() == 13) {
+            String base = eanRaw.substring(0, 12);
+            int soma = 0;
+            for (int i = 0; i < 12; i++) {
+                int digito = Character.getNumericValue(base.charAt(i));
+                soma += (i % 2 == 0) ? digito : (digito * 3);
+            }
+            int digitoVerificadorEsperado = (10 - (soma % 10)) % 10;
+            return base + digitoVerificadorEsperado;
+        }
+        return eanRaw;
     }
 }

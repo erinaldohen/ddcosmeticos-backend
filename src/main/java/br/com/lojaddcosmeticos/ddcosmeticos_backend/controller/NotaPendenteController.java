@@ -8,13 +8,13 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.SefazDistribuicaoSer
 import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Comparator;
-import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/estoque/notas-pendentes")
@@ -33,42 +33,35 @@ public class NotaPendenteController {
     @Autowired
     private NfeConfig nfeConfigBuilder;
 
-    @Autowired
-    private NotaPendenteImportacaoRepository notaPendenteImportacaoRepository;
-
+    // 🔥 ATUALIZADO: Agora suporta Filtros de Emissão, Paginação e Inclusão de Histórico (Toggle Switch)
     @GetMapping
-    public ResponseEntity<List<NotaPendenteImportacao>> listarNotasProntasParaImportar(
+    public ResponseEntity<Page<NotaPendenteImportacao>> listarNotasProntasParaImportar(
             @RequestParam(required = false) String dataInicio,
-            @RequestParam(required = false) String dataFim) {
+            @RequestParam(required = false) String dataFim,
+            @RequestParam(defaultValue = "false") boolean incluirImportadas,
+            @PageableDefault(size = 50, sort = "dataCaptura") Pageable pageable) {
 
-        List<NotaPendenteImportacao> notas = notaPendenteImportacaoRepository.buscarPendentesOrdenadas();
+        Page<NotaPendenteImportacao> notasPage;
 
+        // Lógica de Filtro com Datas e Status
         if (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty()) {
-            notas = notas.stream().filter(nota -> {
-                try {
-                    Object dataEmissaoObj = nota.getDataEmissao() != null ? nota.getDataEmissao() : nota.getDataCaptura();
-                    if (dataEmissaoObj == null) return false;
-
-                    String dataString = dataEmissaoObj.toString().substring(0, 10);
-                    return dataString.compareTo(dataInicio) >= 0 && dataString.compareTo(dataFim) <= 0;
-                } catch (Exception e) {
-                    return true;
-                }
-            }).collect(Collectors.toList());
+            if (incluirImportadas) {
+                // Traz TUDO dentro do período
+                notasPage = notaPendenteRepository.findByDataEmissaoBetweenOrderByDataCapturaDesc(dataInicio, dataFim, pageable);
+            } else {
+                // Traz apenas as PENDENTES dentro do período
+                notasPage = notaPendenteRepository.findByDataEmissaoBetweenAndStatusNotOrderByDataCapturaDesc(dataInicio, dataFim, "IMPORTADA", pageable);
+            }
+        } else {
+            // Busca Padrão (Sem datas)
+            if (incluirImportadas) {
+                notasPage = notaPendenteRepository.findAllByOrderByDataCapturaDesc(pageable);
+            } else {
+                notasPage = notaPendenteRepository.findAllByStatusNotOrderByDataCapturaDesc("IMPORTADA", pageable);
+            }
         }
 
-        // 🔥 O TRUQUE DE FORMATAÇÃO DO CNPJ SEM MEXER NO BANCO 🔥
-        // A tela vai receber o CNPJ bonitinho, mas no banco continua sujo (14 chars) para não dar erro!
-        notas.forEach(nota -> {
-            if (nota.getCnpjFornecedor() != null && nota.getCnpjFornecedor().length() >= 14 && !nota.getCnpjFornecedor().contains(".")) {
-                String num = nota.getCnpjFornecedor().replaceAll("\\D", "");
-                if(num.length() == 14){
-                    nota.setCnpjFornecedor(num.substring(0, 2) + "." + num.substring(2, 5) + "." + num.substring(5, 8) + "/" + num.substring(8, 12) + "-" + num.substring(12, 14));
-                }
-            }
-        });
-
-        return ResponseEntity.ok(notas);
+        return ResponseEntity.ok(notasPage);
     }
 
     @PostMapping("/{id}/importar")
@@ -83,7 +76,7 @@ public class NotaPendenteController {
 
         try {
             // A linha de processamento antigo comentada, pois quem salva os itens agora é o React
-            nota.setStatus("IMPORTADO");
+            nota.setStatus("IMPORTADA"); // 🔥 PADRONIZADO PARA "IMPORTADA" (Feminino) para bater com o Frontend
             notaPendenteRepository.save(nota);
             return ResponseEntity.ok("Nota importada com sucesso para o estoque e financeiro!");
         } catch (Exception e) {

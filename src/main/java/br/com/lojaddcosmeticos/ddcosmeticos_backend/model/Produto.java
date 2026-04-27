@@ -43,6 +43,15 @@ public class Produto {
     @ToString.Include
     private String descricao;
 
+    @Column(name = "hash_imagem", length = 64)
+    private String hashImagem;
+
+    @Column(name = "alerta_gondola")
+    private Boolean alertaGondola = false;
+
+    @Column(name = "revisao_imagem_pendente", columnDefinition = "boolean default false")
+    private Boolean revisaoImagemPendente = false;
+
     @Column(name = "codigo_barras", unique = true, length = 50)
     @ToString.Include
     private String codigoBarras;

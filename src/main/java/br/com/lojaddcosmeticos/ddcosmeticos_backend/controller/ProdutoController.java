@@ -8,6 +8,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -27,6 +28,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/produtos")
 @Tag(name = "Produtos", description = "Gestão de Catálogo e Estoque")
+@Slf4j
 public class ProdutoController {
 
     @Autowired
@@ -241,5 +243,82 @@ public class ProdutoController {
                     "mensagem", "Erro na IA de EAN: " + e.getMessage()
             ));
         }
+    }
+    // =========================================================================
+    // 🔥 ENDPOINT DA IMPRESSORA TÉRMICA (ZPL) 🔥
+    // =========================================================================
+    /**
+     * Retorna o código ZPL bruto (em texto) para impressão térmica.
+     * Produz 'text/plain' para não causar problemas no navegador/frontend.
+     */
+    @GetMapping(value = "/{id}/etiqueta", produces = org.springframework.http.MediaType.TEXT_PLAIN_VALUE)
+    public org.springframework.http.ResponseEntity<String> imprimirEtiqueta(@PathVariable Long id) {
+        try {
+            String zpl = produtoService.imprimirEtiqueta(id);
+            return org.springframework.http.ResponseEntity.ok(zpl);
+        } catch (br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException e) {
+            return org.springframework.http.ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            log.error("Erro ao gerar etiqueta ZPL para o produto ID: {}", id, e);
+            return org.springframework.http.ResponseEntity.internalServerError().body("Erro ao gerar etiqueta.");
+        }
+    }
+    // =========================================================================
+    // 🔥 ROTAS DO DASHBOARD DE IA (RAIO-X E QUICK FIX)
+    // =========================================================================
+
+    @GetMapping("/dashboard-ia")
+    public org.springframework.http.ResponseEntity<Map<String, Object>> obterRaioXIA() {
+        return org.springframework.http.ResponseEntity.ok(produtoService.obterRaioXInteligenciaArtificial());
+    }
+
+    @PostMapping("/quick-fix-ia/{tipo}")
+    public org.springframework.http.ResponseEntity<Map<String, Object>> aplicarQuickFixIA(@PathVariable String tipo) {
+        return org.springframework.http.ResponseEntity.ok(produtoService.aplicarQuickFixIA(tipo));
+    }
+    // =========================================================================
+    // 🔥 ROTAS DO MODO AUDITOR DE GÔNDOLA
+    // =========================================================================
+
+    // 1. Busca rápida por EAN (Otimizada para o leitor de código de barras)
+    @GetMapping("/codigo/{ean}")
+    public org.springframework.http.ResponseEntity<br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO> buscarPorEanRapido(@PathVariable String ean) {
+        br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO prod = produtoService.buscarPorEanOuExterno(ean);
+        if (prod != null && prod.id() != null) {
+            return org.springframework.http.ResponseEntity.ok(prod);
+        }
+        return org.springframework.http.ResponseEntity.notFound().build();
+    }
+
+    // 2. Recebe o alerta do telemóvel e marca o produto como pendente
+    @PostMapping("/{id}/divergencia")
+    public org.springframework.http.ResponseEntity<Void> reportarDivergencia(@PathVariable Long id) {
+        produtoService.sinalizarDivergenciaGondola(id);
+        return org.springframework.http.ResponseEntity.ok().build();
+    }
+    @GetMapping("/divergencias-gondola")
+    public org.springframework.http.ResponseEntity<List<br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO>> listarDivergencias() {
+        return org.springframework.http.ResponseEntity.ok(produtoService.listarDivergenciasGondola());
+    }
+
+    @PostMapping("/{id}/resolver-divergencia")
+    public org.springframework.http.ResponseEntity<Map<String, String>> resolverDivergencia(
+            @PathVariable Long id,
+            @RequestParam java.math.BigDecimal novoPreco) {
+        return org.springframework.http.ResponseEntity.ok(produtoService.resolverDivergenciaEImprimir(id, novoPreco));
+    }
+    // =========================================================================
+    // 🔥 ROTAS PARA EDIÇÃO INLINE (MODO EXCEL)
+    // =========================================================================
+    @PatchMapping("/{id}/preco-venda")
+    public org.springframework.http.ResponseEntity<Void> atualizarPrecoVendaRapido(@PathVariable Long id, @RequestParam java.math.BigDecimal valor) {
+        produtoService.definirPrecoVenda(id, valor);
+        return org.springframework.http.ResponseEntity.ok().build();
+    }
+
+    @PatchMapping("/{id}/estoque")
+    public org.springframework.http.ResponseEntity<Void> atualizarEstoqueRapido(@PathVariable Long id, @RequestParam Integer quantidade) {
+        produtoService.ajustarEstoqueRapido(id, quantidade);
+        return org.springframework.http.ResponseEntity.ok().build();
     }
 }

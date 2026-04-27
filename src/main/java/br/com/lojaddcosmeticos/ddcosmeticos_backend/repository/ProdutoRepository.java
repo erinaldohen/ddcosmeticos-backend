@@ -181,4 +181,7 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     // =========================================================================================
     @Query("SELECT p FROM Produto p WHERE p.codigoBarras LIKE '2%' AND length(p.codigoBarras) = 13")
     List<Produto> findProdutosComEanInterno();
+    boolean existsByHashImagem(String hashImagem);
+    // Pega os produtos que não têm foto E que ainda não falharam no motor MVC
+    List<Produto> findTop5ByUrlImagemIsNullAndRevisaoImagemPendenteFalseOrderByIdAsc();
 }

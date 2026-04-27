@@ -1,0 +1,1 @@
+ALTER TABLE produto_aud ADD COLUMN alerta_gondola BOOLEAN DEFAULT FALSE;

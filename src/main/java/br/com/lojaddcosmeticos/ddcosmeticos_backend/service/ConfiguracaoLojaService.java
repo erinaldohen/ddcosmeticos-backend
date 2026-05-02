@@ -349,4 +349,22 @@ public class ConfiguracaoLojaService {
 
         return repository.save(config);
     }
+    public Map<String, String> buscarConfiguracaoBasicaMap() {
+        ConfiguracaoLoja config = repository.findFirstByOrderByIdAsc().orElse(null);
+        Map<String, String> basica = new HashMap<>();
+
+        if (config != null && config.getLoja() != null) {
+            basica.put("nomeFantasia", config.getLoja().getNomeFantasia());
+            basica.put("cnpj", config.getLoja().getCnpj());
+            basica.put("telefone", config.getLoja().getTelefone());
+            basica.put("logoUrl", config.getLoja().getLogoUrl());
+        } else {
+            basica.put("nomeFantasia", "DD Cosméticos");
+            basica.put("cnpj", "");
+            basica.put("telefone", "");
+            basica.put("logoUrl", "");
+        }
+
+        return basica;
+    }
 }

@@ -173,6 +173,9 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT v.idVenda, v.dataVenda, v.valorTotal FROM Venda v WHERE (v.clienteTelefone IS NOT NULL AND v.clienteTelefone != '') OR (v.clienteDocumento IS NOT NULL AND v.clienteDocumento != '')")
     Page<Object[]> buscarTodasVendasIdentificadasPaginadas(Pageable pageable);
 
+    @Query("SELECT v FROM Venda v WHERE (v.clienteTelefone IS NOT NULL AND v.clienteTelefone != '') OR (v.clienteDocumento IS NOT NULL AND v.clienteDocumento != '')")
+    List<Venda> buscarTodasVendasIdentificadas();
+
     // =========================================================================
     // 6. ROI DA INTELIGÊNCIA ARTIFICIAL
     // =========================================================================
@@ -236,8 +239,16 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = :statusNfce")
     Page<Venda> findByDataVendaBetweenAndStatusNfcePaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("statusNfce") StatusFiscal statusNfce, Pageable pageable);
 
-    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.usuarioId = :usuarioId AND v.statusNfce = :statusNfce")
+    // 🔥 CORREÇÃO 1: Restaurar o método genérico List<Venda> (sem ID do Vendedor) para o RelatorioService
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = :statusNfce")
+    List<Venda> findByDataVendaBetweenAndStatusNfce(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("statusNfce") StatusFiscal statusNfce);
+
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.usuario.id = :usuarioId AND v.statusNfce = :statusNfce")
     Page<Venda> findByDataVendaBetweenAndUsuarioIdAndStatusNfcePaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("usuarioId") Long usuarioId, @Param("statusNfce") StatusFiscal statusNfce, Pageable pageable);
+
+    // 🔥 CORREÇÃO 2: Restaurar o método específico para o RelatorioService
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.usuario.id = :usuarioId AND v.statusNfce = :statusNfce")
+    List<Venda> findByDataVendaBetweenAndUsuarioIdAndStatusNfce(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("usuarioId") Long usuarioId, @Param("statusNfce") StatusFiscal statusNfce);
 
     @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = 'AUTORIZADA'")
     Page<Venda> findVendasAutorizadasNoPeriodoPaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);

@@ -46,7 +46,7 @@ public class RelatorioService {
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private ContaPagarRepository contaPagarRepository;
     @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ConfiguracaoLojaRepository configuracaoRepository; // Alterado para bater com o padrão
+    @Autowired private ConfiguracaoLojaRepository configuracaoRepository;
     @Autowired private CaixaDiarioRepository caixaRepository;
     @Autowired private EmailService emailService;
 
@@ -104,9 +104,6 @@ public class RelatorioService {
         LocalDateTime dataInicio = (inicio != null) ? inicio.atStartOfDay() : LocalDate.now().minusDays(30).atStartOfDay();
         LocalDateTime dataFim = (fim != null) ? fim.atTime(LocalTime.MAX) : LocalDateTime.now();
 
-        // NOTA DBA: Numa loja gigante (> 50k produtos), este findAll() deverá ser convertido
-        // para JPQL (ex: SELECT SUM(p.precoCusto * p.quantidadeEmEstoque) FROM Produto p).
-        // Para a realidade atual de varejo padrão, a stream lida bem.
         List<Produto> todosProdutos = produtoRepository.findAll();
 
         BigDecimal custoEstoque = todosProdutos.stream()
@@ -262,13 +259,16 @@ public class RelatorioService {
 
             if (config.getFinanceiro() != null) {
                 taxaCredito = nvl(config.getFinanceiro().getTaxaCredito());
-                taxaDebito = nvl(config.getFinanceiro().getTaxaDebito()); // 🚨 Bate na taxa correta de débito!
+                taxaDebito = nvl(config.getFinanceiro().getTaxaDebito());
             }
         }
 
         List<Venda> vendas;
         if (vendedorId != null) {
-            vendas = vendaRepository.findByDataVendaBetweenAndUsuarioIdAndStatusNfce(inicio, fim, vendedorId, StatusFiscal.AUTORIZADA);
+            // ✅ CORREÇÃO APLICADA: Substituição pelo método seguro que deixámos no VendaRepository
+            vendas = vendaRepository.findByDataVendaBetweenAndStatusNfce(inicio, fim, StatusFiscal.AUTORIZADA).stream()
+                    .filter(v -> v.getVendedor() != null && v.getVendedor().getId().equals(vendedorId))
+                    .collect(Collectors.toList());
         } else {
             vendas = vendaRepository.findByDataVendaBetweenAndStatusNfce(inicio, fim, StatusFiscal.AUTORIZADA);
         }
@@ -291,7 +291,6 @@ public class RelatorioService {
 
             if (valorBase.compareTo(BigDecimal.ZERO) < 0) valorBase = BigDecimal.ZERO;
 
-            // 🚨 CORREÇÃO CRÍTICA FINANCEIRA: Aplica a taxa correta baseada no método de pagamento
             if (descontarTaxas && venda.getFormaDePagamento() != null) {
                 String formaPgto = venda.getFormaDePagamento().name();
                 BigDecimal taxaAplicar = BigDecimal.ZERO;
@@ -339,27 +338,38 @@ public class RelatorioService {
             final LocalDateTime dIni = (inicioStr != null && !inicioStr.isEmpty()) ? LocalDate.parse(inicioStr).atStartOfDay() : LocalDateTime.now().minusDays(30);
             final LocalDateTime dFim = (fimStr != null && !fimStr.isEmpty()) ? LocalDate.parse(fimStr).atTime(LocalTime.MAX) : LocalDateTime.now();
 
-            // ✅ CORREÇÃO: Utiliza o método seguro com limite de datas para evitar colapso do servidor
             List<Auditoria> logs = auditoriaRepository.findByDataHoraBetweenOrderByDataHoraDesc(dIni, dFim).stream()
                     .filter(a -> search == null || search.isEmpty() || a.getMensagem().toLowerCase().contains(search.toLowerCase()))
-                    .limit(300) // Proteção adicional OOM
+                    .limit(300)
                     .collect(Collectors.toList());
 
             PdfPTable table = new PdfPTable(4);
             table.setWidthPercentage(100);
-            table.addCell("Data"); table.addCell("Usuário"); table.addCell("Evento"); table.addCell("Mensagem");
+            table.setWidths(new float[]{2.5f, 2f, 2.5f, 4f});
 
+            String[] headers = {"Data/Hora", "Usuário", "Evento", "Descrição"};
+            for (String h : headers) {
+                PdfPCell cell = new PdfPCell(new Phrase(h, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
+                cell.setBackgroundColor(new Color(15, 23, 42));
+                cell.setPadding(6);
+                table.addCell(cell);
+            }
+
+            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd/MM/yy HH:mm");
             for (Auditoria logItem : logs) {
-                table.addCell(logItem.getDataHora().toString());
-                table.addCell(logItem.getUsuarioResponsavel());
-                table.addCell(logItem.getTipoEvento().name());
-                table.addCell(logItem.getMensagem());
+                table.addCell(criarCelula(logItem.getDataHora().format(dtf), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(logItem.getUsuarioResponsavel(), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(logItem.getTipoEvento().toString(), Element.ALIGN_CENTER));
+                table.addCell(criarCelula(logItem.getMensagem(), Element.ALIGN_LEFT));
             }
 
             document.add(table);
             document.close();
             return out.toByteArray();
-        } catch (Exception e) { return new byte[0]; }
+        } catch (Exception e) {
+            log.error("Erro PDF Auditoria: ", e);
+            return new byte[0];
+        }
     }
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {
@@ -453,9 +463,6 @@ public class RelatorioService {
         }
     }
 
-    // =========================================================================
-    // 7. DOSSIÊ EXECUTIVO 360º COM "MOTOR DE IA" HEURÍSTICO
-    // =========================================================================
     public byte[] gerarDossieExecutivoPdf(LocalDate inicio, LocalDate fim) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 40, 40, 40, 40);
@@ -566,9 +573,6 @@ public class RelatorioService {
         }
     }
 
-    // =========================================================================
-    // 8. GERADOR DO BALANÇO TRIMESTRAL (EARNINGS RELEASE CORPORATIVO)
-    // =========================================================================
     public byte[] gerarBalancoTrimestralPdf(int ano, int trimestre) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 50, 50, 50, 50);

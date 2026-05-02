@@ -9,8 +9,10 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoMovimentacaoCaixa;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.*;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.*;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,22 +20,23 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class FinanceiroService {
 
-    @Autowired private ContaReceberRepository contaReceberRepository;
-    @Autowired private ContaPagarRepository contaPagarRepository;
-    @Autowired private VendaRepository vendaRepository;
-    @Autowired private ClienteRepository clienteRepository;
-    @Autowired private FornecedorRepository fornecedorRepository;
+    private final ContaReceberRepository contaReceberRepository;
+    private final ContaPagarRepository contaPagarRepository;
+    private final VendaRepository vendaRepository;
+    private final ClienteRepository clienteRepository;
+    private final FornecedorRepository fornecedorRepository;
 
-    @Autowired private CaixaService caixaService;
-    @Autowired @Lazy private ContaReceberService contaReceberService;
-    @Autowired @Lazy private ContaPagarService contaPagarService;
+    private final CaixaService caixaService;
+
+    @Lazy private final ContaReceberService contaReceberService;
+    @Lazy private final ContaPagarService contaPagarService;
 
     @Transactional
     public void lancarReceitaDeVenda(Long vendaId, BigDecimal valorTotalVenda, String formaPagamentoStr, int parcelas, Long clienteId) {
@@ -41,19 +44,16 @@ public class FinanceiroService {
                 .orElseThrow(() -> new RuntimeException("Venda não encontrada"));
 
         boolean ehAvista = isPagamentoAvista(formaPagamentoStr);
-
-        BigDecimal valorPorParcela = valorTotalVenda.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
-        BigDecimal resto = valorTotalVenda.subtract(valorPorParcela.multiply(BigDecimal.valueOf(parcelas)));
+        BigDecimal valorTotal = nvl(valorTotalVenda);
+        BigDecimal valorPorParcela = valorTotal.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
+        BigDecimal resto = valorTotal.subtract(valorPorParcela.multiply(BigDecimal.valueOf(parcelas)));
 
         for (int i = 1; i <= parcelas; i++) {
             ContaReceber conta = new ContaReceber();
             conta.setVenda(venda);
             conta.setCliente(venda.getCliente());
 
-            BigDecimal valorDestaParcela = valorPorParcela;
-            if (i == parcelas) {
-                valorDestaParcela = valorDestaParcela.add(resto);
-            }
+            BigDecimal valorDestaParcela = (i == parcelas) ? valorPorParcela.add(resto) : valorPorParcela;
 
             conta.setValorTotal(valorDestaParcela);
             conta.setValorPago(BigDecimal.ZERO);
@@ -86,8 +86,9 @@ public class FinanceiroService {
         Fornecedor fornecedor = fornecedorRepository.findById(fornecedorId)
                 .orElseThrow(() -> new RuntimeException("Fornecedor não encontrado"));
 
-        BigDecimal valorPorParcela = valorTotalCompra.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
-        BigDecimal resto = valorTotalCompra.subtract(valorPorParcela.multiply(BigDecimal.valueOf(parcelas)));
+        BigDecimal valorTotal = nvl(valorTotalCompra);
+        BigDecimal valorPorParcela = valorTotal.divide(BigDecimal.valueOf(parcelas), 2, RoundingMode.HALF_UP);
+        BigDecimal resto = valorTotal.subtract(valorPorParcela.multiply(BigDecimal.valueOf(parcelas)));
 
         for (int i = 1; i <= parcelas; i++) {
             ContaPagar conta = new ContaPagar();
@@ -97,11 +98,7 @@ public class FinanceiroService {
             conta.setStatus(StatusConta.PENDENTE);
             conta.setDescricao("Compra Produtos (" + observacao + ") - Parc. " + i + "/" + parcelas);
 
-            BigDecimal valorDestaParcela = valorPorParcela;
-            if (i == parcelas) {
-                valorDestaParcela = valorDestaParcela.add(resto);
-            }
-            conta.setValorTotal(valorDestaParcela);
+            conta.setValorTotal((i == parcelas) ? valorPorParcela.add(resto) : valorPorParcela);
             conta.setValorPago(BigDecimal.ZERO);
 
             contaPagarRepository.save(conta);
@@ -112,7 +109,7 @@ public class FinanceiroService {
     public void registrarMovimentacaoManual(MovimentacaoDTO dto, String usuarioResponsavel) {
         MovimentacaoCaixa mov = new MovimentacaoCaixa();
         mov.setTipo(dto.getTipo());
-        mov.setValor(dto.getValor());
+        mov.setValor(nvl(dto.getValor()));
         mov.setMotivo(dto.getMotivo());
         mov.setDataHora(LocalDateTime.now());
         mov.setUsuarioResponsavel(usuarioResponsavel);
@@ -123,39 +120,30 @@ public class FinanceiroService {
 
     @Transactional
     public void darBaixaContaReceber(Long contaReceberId, BigDecimal valorPago) {
-        ContaReceberDTO.BaixaTituloDTO dto = new ContaReceberDTO.BaixaTituloDTO(
-                valorPago,
-                FormaDePagamento.DINHEIRO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                LocalDate.now()
-        );
-        contaReceberService.baixarTitulo(contaReceberId, dto);
+        contaReceberService.baixarTitulo(contaReceberId, new ContaReceberDTO.BaixaTituloDTO(
+                nvl(valorPago), FormaDePagamento.DINHEIRO, BigDecimal.ZERO, BigDecimal.ZERO, LocalDate.now()));
     }
 
     @Transactional
     public void darBaixaContaPagar(Long contaPagarId, BigDecimal valorPago) {
-        ContaPagarDTO.BaixaContaPagarDTO dto = new ContaPagarDTO.BaixaContaPagarDTO(
-                valorPago,
-                FormaDePagamento.DINHEIRO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                LocalDate.now()
-        );
-        contaPagarService.pagarConta(contaPagarId, dto);
+        contaPagarService.pagarConta(contaPagarId, new ContaPagarDTO.BaixaContaPagarDTO(
+                nvl(valorPago), FormaDePagamento.DINHEIRO, BigDecimal.ZERO, BigDecimal.ZERO, LocalDate.now()));
     }
 
     @Transactional(readOnly = true)
     public FechamentoCaixaDTO gerarResumoFechamento(LocalDate data) {
-        List<ContaReceber> recebimentos = contaReceberRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
-        List<ContaPagar> pagamentos = contaPagarRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO);
+
+        // 🚨 CORREÇÃO DEFINITIVA LINHA 137:
+        // Passamos 'Pageable.unpaged()' e pedimos '.getContent()' para obter a List nativa sem ambiguidades de sobrecarga.
+        List<ContaReceber> recebimentos = contaReceberRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO, Pageable.unpaged()).getContent();
+        List<ContaPagar> pagamentos = contaPagarRepository.findByDataPagamentoAndStatus(data, StatusConta.PAGO, Pageable.unpaged()).getContent();
 
         BigDecimal totalEntradas = recebimentos.stream()
-                .map(c -> c.getValorPago() != null ? c.getValorPago() : BigDecimal.ZERO)
+                .map(c -> nvl(c.getValorPago()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal totalSaidas = pagamentos.stream()
-                .map(p -> p.getValorPago() != null ? p.getValorPago() : BigDecimal.ZERO)
+                .map(p -> nvl(p.getValorPago()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal saldoDinheiro = totalEntradas.subtract(totalSaidas).max(BigDecimal.ZERO);
@@ -181,5 +169,9 @@ public class FinanceiroService {
         if (forma == null) return false;
         String f = forma.toUpperCase();
         return f.contains("DINHEIRO") || f.contains("PIX") || f.contains("DEBITO");
+    }
+
+    private BigDecimal nvl(BigDecimal valor) {
+        return valor != null ? valor : BigDecimal.ZERO;
     }
 }

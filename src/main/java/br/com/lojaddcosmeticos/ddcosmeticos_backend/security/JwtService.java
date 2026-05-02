@@ -4,6 +4,7 @@ import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.auth0.jwt.exceptions.JWTCreationException;
 import com.auth0.jwt.exceptions.JWTVerificationException;
+import com.auth0.jwt.interfaces.DecodedJWT;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Usuario;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,15 +28,11 @@ public class JwtService {
             Algorithm algorithm = Algorithm.HMAC256(secret);
             return JWT.create()
                     .withIssuer(ISSUER)
-                    /* DICA DD COSMÉTICOS: Use a Matricula como Subject.
-                       Isso garante que o SecurityFilter encontre o usuário
-                       independente de ele ter logado com e-mail ou número de matrícula.
-                    */
                     .withSubject(usuario.getMatricula())
+                    // ✅ OTIMIZAÇÃO: Apenas a Role trafega (necessário para o Spring Security).
+                    // Ocultamos Nomes e Emails do Payload público.
+                    .withClaim("role", usuario.getPerfilDoUsuario().name())
                     .withExpiresAt(getExpirationInstant())
-                    .withClaim("perfil", usuario.getPerfilDoUsuario().name())
-                    .withClaim("nome", usuario.getNome())
-                    .withClaim("email", usuario.getEmail()) // E-mail vira um campo extra (claim)
                     .sign(algorithm);
         } catch (JWTCreationException exception){
             log.error("Erro crítico na geração de Token para usuário {}: {}", usuario.getMatricula(), exception.getMessage());
@@ -43,23 +40,21 @@ public class JwtService {
         }
     }
 
-    public String validateToken(String token){
+    // ✅ OTIMIZAÇÃO: Devolve o Token descodificado completo, e não apenas o Subject,
+    // para que o Filtro possa extrair as permissões sem bater na base de dados.
+    public DecodedJWT validateTokenAndGetClaims(String token){
         try {
             Algorithm algorithm = Algorithm.HMAC256(secret);
             return JWT.require(algorithm)
                     .withIssuer(ISSUER)
                     .build()
-                    .verify(token)
-                    .getSubject();
+                    .verify(token);
         } catch (JWTVerificationException exception){
-            // Log amigável para debug, sem poluir o console de produção
-            log.warn("Tentativa de acesso com Token inválido ou expirado: {}", exception.getMessage());
-            return "";
+            return null; // Retorna null silenciosamente, forçando o Filter a negar o acesso (403).
         }
     }
 
     private Instant getExpirationInstant() {
-        // Instant.now() é imune a variações de fuso horário do servidor (UTC por padrão)
         return Instant.now().plus(EXPIRATION_HOURS, ChronoUnit.HOURS);
     }
 }

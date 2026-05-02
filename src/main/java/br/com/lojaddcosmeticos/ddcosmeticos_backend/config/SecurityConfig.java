@@ -3,6 +3,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.config;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.handler.SecurityFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -31,80 +32,58 @@ import java.util.List;
 @EnableMethodSecurity(securedEnabled = true, jsr250Enabled = true)
 public class SecurityConfig {
 
-    @Autowired
-    private SecurityFilter securityFilter;
+    @Autowired private SecurityFilter securityFilter;
+    @Autowired private UserDetailsService userDetailsService;
 
-    @Autowired
-    private UserDetailsService userDetailsService;
+    // Injetamos o perfil ativo para saber se estamos em produção
+    @Value("${spring.profiles.active:dev}")
+    private String activeProfile;
 
-    // --- CONFIGURAÇÃO DO PROVIDER DE AUTENTICAÇÃO ---
     @Bean
     public AuthenticationProvider authenticationProvider() {
         DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
         authProvider.setUserDetailsService(userDetailsService);
         authProvider.setPasswordEncoder(passwordEncoder());
-
-        // CORREÇÃO DE SEGURANÇA APLICADA:
-        // TRUE = Impede Enumeração de Utilizadores. Um atacante não consegue descobrir
-        // se o e-mail existe no sistema porque lançará sempre um erro genérico de credenciais.
         authProvider.setHideUserNotFoundExceptions(true);
-
         return authProvider;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        boolean isProd = "prod".equalsIgnoreCase(activeProfile);
+
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable())
+                .csrf(csrf -> csrf.disable()) // Stateless JWT dispensa CSRF
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
-                // --- Tratamento de Exceção para usuários não logados (Token inválido/ausente) ---
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> {
                             response.setContentType("application/json;charset=UTF-8");
                             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                            response.getWriter().write("{\"mensagem\": \"Acesso negado. Faça login para continuar.\", \"status\": 403}");
+                            response.getWriter().write("{\"mensagem\": \"Acesso negado. Token inválido ou expirado.\", \"status\": 403}");
                         })
                 )
-                // -------------------------------------------------------------------------------
+                .authorizeHttpRequests(auth -> {
+                    // ROTAS PÚBLICAS
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/**").permitAll();
+                    auth.requestMatchers("/uploads/**").permitAll();
 
-                .authorizeHttpRequests(auth -> auth
-                        // 1. ROTAS PÚBLICAS
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/**", "/auth/**").permitAll()
-                        .requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**", "/uploads/**").permitAll()
+                    // 🚨 CORREÇÃO: Bloqueia H2 e Documentação em Produção
+                    if (!isProd) {
+                        auth.requestMatchers("/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll();
+                    }
 
-                        // 2. LEITURA E OPERACIONAL (Liberado para qualquer utilizador logado)
-                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/caixa/status", "/api/v1/caixas/status").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/auditoria/eventos").authenticated()
+                    // ROTAS DE ADMINISTRAÇÃO E GESTÃO
+                    auth.requestMatchers("/api/v1/configuracoes/**").hasAuthority("ROLE_ADMIN");
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN");
+                    auth.requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN");
+                    auth.requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN");
+                    auth.requestMatchers("/api/v1/dashboard/**").hasAuthority("ROLE_ADMIN");
+                    auth.requestMatchers("/api/v1/fiscal/**").hasAuthority("ROLE_ADMIN");
 
-                        // Operações de Venda e Caixa
-                        .requestMatchers(HttpMethod.POST, "/api/v1/vendas/**").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/abrir", "/api/v1/caixas/fechar").authenticated()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/caixas/sangria", "/api/v1/caixas/suprimento").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/caixas/**").authenticated()
-
-                        // 3. RESTRITO A ADMIN (Escrita e Gestão)
-                        // CORREÇÃO APLICADA: Substituído hasRole por hasAuthority para evitar o prefixo duplo "ROLE_ROLE_ADMIN"
-                        .requestMatchers("/api/v1/configuracoes/**").hasAuthority("ROLE_ADMIN")
-
-                        // Produtos (Escrita)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers(HttpMethod.PATCH, "/api/v1/produtos/**").hasAuthority("ROLE_ADMIN")
-
-                        // Áreas Sensíveis (Dashboard resolvido)
-                        .requestMatchers("/api/v1/dashboard/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers("/api/v1/fiscal/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers("/api/v1/auditoria/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers("/api/v1/fornecedores/**").hasAuthority("ROLE_ADMIN")
-                        .requestMatchers("/api/v1/usuarios/**").hasAuthority("ROLE_ADMIN")
-
-                        // 4. RESTO (Bloqueio padrão)
-                        .anyRequest().authenticated()
-                )
+                    // PERMISSÃO PADRÃO PARA OPERADORES
+                    auth.anyRequest().authenticated();
+                })
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()))
                 .authenticationProvider(authenticationProvider())
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
@@ -113,8 +92,8 @@ public class SecurityConfig {
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
-        return authenticationConfiguration.getAuthenticationManager();
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
     }
 
     @Bean
@@ -126,24 +105,17 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // ATUALIZAÇÃO CIRÚRGICA: Permite o acesso via Localhost e via IP (Mobile) simultaneamente,
-        // mantendo a compatibilidade com 'allowCredentials = true'.
-        configuration.setAllowedOriginPatterns(Arrays.asList(
-                "http://localhost:*",
-                "http://127.0.0.1:*",
-                "http://192.168.*:*", // Permite rede local para acesso Mobile
-                "http://10.0.*:*",
-                "http://172.16.*:*",
-                "https://*.trycloudflare.com",
-                "https://*.loca.lt"
+        // 🚨 CORREÇÃO: Remoção de Wildcards perigosos e definição estrita.
+        // Em produção, você substituirá pelo domínio exato da loja.
+        configuration.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "https://ddcosmeticos-pdv.com.br" // Domínio de Prod
         ));
 
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"));
-
-        // ATUALIZAÇÃO: Expor o Content-Disposition para que o PDF da NFC-e baixe no telemóvel
-        configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Disposition"));
-
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Accept"));
+        configuration.setExposedHeaders(List.of("Content-Disposition"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

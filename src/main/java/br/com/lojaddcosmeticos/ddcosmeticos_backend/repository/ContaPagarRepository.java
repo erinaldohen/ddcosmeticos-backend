@@ -3,6 +3,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusConta;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.ContaPagar;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,19 +18,19 @@ import java.util.List;
 public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
     // ==================================================================================
-    // SEÇÃO 1: CONSULTAS DE FLUXO E FECHAMENTO
+    // SEÇÃO 1: CONSULTAS DE FLUXO E FECHAMENTO (AGORA PAGINADAS PARA EVITAR MEMORY LEAK)
     // ==================================================================================
 
-    List<ContaPagar> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
+    Page<ContaPagar> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status, Pageable pageable);
 
-    List<ContaPagar> findByDataVencimentoBetween(LocalDate inicio, LocalDate fim);
+    Page<ContaPagar> findByDataVencimentoBetween(LocalDate inicio, LocalDate fim, Pageable pageable);
 
-    List<ContaPagar> findByStatus(StatusConta status);
+    Page<ContaPagar> findByStatus(StatusConta status, Pageable pageable);
 
-    List<ContaPagar> findByDataVencimentoBeforeAndStatus(LocalDate data, StatusConta status);
+    Page<ContaPagar> findByDataVencimentoBeforeAndStatus(LocalDate data, StatusConta status, Pageable pageable);
 
     // ==================================================================================
-    // SEÇÃO 2: AGREGAÇÕES PARA BI E DASHBOARD (Inteligência)
+    // SEÇÃO 2: AGREGAÇÕES PARA BI E DASHBOARD (Inteligência Matemática mantida)
     // ==================================================================================
 
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento < :hoje AND c.status <> 'PAGA'")
@@ -37,8 +39,6 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaPagar c WHERE c.dataVencimento = :data AND c.status = :status")
     BigDecimal somarValorPorVencimentoEStatus(@Param("data") LocalDate data, @Param("status") StatusConta status);
 
-    // CORREÇÃO CRÍTICA: Removido o campo 'categoria' que não existe.
-    // O Fallback 'Despesa Avulsa' agora é a única alternativa se não houver fornecedor.
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ResumoDespesaDTO(
             COALESCE(f.nomeFantasia, 'Despesa Avulsa'), 
@@ -53,14 +53,15 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
     List<ResumoDespesaDTO> agruparDespesasPorPeriodo(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
 
     // ==================================================================================
-    // SEÇÃO 3: AUXILIARES DE GESTÃO
+    // SEÇÃO 3: AUXILIARES DE GESTÃO E ROTINAS CIRÚRGICAS
     // ==================================================================================
 
     @Query("SELECT c FROM ContaPagar c WHERE c.dataVencimento < :hoje AND c.status <> 'PAGA'")
     List<ContaPagar> buscarContasVencidas(@Param("hoje") LocalDate hoje);
 
     @Query("SELECT c FROM ContaPagar c WHERE c.status = 'PENDENTE' ORDER BY c.dataVencimento ASC")
-    List<ContaPagar> buscarProximosVencimentos();
+    Page<ContaPagar> buscarProximosVencimentos(Pageable pageable);
 
+    // Busca cirúrgica, pode continuar List (são poucas contas por fornecedor)
     List<ContaPagar> findByFornecedorId(Long fornecedorId);
 }

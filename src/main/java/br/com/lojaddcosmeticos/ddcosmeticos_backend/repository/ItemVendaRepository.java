@@ -18,8 +18,8 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
     // 🔥 MÉTODOS PARA O MOTOR DE INTELIGÊNCIA DO INVENTÁRIO (CURVA ABC E TENDÊNCIA)
     // =====================================================================================
 
+    // NOTA DA ARQUITETURA: Evitar usar estes métodos se o objetivo for apenas somar ou contar.
     List<ItemVenda> findByVendaDataVendaAfter(LocalDateTime data);
-
     List<ItemVenda> findByVendaDataVendaBetween(LocalDateTime dataInicio, LocalDateTime dataFim);
 
     // =====================================================================================
@@ -47,9 +47,9 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
 
     @Query(value = """
         SELECT iv2.produto_id 
-        FROM item_venda iv1
-        JOIN item_venda iv2 ON iv1.venda_id = iv2.venda_id
-        JOIN produto p ON iv2.produto_id = p.id
+        FROM tb_item_venda iv1
+        JOIN tb_item_venda iv2 ON iv1.venda_id = iv2.venda_id
+        JOIN tb_produto p ON iv2.produto_id = p.id
         WHERE iv1.produto_id = :produtoBaseId 
           AND iv2.produto_id != :produtoBaseId 
           AND p.ativo = true
@@ -61,7 +61,7 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
     List<Long> descobrirProdutosMaisCompradosJuntos(@Param("produtoBaseId") Long produtoBaseId, @Param("limite") int limite);
 
     // =====================================================================================
-    // 📊 QUERIES PARA O DASHBOARD (IMPACTO DA IA) - 🔥 ADICIONADO AQUI 🔥
+    // 📊 QUERIES PARA O DASHBOARD (IMPACTO DA IA)
     // =====================================================================================
 
     @Query("SELECT CAST(COALESCE(SUM(i.precoUnitario * i.quantidade), 0) AS bigdecimal) " +
@@ -75,4 +75,8 @@ public interface ItemVendaRepository extends JpaRepository<ItemVenda, Long> {
             "WHERE i.influenciaIA != br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.TipoInfluenciaIA.NENHUMA " +
             "AND i.venda.dataVenda >= :dataInicio")
     Long calcularRoiIAItens(@Param("dataInicio") LocalDateTime dataInicio);
+
+    // Novo método leve de agregação matemática
+    @Query("SELECT COALESCE(SUM(i.quantidade), 0) FROM ItemVenda i WHERE i.produto.id = :produtoId AND i.venda.dataVenda BETWEEN :inicio AND :fim AND i.venda.statusNfce = 'AUTORIZADA'")
+    Long somarQuantidadeVendidaNoPeriodo(@Param("produtoId") Long produtoId, @Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 }

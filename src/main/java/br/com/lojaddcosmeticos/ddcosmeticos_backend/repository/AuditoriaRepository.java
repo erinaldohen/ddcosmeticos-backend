@@ -14,17 +14,15 @@ import java.util.List;
 @Repository
 public interface AuditoriaRepository extends JpaRepository<Auditoria, Long> {
 
-    // Método existente que você já usava para o relatório PDF geral
-    List<Auditoria> findAllByOrderByDataHoraDesc();
+    // 🚨 OTIMIZADO (CRÍTICO): Substituído findAll() por busca com limite de datas.
+    // O Relatório PDF deve buscar apenas as ações de um determinado período (ex: última semana ou mês).
+    List<Auditoria> findByDataHoraBetweenOrderByDataHoraDesc(LocalDateTime inicio, LocalDateTime fim);
 
-    // --- NOVO MÉTODO (O que falta para corrigir o erro) ---
-    // Esta query faz:
-    // 1. Busca case-insensitive (LOWER) em mensagem, usuário OU tipoEvento
-    // 2. E (AND) garante que esteja dentro do período de datas
+    // ✅ MANTIDO E VALIDADO: A busca com filtros no frontend já está perfeitamente paginada.
     @Query("SELECT a FROM Auditoria a WHERE " +
-            "(LOWER(a.mensagem) LIKE %:search% OR " +
-            " LOWER(a.usuarioResponsavel) LIKE %:search% OR " +
-            " LOWER(a.tipoEvento) LIKE %:search%) " +
+            "(LOWER(a.mensagem) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+            " LOWER(a.usuarioResponsavel) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+            " LOWER(a.tipoEvento) LIKE LOWER(CONCAT('%', :search, '%'))) " +
             "AND a.dataHora BETWEEN :inicio AND :fim")
     Page<Auditoria> buscarPorFiltros(
             @Param("search") String search,

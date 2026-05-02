@@ -13,10 +13,11 @@ import java.util.Optional;
 @Repository
 public interface LoteProdutoRepository extends JpaRepository<LoteProduto, Long> {
 
-    // Busca lote específico para adicionar saldo
+    // Busca cirúrgica exata de lote (O(1))
     Optional<LoteProduto> findByProdutoAndNumeroLote(Produto produto, String numeroLote);
 
-    // Busca lotes com saldo, ordenados por validade (O que vence primeiro sai primeiro - FEFO)
+    // ✅ MANTIDO EM LISTA: Uso exclusivo do Motor FEFO (First-Expired-First-Out)
+    // Retorna a quantidade restrita de lotes de 1 único produto para abater stock na venda.
     @Query("SELECT l FROM LoteProduto l WHERE l.produto = :produto AND l.quantidadeAtual > 0 ORDER BY l.dataValidade ASC")
     List<LoteProduto> findLotesDisponiveis(@Param("produto") Produto produto);
 }

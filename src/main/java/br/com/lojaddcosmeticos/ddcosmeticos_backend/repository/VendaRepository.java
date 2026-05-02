@@ -27,7 +27,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     Optional<Venda> findByIdComItens(@Param("id") Long id);
 
     @Query("SELECT v FROM Venda v WHERE v.dataVenda BETWEEN :inicio AND :fim AND v.statusNfce <> br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusFiscal.CANCELADA ORDER BY v.dataVenda DESC")
-    List<Venda> buscarVendasPorPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
+    Page<Venda> buscarVendasPorPeriodoPaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
 
     @Modifying
     @Query("UPDATE Venda v SET v.statusNfce = :novoStatus, v.motivoDoCancelamento = :motivo WHERE v.idVenda = :id")
@@ -170,8 +170,8 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
             "(v.clienteTelefone IS NOT NULL AND v.clienteTelefone IN (SELECT v3.clienteTelefone FROM Venda v3 WHERE v3.dataVenda < :inicioMes AND v3.clienteTelefone IS NOT NULL)))")
     Long contarVendasRecorrentesNoMes(@Param("inicioMes") LocalDateTime inicioMes);
 
-    @Query("SELECT v FROM Venda v WHERE (v.clienteTelefone IS NOT NULL AND v.clienteTelefone != '') OR (v.clienteDocumento IS NOT NULL AND v.clienteDocumento != '')")
-    List<Venda> buscarTodasVendasIdentificadas();
+    @Query("SELECT v.idVenda, v.dataVenda, v.valorTotal FROM Venda v WHERE (v.clienteTelefone IS NOT NULL AND v.clienteTelefone != '') OR (v.clienteDocumento IS NOT NULL AND v.clienteDocumento != '')")
+    Page<Object[]> buscarTodasVendasIdentificadasPaginadas(Pageable pageable);
 
     // =========================================================================
     // 6. ROI DA INTELIGÊNCIA ARTIFICIAL
@@ -199,7 +199,7 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
     // 7. MÉTODOS DE CONVENÇÃO E AUXILIARES (GRÁFICOS E COMISSÕES)
     // =========================================================================
 
-    List<Venda> findByStatusNfce(StatusFiscal statusNfce);
+    Page<Venda> findByStatusNfce(StatusFiscal statusNfce, Pageable pageable);
     List<Venda> findByStatusNfceIn(List<StatusFiscal> status);
     Page<Venda> findByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
     long countByDataVendaBetween(LocalDateTime inicio, LocalDateTime fim);
@@ -233,13 +233,14 @@ public interface VendaRepository extends JpaRepository<Venda, Long> {
 
     // --- NOVOS MÉTODOS PARA O MOTOR DE COMISSÕES ---
 
-    // Procura vendas de todos os vendedores num período
-    List<Venda> findByDataVendaBetweenAndStatusNfce(LocalDateTime inicio, LocalDateTime fim, StatusFiscal statusNfce);
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = :statusNfce")
+    Page<Venda> findByDataVendaBetweenAndStatusNfcePaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("statusNfce") StatusFiscal statusNfce, Pageable pageable);
 
-    // Procura vendas de UM vendedor específico num período
-    List<Venda> findByDataVendaBetweenAndUsuarioIdAndStatusNfce(LocalDateTime inicio, LocalDateTime fim, Long usuarioId, StatusFiscal statusNfce);
+    @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.usuarioId = :usuarioId AND v.statusNfce = :statusNfce")
+    Page<Venda> findByDataVendaBetweenAndUsuarioIdAndStatusNfcePaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, @Param("usuarioId") Long usuarioId, @Param("statusNfce") StatusFiscal statusNfce, Pageable pageable);
+
     @Query("SELECT v FROM Venda v WHERE v.dataVenda >= :inicio AND v.dataVenda <= :fim AND v.statusNfce = 'AUTORIZADA'")
-    List<Venda> findVendasAutorizadasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
-    // Traga as vendas do cliente ordenadas da mais recente para a mais antiga
-    List<Venda> findByClienteIdOrderByDataVendaDesc(Long clienteId);
+    Page<Venda> findVendasAutorizadasNoPeriodoPaginado(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim, Pageable pageable);
+
+    Page<Venda> findByClienteIdOrderByDataVendaDesc(Long clienteId, Pageable pageable);
 }

@@ -7,5 +7,7 @@ import java.util.Optional;
 
 @Repository
 public interface ControleSefazNsuRepository extends JpaRepository<ControleSefazNsu, Long> {
+
     Optional<ControleSefazNsu> findByCnpjEmpresa(String cnpjEmpresa);
+
 }

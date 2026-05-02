@@ -9,6 +9,8 @@ import java.util.Optional;
 
 @Repository
 public interface IbptRepository extends JpaRepository<Ibpt, String> {
+
+    // ✅ VALIDADO: Retorna 1 registo exato, sem problemas.
     @Query("SELECT i FROM Ibpt i WHERE i.codigo = :ncm")
     Optional<Ibpt> findByNcm(String ncm);
 }

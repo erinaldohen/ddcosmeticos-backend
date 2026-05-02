@@ -3,6 +3,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DevedorResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusTitulo;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.TituloReceber;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -12,7 +14,7 @@ import java.util.List;
 @Repository
 public interface TituloReceberRepository extends JpaRepository<TituloReceber, Long> {
 
-    // 1. Agrupa os saldos devidos e atrasados por Cliente
+    // 1. ✅ OTIMIZADO: Retorna Page para carregar o Dashboard de Inadimplência infinitamente sem travar.
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DevedorResumoDTO(
             c.id, c.nome, c.documento, c.telefone,
@@ -25,11 +27,12 @@ public interface TituloReceberRepository extends JpaRepository<TituloReceber, Lo
         GROUP BY c.id, c.nome, c.documento, c.telefone
         ORDER BY SUM(t.saldoDevedor) DESC
     """)
-    List<DevedorResumoDTO> findResumoDevedores();
+    Page<DevedorResumoDTO> findResumoDevedores(Pageable pageable);
 
-    // 2. Busca os boletos/faturas abertas de um cliente específico
+    // 2. CIRÚRGICA: Busca boletos/faturas ABERTAS de um cliente (costumam ser poucos, List é seguro)
     List<TituloReceber> findByClienteIdAndStatusNotInOrderByDataVencimentoAsc(
             Long clienteId, List<StatusTitulo> statusIgnorados);
-    // Adicione junto das outras queries no seu TituloReceberRepository
-    List<TituloReceber> findByClienteIdOrderByDataCompraDesc(Long clienteId);
+
+    // 3. ✅ OTIMIZADO: O Histórico COMPLETO de um cliente agora tem Paginação para proteger a RAM.
+    Page<TituloReceber> findByClienteIdOrderByDataCompraDesc(Long clienteId, Pageable pageable);
 }

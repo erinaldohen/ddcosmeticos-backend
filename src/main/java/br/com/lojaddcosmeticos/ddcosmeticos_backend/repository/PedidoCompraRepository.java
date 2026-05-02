@@ -2,17 +2,17 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusPedido;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.PedidoCompra;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-
-import java.util.List;
 
 @Repository
 public interface PedidoCompraRepository extends JpaRepository<PedidoCompra, Long> {
 
-    // Para listar pedidos por status (ex: saber o que está em cotação)
-    List<PedidoCompra> findByStatus(StatusPedido status);
+    // ✅ PROTEGIDO: Paginação obrigatória para listas de status (ex: relatórios de concluídos)
+    Page<PedidoCompra> findByStatus(StatusPedido status, Pageable pageable);
 
-    // Para histórico de compras de um fornecedor específico
-    List<PedidoCompra> findByFornecedorNomeContainingIgnoreCase(String nome);
+    // ✅ PROTEGIDO: Histórico de fornecedores filtrado e paginado
+    Page<PedidoCompra> findByFornecedorNomeContainingIgnoreCase(String nome, Pageable pageable);
 }

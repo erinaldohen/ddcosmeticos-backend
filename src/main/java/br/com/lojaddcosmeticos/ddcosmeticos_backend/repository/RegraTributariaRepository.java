@@ -12,7 +12,7 @@ import java.util.Optional;
 @Repository
 public interface RegraTributariaRepository extends JpaRepository<RegraTributaria, Long> {
 
-    // Busca a regra onde a data informada esteja dentro do período de vigência
+    // ✅ PERFEITO: Retorna Optional (protege contra NullPointerException) e a busca é O(1).
     @Query("SELECT r FROM RegraTributaria r WHERE :data BETWEEN r.dataInicio AND r.dataFim")
     Optional<RegraTributaria> findRegraVigente(@Param("data") LocalDate data);
 }

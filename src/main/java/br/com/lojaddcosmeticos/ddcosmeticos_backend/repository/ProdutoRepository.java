@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -21,11 +22,11 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     boolean existsByCodigoBarras(String codigoBarras);
     List<Produto> findByCodigoBarrasIn(List<String> codigos);
     List<Produto> findByNcm(String ncm);
+
     // --- CROSS-SELL (SUGESTÕES) ---
     Page<Produto> findBySubcategoriaAndIdNotAndAtivoTrue(String subcategoria, Long id, Pageable pageable);
 
     // --- QUERY MESTRA DE FILTRAGEM (ALTA PERFORMANCE & CORRIGIDA PARA HIBERNATE 6) ---
-    // Utiliza COALESCE para tratar parâmetros booleanos nulos, garantindo compatibilidade PostgreSQL
     @Query("SELECT p FROM Produto p WHERE p.ativo = true " +
             "AND (:termo IS NULL OR :termo = '' OR LOWER(p.descricao) LIKE LOWER(CONCAT('%', CAST(:termo AS string), '%')) OR p.codigoBarras LIKE CONCAT('%', CAST(:termo AS string), '%')) " +
             "AND (:marca IS NULL OR :marca = '' OR p.marca = :marca) " +
@@ -87,7 +88,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<Produto> findSugestaoCompraPorFornecedor(@Param("fornecedorId") Long fornecedorId);
 
     // --- QUERIES NATIVAS AJUSTADAS PARA POSTGRESQL ---
-
     @Query(value = "SELECT ncm FROM produto WHERE descricao ILIKE CONCAT('%', :palavraChave, '%') AND ncm <> '00000000' GROUP BY ncm ORDER BY COUNT(id) DESC LIMIT 1", nativeQuery = true)
     String findNcmMaisUsadoPorPalavra(@Param("palavraChave") String palavraChave);
 
@@ -141,13 +141,11 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
         BigDecimal getValorRisco();
     }
 
-    // 1. Produtos vencendo em X dias ou já vencidos (com estoque > 0)
     @Query("SELECT CAST(COUNT(p.id) AS int) as itens, " +
             "CAST(COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) AS bigdecimal) as valorRisco " +
             "FROM Produto p WHERE p.validade <= :dataLimite AND p.quantidadeEmEstoque > 0 AND p.ativo = true")
     RiscoEstoqueProjection calcularRiscoVencimento(@Param("dataLimite") LocalDate dataLimite);
 
-    // 2. Estoque Parado / Curva C (Com estoque > 0, mas sem giro nos últimos X dias)
     @Query("SELECT CAST(COUNT(p.id) AS int) as itens, " +
             "CAST(COALESCE(SUM(p.precoCusto * p.quantidadeEmEstoque), 0) AS bigdecimal) as valorRisco " +
             "FROM Produto p WHERE p.quantidadeEmEstoque > 0 AND p.ativo = true AND " +
@@ -155,8 +153,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     RiscoEstoqueProjection calcularEstoqueParado(@Param("dataLimiteGiro") LocalDate dataLimiteGiro);
 
     // --- CONTADORES DE DASHBOARD ---
-
-    // Simplificamos dois métodos idênticos num só, que calcula todos os produtos ativos do sistema
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.ativo = true")
     long contarProdutosAtivos();
 
@@ -164,24 +160,36 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     long countProdutosPendentesDeRevisao();
 
     // --- CROSS-SELL INTELIGENTE (COMPLEMENTARES) ---
-
-    // 1. Busca por subcategorias complementares exatas mapeadas pela IA
     @Query("SELECT p FROM Produto p WHERE UPPER(p.subcategoria) IN :subcategorias AND p.id != :id AND p.ativo = true AND p.quantidadeEmEstoque > 0 ORDER BY p.quantidadeEmEstoque DESC")
     Page<Produto> findComplementares(@Param("subcategorias") List<String> subcategorias, @Param("id") Long id, Pageable pageable);
 
-    // 2. FALLBACK: Mesma Categoria GERAL, mas Subcategoria DIFERENTE (Evita oferecer o mesmo tipo de produto)
     @Query("SELECT p FROM Produto p WHERE p.categoria = :categoria AND p.subcategoria != :subcategoria AND p.id != :id AND p.ativo = true AND p.quantidadeEmEstoque > 0 ORDER BY p.quantidadeEmEstoque DESC")
     Page<Produto> findByCategoriaAndSubcategoriaNotAndIdNotAndAtivoTrue(
             @Param("categoria") String categoria,
             @Param("subcategoria") String subcategoria,
             @Param("id") Long id,
             Pageable pageable);
+
     // =========================================================================================
     // 🔥 BUSCA CIRÚRGICA PARA O ROBÔ DE SANEAMENTO GS1 🔥
     // =========================================================================================
     @Query("SELECT p FROM Produto p WHERE p.codigoBarras LIKE '2%' AND length(p.codigoBarras) = 13")
     List<Produto> findProdutosComEanInterno();
+
     boolean existsByHashImagem(String hashImagem);
-    // Pega os produtos que não têm foto E que ainda não falharam no motor MVC
     List<Produto> findTop5ByUrlImagemIsNullAndRevisaoImagemPendenteFalseOrderByIdAsc();
+
+    // =========================================================================================
+    // 🚀 OTIMIZAÇÃO: RAIO-X DE INTELIGÊNCIA ARTIFICIAL DIRETO NO BANCO (SEM MEMORY LEAK)
+    // =========================================================================================
+    @Query("SELECT new map(" +
+            "SUM(CASE WHEN p.precoCusto IS NULL OR p.precoCusto = 0 THEN 1L ELSE 0L END) as semCusto, " +
+            "SUM(CASE WHEN p.precoVenda IS NULL OR p.precoVenda = 0 THEN 1L ELSE 0L END) as precoVendaZerado, " +
+            "SUM(CASE WHEN p.ncm IS NULL OR p.ncm = '00000000' OR p.ncm = '' THEN 1L ELSE 0L END) as semNcm, " +
+            "SUM(CASE WHEN LENGTH(p.ncm) != 8 AND p.ncm != '00000000' THEN 1L ELSE 0L END) as ncmInvalido, " +
+            "SUM(CASE WHEN p.descricao IS NULL OR p.descricao = '' OR p.descricao LIKE '%PRODUTO S/ NOME%' THEN 1L ELSE 0L END) as semDescricao, " +
+            "SUM(CASE WHEN p.marca IS NULL OR p.marca = '' THEN 1L ELSE 0L END) as semMarca, " +
+            "SUM(CASE WHEN p.alertaGondola = true THEN 1L ELSE 0L END) as divergenciaGondola) " +
+            "FROM Produto p WHERE p.ativo = true")
+    Map<String, Long> countAnomaliasIA();
 }

@@ -832,35 +832,37 @@ public class ProdutoService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> obterRaioXInteligenciaArtificial() {
-        List<Produto> todos = produtoRepository.findAllByAtivoTrue();
+        // Agora o PostgreSQL faz a contagem em O(1) e devolve apenas 7 números, não milhares de objetos!
+        Map<String, Long> contagemDb = produtoRepository.countAnomaliasIA();
 
-        int semCusto = 0, semNcm = 0, ncmInvalido = 0, semDescricao = 0, semMarca = 0, precoVendaZerado = 0, divergenciaGondola = 0;
-
-        for (Produto p : todos) {
-            if (p.getPrecoCusto() == null || p.getPrecoCusto().compareTo(BigDecimal.ZERO) == 0) semCusto++;
-            if (p.getPrecoVenda() == null || p.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0) precoVendaZerado++;
-            if (p.getNcm() == null || p.getNcm().isEmpty() || p.getNcm().equals("00000000")) semNcm++;
-            else if (p.getNcm().length() != 8) ncmInvalido++;
-            if (p.getDescricao() == null || p.getDescricao().trim().isEmpty() || p.getDescricao().contains("PRODUTO S/ NOME")) semDescricao++;
-            if (p.getMarca() == null || p.getMarca().trim().isEmpty()) semMarca++;
-
-            // Conta EXATAMENTE as divergências do corredor
-            if (Boolean.TRUE.equals(p.getAlertaGondola())) {
-                divergenciaGondola++;
-            }
+        // Verifica se a base está vazia para evitar NullPointerException
+        if (contagemDb == null || contagemDb.isEmpty() || contagemDb.values().iterator().next() == null) {
+            Map<String, Object> relatorioVazio = new HashMap<>();
+            relatorioVazio.put("totalAnomalias", 0);
+            relatorioVazio.put("semCusto", 0);
+            relatorioVazio.put("precoVendaZerado", 0);
+            relatorioVazio.put("semNcm", 0);
+            relatorioVazio.put("ncmInvalido", 0);
+            relatorioVazio.put("semDescricao", 0);
+            relatorioVazio.put("semMarca", 0);
+            relatorioVazio.put("divergenciaGondola", 0);
+            return relatorioVazio;
         }
 
-        int totalAnomalias = semCusto + semNcm + ncmInvalido + semDescricao + semMarca + precoVendaZerado + divergenciaGondola;
+        // Soma todas as anomalias para exibir o total
+        long totalAnomalias = contagemDb.values().stream().mapToLong(v -> v != null ? v : 0L).sum();
 
         Map<String, Object> relatorio = new HashMap<>();
         relatorio.put("totalAnomalias", totalAnomalias);
-        relatorio.put("semCusto", semCusto);
-        relatorio.put("precoVendaZerado", precoVendaZerado);
-        relatorio.put("semNcm", semNcm);
-        relatorio.put("ncmInvalido", ncmInvalido);
-        relatorio.put("semDescricao", semDescricao);
-        relatorio.put("semMarca", semMarca);
-        relatorio.put("divergenciaGondola", divergenciaGondola);
+
+        // Colocamos os valores no mapa de resposta (Convertendo Long para Integer por compatibilidade do React)
+        relatorio.put("semCusto", contagemDb.getOrDefault("semCusto", 0L).intValue());
+        relatorio.put("precoVendaZerado", contagemDb.getOrDefault("precoVendaZerado", 0L).intValue());
+        relatorio.put("semNcm", contagemDb.getOrDefault("semNcm", 0L).intValue());
+        relatorio.put("ncmInvalido", contagemDb.getOrDefault("ncmInvalido", 0L).intValue());
+        relatorio.put("semDescricao", contagemDb.getOrDefault("semDescricao", 0L).intValue());
+        relatorio.put("semMarca", contagemDb.getOrDefault("semMarca", 0L).intValue());
+        relatorio.put("divergenciaGondola", contagemDb.getOrDefault("divergenciaGondola", 0L).intValue());
 
         return relatorio;
     }

@@ -16,11 +16,11 @@ import java.util.List;
 @Repository
 public interface MovimentoEstoqueRepository extends JpaRepository<MovimentoEstoque, Long> {
 
-    // 1. QUERY DE AUDITORIA E HISTÓRICO AGRUPADO
+    // ✅ BRILHANTE: Agregação nativa forte (Traz apenas o DTO Paginado)
     @Query("SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoEntradaDTO(" +
             "m.documentoReferencia, " +
             "'1', " +
-            "MAX(m.chaveAcesso), " +   // 🔥 CORREÇÃO: Substituímos o '' pela Chave de Acesso Real!
+            "MAX(m.chaveAcesso), " +
             "MAX(m.dataMovimento), " +
             "f.nomeFantasia, " +
             "f.cnpj, " +
@@ -32,12 +32,11 @@ public interface MovimentoEstoqueRepository extends JpaRepository<MovimentoEstoq
             "ORDER BY MAX(m.dataMovimento) DESC")
     Page<HistoricoEntradaDTO> buscarHistoricoEntradasAgrupado(Pageable pageable);
 
-    // 2. BUSCA OS DETALHES (ITENS) DE UMA NOTA ESPECÍFICA
+    // ✅ CIRÚRGICA: Traz os itens limitados a apenas UMA nota fiscal
     @Query("SELECT m FROM MovimentoEstoque m WHERE m.documentoReferencia = :numeroNota AND m.tipoMovimentoEstoque = 'ENTRADA'")
     List<MovimentoEstoque> buscarItensDaNota(@Param("numeroNota") String numeroNota);
 
-    // 3. VALIDAÇÃO DE DUPLICIDADE
-    // (O Spring faz a query automaticamente por causa do nome do método. NÃO usar @Query aqui!)
+    // Validações Boolean (Ultra leves no Banco)
     boolean existsByDocumentoReferenciaAndFornecedorAndTipoMovimentoEstoque(
             String documentoReferencia, Fornecedor fornecedor, TipoMovimentoEstoque tipoMovimentoEstoque);
 

@@ -29,12 +29,9 @@ public class ContaReceberService {
     @Autowired
     private CaixaService caixaService;
 
-    /**
-     * Lista contas a receber com filtros de Status e Termo de busca (Nome/ID).
-     */
     @Transactional(readOnly = true)
     public List<ContaReceberDTO> listar(String statusStr, String termo) {
-        List<ContaReceber> lista = repository.findAll();
+        List<ContaReceber> lista = repository.findAll(); // NOTA DE ARQUITETURA: Se o Frontend já usar Pageable, alterar isto no futuro
 
         return lista.stream()
                 .filter(c -> filtrarPorStatus(c, statusStr))
@@ -44,21 +41,16 @@ public class ContaReceberService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Calcula os totais (A Receber, Vencido, Recebido Hoje) para os cards do Dashboard.
-     */
     @Transactional(readOnly = true)
     public ContaReceberDTO.ResumoContasDTO obterResumo() {
         List<ContaReceber> todas = repository.findAll();
         LocalDate hoje = LocalDate.now();
 
-        // Total a Receber (Status diferente de PAGA)
         BigDecimal aReceber = todas.stream()
                 .filter(c -> c.getStatus() != StatusConta.PAGO)
                 .map(this::calcularRestanteSeguro)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Total Vencido (Não paga e Data < Hoje)
         BigDecimal vencido = todas.stream()
                 .filter(c -> c.getStatus() != StatusConta.PAGO
                         && c.getDataVencimento() != null
@@ -66,7 +58,6 @@ public class ContaReceberService {
                 .map(this::calcularRestanteSeguro)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Recebido Hoje (Data Pagamento == Hoje)
         BigDecimal recebidoHoje = todas.stream()
                 .filter(c -> c.getDataPagamento() != null && c.getDataPagamento().isEqual(hoje))
                 .map(c -> c.getValorPago() != null ? c.getValorPago() : BigDecimal.ZERO)
@@ -75,10 +66,6 @@ public class ContaReceberService {
         return new ContaReceberDTO.ResumoContasDTO(aReceber, vencido, recebidoHoje);
     }
 
-    /**
-     * Realiza a baixa (pagamento) de um título.
-     * Atualiza o status da conta e lança uma ENTRADA no caixa aberto.
-     */
     @Transactional
     public void baixarTitulo(Long id, ContaReceberDTO.BaixaTituloDTO dto) {
         ContaReceber conta = repository.findById(id)
@@ -92,20 +79,13 @@ public class ContaReceberService {
         BigDecimal valorJuros = dto.juros() != null ? dto.juros() : BigDecimal.ZERO;
         BigDecimal valorDesconto = dto.desconto() != null ? dto.desconto() : BigDecimal.ZERO;
 
-        // Recupera valores atuais com segurança contra nulos
         BigDecimal totalPagoAnteriormente = conta.getValorPago() != null ? conta.getValorPago() : BigDecimal.ZERO;
         BigDecimal valorTotalOriginal = conta.getValorTotal() != null ? conta.getValorTotal() : BigDecimal.ZERO;
 
-        // O valor real abatido da dívida pode ser ajustado por juros/descontos
-        // Lógica simples: Consideramos o valor pago efetivo + desconto - juros como abatimento do principal?
-        // OU Lógica direta: O que entrou no caixa é o valorRecebido. Somamos ao pago.
-        // Vamos usar a lógica direta: Soma o que foi pago.
         BigDecimal novoTotalPago = totalPagoAnteriormente.add(valorRecebido);
 
         conta.setValorPago(novoTotalPago);
 
-        // Verifica se quitou
-        // Se (Pago >= Total) -> PAGA
         if (novoTotalPago.compareTo(valorTotalOriginal) >= 0) {
             conta.setStatus(StatusConta.PAGO);
             conta.setDataPagamento(dto.dataPagamento() != null ? dto.dataPagamento() : LocalDate.now());
@@ -115,20 +95,18 @@ public class ContaReceberService {
 
         repository.save(conta);
 
-        // INTEGRACAO COM CAIXA (LANÇAR ENTRADA)
         try {
             CaixaDiario caixaAtual = caixaService.buscarCaixaAberto();
             if (caixaAtual != null) {
                 MovimentacaoCaixa mov = new MovimentacaoCaixa();
                 mov.setCaixa(caixaAtual);
-                mov.setTipo(TipoMovimentacaoCaixa.ENTRADA); // É dinheiro entrando
+                mov.setTipo(TipoMovimentacaoCaixa.ENTRADA);
                 mov.setValor(valorRecebido);
                 mov.setFormaPagamento(dto.formaPagamento());
 
                 String nomeCliente = (conta.getCliente() != null) ? conta.getCliente().getNome() : "Cliente";
                 String refVenda = (conta.getVenda() != null) ? "Ref. Venda #" + conta.getVenda().getIdVenda() : "Avulso";
 
-                // Usa setMotivo conforme sua entidade MovimentacaoCaixa atual
                 mov.setMotivo("Recebimento Crediário: " + nomeCliente + " (" + refVenda + ")");
                 mov.setDataHora(LocalDateTime.now());
 
@@ -136,11 +114,8 @@ public class ContaReceberService {
             }
         } catch (Exception e) {
             System.err.println("Aviso: Falha ao integrar com caixa: " + e.getMessage());
-            // Não lançamos erro aqui para não desfazer o recebimento da conta caso o caixa esteja fechado/erro
         }
     }
-
-    // --- MÉTODOS AUXILIARES ---
 
     private BigDecimal calcularRestanteSeguro(ContaReceber c) {
         BigDecimal total = c.getValorTotal() == null ? BigDecimal.ZERO : c.getValorTotal();

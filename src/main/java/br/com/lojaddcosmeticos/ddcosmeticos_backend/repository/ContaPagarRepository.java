@@ -22,13 +22,9 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
     // ==================================================================================
 
     Page<ContaPagar> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status, Pageable pageable);
-
     Page<ContaPagar> findByDataVencimentoBetween(LocalDate inicio, LocalDate fim, Pageable pageable);
-
     Page<ContaPagar> findByStatus(StatusConta status, Pageable pageable);
-
     Page<ContaPagar> findByDataVencimentoBeforeAndStatus(LocalDate data, StatusConta status, Pageable pageable);
-
     // ==================================================================================
     // SEÇÃO 2: AGREGAÇÕES PARA BI E DASHBOARD (Inteligência Matemática mantida)
     // ==================================================================================
@@ -64,4 +60,5 @@ public interface ContaPagarRepository extends JpaRepository<ContaPagar, Long> {
 
     // Busca cirúrgica, pode continuar List (são poucas contas por fornecedor)
     List<ContaPagar> findByFornecedorId(Long fornecedorId);
+
 }

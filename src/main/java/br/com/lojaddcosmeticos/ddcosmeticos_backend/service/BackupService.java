@@ -1,15 +1,15 @@
 package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -17,52 +17,71 @@ import java.time.format.DateTimeFormatter;
 @Service
 public class BackupService {
 
-    private static final String BANCO_ORIGEM_PATH = "dados/ddcosmeticos_dev.mv.db"; // Ajustado para o nome real do seu arquivo
     private static final String PASTA_BACKUPS = "backups";
+
+    // 🚨 INJEÇÃO CRÍTICA: Permite executar comandos diretamente dentro do motor do banco de dados
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    // Usado para detetar automaticamente se estamos em Dev (H2) ou Produção (PostgreSQL)
+    @Autowired
+    private Environment env;
 
     // Roda todo dia às 23:00 (Automático)
     @Scheduled(cron = "0 0 23 * * ?")
     public void realizarBackupAutomatico() {
         log.info("Iniciando rotina de backup automático...");
         try {
-            criarCopiaBackup("automatico");
-        } catch (IOException e) {
+            gerarBackupImediato("automatico");
+        } catch (Exception e) {
             log.error("❌ Falha crítica ao realizar backup automático: {}", e.getMessage());
         }
     }
 
     // Chamado pelo Botão no Frontend (Manual)
-    public Path gerarBackupImediato() throws IOException {
-        log.info("Solicitação de backup manual iniciada.");
-        return criarCopiaBackup("manual");
+    public Path gerarBackupImediato() throws Exception {
+        log.info("Solicitação de backup manual iniciada pela gerência.");
+        return gerarBackupImediato("manual");
     }
 
-    // Lógica Centralizada
-    private Path criarCopiaBackup(String tipo) throws IOException {
-        File bancoOrigem = new File(BANCO_ORIGEM_PATH);
-
-        if (!bancoOrigem.exists()) {
-            // Tenta procurar sem o _dev caso tenha mudado o profile
-            bancoOrigem = new File("dados/ddcosmeticos.mv.db");
-            if (!bancoOrigem.exists()) {
-                throw new IOException("Arquivo de banco de dados não encontrado em: " + BANCO_ORIGEM_PATH);
-            }
-        }
-
+    // Lógica Centralizada e 100% Segura contra corrupção
+    private Path gerarBackupImediato(String tipo) throws Exception {
         Path pastaDestino = Paths.get(PASTA_BACKUPS);
         if (!Files.exists(pastaDestino)) {
             Files.createDirectories(pastaDestino);
         }
 
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String nomeArquivo = "backup_" + tipo + "_" + timestamp + ".mv.db";
 
-        Path destino = pastaDestino.resolve(nomeArquivo);
+        // Descobre qual é o banco que está a correr agora
+        String driverDb = env.getProperty("spring.datasource.driver-class-name", "");
+        String urlDb = env.getProperty("spring.datasource.url", "");
 
-        // Copia o arquivo (Backup a quente no H2 pode exigir lock, mas copy costuma funcionar para leitura)
-        Files.copy(bancoOrigem.toPath(), destino, StandardCopyOption.REPLACE_EXISTING);
+        // =========================================================================
+        // 1. ESTRATÉGIA PARA H2 (OPERAÇÃO LOCAL / OFFLINE)
+        // =========================================================================
+        if (driverDb.contains("h2") || urlDb.contains("h2")) {
+            String nomeArquivo = "backup_" + tipo + "_" + timestamp + ".zip";
+            Path destino = pastaDestino.resolve(nomeArquivo);
 
-        log.info("✅ Backup ({}) realizado com sucesso: {}", tipo, destino.toAbsolutePath());
-        return destino;
+            // O comando nativo 'BACKUP TO' congela as transações por milissegundos,
+            // garante a integridade dos dados e compacta tudo num ficheiro ZIP seguro.
+            String sql = String.format("BACKUP TO '%s'", destino.toAbsolutePath().toString().replace("\\", "/"));
+            jdbcTemplate.execute(sql);
+
+            log.info("✅ Backup Seguro H2 ({}) realizado com sucesso: {}", tipo, destino.toAbsolutePath());
+            return destino;
+        }
+        // =========================================================================
+        // 2. ESTRATÉGIA PARA POSTGRESQL (OPERAÇÃO NUVEM / PRODUÇÃO ENTERPRISE)
+        // =========================================================================
+        else if (driverDb.contains("postgresql") || urlDb.contains("postgresql")) {
+            log.warn("⚠️ Ambiente PostgreSQL detetado. Backups físicos de ficheiro não são recomendados via Java.");
+            // Numa infraestrutura real com PostgreSQL, o backup é gerido pelo 'pg_dump' ou pela própria nuvem (AWS/Google Cloud).
+            throw new UnsupportedOperationException("Operação bloqueada. No PostgreSQL, utilize rotinas de backup de servidor (pg_dump) ou backups automáticos da nuvem da DD Cosméticos.");
+        }
+        else {
+            throw new UnsupportedOperationException("Motor de banco de dados desconhecido. Backup abortado por segurança.");
+        }
     }
 }

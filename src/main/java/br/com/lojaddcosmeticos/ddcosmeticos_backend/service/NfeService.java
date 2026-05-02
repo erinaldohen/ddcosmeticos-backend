@@ -46,7 +46,8 @@ public class NfeService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfeModelo55(Long idVenda) {
-        Venda venda = vendaRepository.findById(idVenda).orElseThrow(() -> new ValidationException("Venda não encontrada."));
+        // ✅ CORREÇÃO: Utilizando o método que garante o JOIN FETCH dos itens e pagamentos (Previne LazyInitializationException)
+        Venda venda = vendaRepository.findByIdComItens(idVenda).orElseThrow(() -> new ValidationException("Venda não encontrada."));
 
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
         if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) return simularNfe(venda);
@@ -72,7 +73,6 @@ public class NfeService {
 
             TNFe.InfNFe.Ide ide = montarIde(configNfe, cnf, nNF, dv, modelo, serie);
 
-            // 🔥 MÁGICA CONTÁBIL: Se já tem uma chave de NFC-e aprovada, referenciamos ela e mudamos o CFOP para 5929
             boolean isNfeReferenciada = venda.getChaveAcessoNfce() != null && venda.getChaveAcessoNfce().length() == 44;
             if (isNfeReferenciada) {
                 TNFe.InfNFe.Ide.NFref ref = new TNFe.InfNFe.Ide.NFref();
@@ -84,7 +84,6 @@ public class NfeService {
             infNFe.setEmit(montarEmit(configLoja));
             infNFe.setDest(montarDest(venda.getCliente(), isProducao));
 
-            // Passamos o isNfeReferenciada para mudar o CFOP dos itens
             infNFe.getDet().addAll(montarDetalhes(venda.getItens(), configLoja, isProducao, isNfeReferenciada));
 
             infNFe.setTotal(montarTotal(venda));
@@ -104,7 +103,6 @@ public class NfeService {
             TRetEnviNFe retorno = Nfe.enviarNfe(configNfe, enviNFe, DocumentoEnum.NFE);
 
             if (retorno.getProtNFe() != null && "100".equals(retorno.getProtNFe().getInfProt().getCStat())) {
-                // Guarda a nova chave da NF-e referenciada
                 venda.setStatusNfce(StatusFiscal.AUTORIZADA);
                 venda.setChaveAcessoNfce(chaveAcesso);
                 venda.setXmlNota(XmlNfeUtil.criaNfeProc(enviNFe, retorno.getProtNFe()));
@@ -112,7 +110,7 @@ public class NfeService {
                 return new NfceResponseDTO(venda.getIdVenda(), "100", "Autorizada", chaveAcesso, "", venda.getXmlNota(), null);
             } else {
                 String erro = retorno.getProtNFe() != null ? retorno.getProtNFe().getInfProt().getXMotivo() : retorno.getXMotivo();
-                throw new ValidationException(erro); // Mensagem limpa para ir pro frontend
+                throw new ValidationException(erro);
             }
         } catch (Exception e) {
             throw new ValidationException(e.getMessage());
@@ -167,7 +165,6 @@ public class NfeService {
             p.setVUnCom(item.getPrecoUnitario().setScale(2, RoundingMode.HALF_UP).toString());
             p.setVProd(item.getPrecoUnitario().multiply(item.getQuantidade()).setScale(2, RoundingMode.HALF_UP).toString());
 
-            // 🔥 CFOP INTELIGENTE: 5929 se foi cupom antes, senão 5102 normal
             p.setCFOP(isReferenciada ? "5929" : "5102");
 
             p.setIndTot("1");
@@ -178,8 +175,6 @@ public class NfeService {
 
             TNFe.InfNFe.Det.Imposto.ICMS icms = new TNFe.InfNFe.Det.Imposto.ICMS();
 
-            // Se for 5929 (Já pago no cupom), o CSOSN exigido é 0900 (Outros) na maioria dos estados,
-            // mas vamos manter 102 para Simples Nacional ou ajustar se o contador pedir
             TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102 s102 = new TNFe.InfNFe.Det.Imposto.ICMS.ICMSSN102();
             s102.setOrig("0"); s102.setCSOSN("102"); icms.setICMSSN102(s102);
             imp.getContent().add(new ObjectFactory().createTNFeInfNFeDetImpostoICMS(icms));

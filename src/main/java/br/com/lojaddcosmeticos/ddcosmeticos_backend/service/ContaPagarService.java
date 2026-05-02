@@ -34,8 +34,6 @@ public class ContaPagarService {
     private final FornecedorRepository fornecedorRepository;
     private final CaixaService caixaService;
 
-    // --- LEITURA BÁSICA ---
-
     @Transactional(readOnly = true)
     public List<ContaPagarDTO> listar(String statusStr, String termo) {
         return repository.findAll().stream()
@@ -69,10 +67,6 @@ public class ContaPagarService {
         return new ContaPagarDTO.ResumoPagarDTO(aPagar, vencido, pagoHoje);
     }
 
-    // =========================================================================
-    // INTELIGÊNCIA FINANCEIRA: ANÁLISE DE SAÚDE DA LOJA
-    // =========================================================================
-
     @Transactional(readOnly = true)
     public Map<String, Object> obterAnaliseInteligenteDoMes(int mes, int ano) {
         LocalDate inicioMes = LocalDate.of(ano, mes, 1);
@@ -94,7 +88,6 @@ public class ContaPagarService {
             String forn = c.getFornecedor() != null && c.getFornecedor().getRazaoSocial() != null
                     ? c.getFornecedor().getRazaoSocial().toLowerCase() : "";
 
-            // Motor de Categorização Automática (Lê o texto digitado pelo operador)
             if (desc.contains("aluguel") || desc.contains("luz") || desc.contains("energia") || desc.contains("celpe") ||
                     desc.contains("água") || desc.contains("agua") || desc.contains("internet") || desc.contains("telefone") ||
                     desc.contains("salário") || desc.contains("salario") || desc.contains("contador") || desc.contains("sistema") ||
@@ -114,7 +107,6 @@ public class ContaPagarService {
                 compraMercadorias = compraMercadorias.add(valor);
             }
             else {
-                // Se o sistema não souber o que é, joga na Despesa Fixa por segurança (Conservadorismo contábil)
                 despesasFixas = despesasFixas.add(valor);
             }
         }
@@ -129,8 +121,6 @@ public class ContaPagarService {
 
         return analise;
     }
-
-    // --- ESCRITA E BAIXAS ---
 
     @Transactional
     public ContaPagarDTO criar(ContaPagarDTO.NovaContaDTO dto) {

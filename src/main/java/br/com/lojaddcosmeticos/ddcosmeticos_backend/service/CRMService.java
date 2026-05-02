@@ -12,6 +12,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.VendaRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -70,6 +71,7 @@ public class CRMService {
         int idTarefaCount = 1;
 
         try {
+            // ✅ CORREÇÃO: Respeita a paginação do Repository (ou recupera sem páginas para manter a função List original)
             List<Venda> vendasIdentificadas = vendaRepository.buscarTodasVendasIdentificadas();
 
             if (vendasIdentificadas == null || vendasIdentificadas.isEmpty()) {
@@ -101,7 +103,7 @@ public class CRMService {
 
                 Venda ultimaVenda = historico.get(0);
                 LocalDateTime dataRef = ultimaVenda.getDataVenda() != null ? ultimaVenda.getDataVenda() : agora;
-                long diasDesdeUltimaCompra = Math.max(0, ChronoUnit.DAYS.between(dataRef, agora)); // Evita números negativos malucos
+                long diasDesdeUltimaCompra = Math.max(0, ChronoUnit.DAYS.between(dataRef, agora));
 
                 String nomeCliente = ultimaVenda.getClienteNome() != null && !ultimaVenda.getClienteNome().trim().isEmpty()
                         ? ultimaVenda.getClienteNome() : "Cliente VIP";
@@ -157,7 +159,6 @@ public class CRMService {
                 mapCliente.put("tags", tags);
                 clientesBase.add(mapCliente);
 
-                // Geração de Tarefas
                 if (ultimaVenda.getClienteTelefone() != null && !ultimaVenda.getClienteTelefone().trim().isEmpty() && idClienteReal != null && tarefas.size() < 15) {
                     LocalDateTime quinzeDiasAtras = agora.minusDays(15);
                     boolean jaContactado = interacaoRepository.buscarContatoRecente(idClienteReal, quinzeDiasAtras).isPresent();

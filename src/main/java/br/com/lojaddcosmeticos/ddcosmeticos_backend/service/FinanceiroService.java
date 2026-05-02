@@ -160,7 +160,6 @@ public class FinanceiroService {
 
         BigDecimal saldoDinheiro = totalEntradas.subtract(totalSaidas).max(BigDecimal.ZERO);
 
-        // 🔥 O DTO ATUALIZADO (Sem o mapa e sem variáveis não declaradas)
         return FechamentoCaixaDTO.builder()
                 .dataAbertura(data.atStartOfDay())
                 .dataFechamento(LocalDateTime.now())
@@ -172,7 +171,7 @@ public class FinanceiroService {
                 .totalVendasPix(BigDecimal.ZERO)
                 .totalVendasCredito(BigDecimal.ZERO)
                 .totalVendasDebito(BigDecimal.ZERO)
-                .saldoEsperadoDinheiroGaveta(saldoDinheiro) // ✅ Corrigido (substitui o algumValor)
+                .saldoEsperadoDinheiroGaveta(saldoDinheiro)
                 .fechamentoCegoAtivo(false)
                 .mensagemSistema("Resumo Global Financeiro")
                 .build();

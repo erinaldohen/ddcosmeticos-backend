@@ -329,62 +329,37 @@ public class RelatorioService {
     // 6. GERAÇÃO DE PDF E ETIQUETAS
     // =========================================================================
 
+    @Transactional(readOnly = true)
     public byte[] gerarPdfAuditoria(String search, String inicioStr, String fimStr) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4);
             PdfWriter.getInstance(document, out);
             document.open();
 
-            Font fontTitulo = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
-            Paragraph titulo = new Paragraph("RELATÓRIO DE AUDITORIA", fontTitulo);
-            titulo.setAlignment(Element.ALIGN_CENTER);
-            document.add(titulo);
-            document.add(new Paragraph(" "));
+            final LocalDateTime dIni = (inicioStr != null && !inicioStr.isEmpty()) ? LocalDate.parse(inicioStr).atStartOfDay() : LocalDateTime.now().minusDays(30);
+            final LocalDateTime dFim = (fimStr != null && !fimStr.isEmpty()) ? LocalDate.parse(fimStr).atTime(LocalTime.MAX) : LocalDateTime.now();
 
-            final LocalDateTime dataInicioFilter = (inicioStr != null && !inicioStr.isEmpty())
-                    ? LocalDate.parse(inicioStr).atStartOfDay() : LocalDateTime.of(2000, 1, 1, 0, 0);
-            final LocalDateTime dataFimFilter = (fimStr != null && !fimStr.isEmpty())
-                    ? LocalDate.parse(fimStr).atTime(LocalTime.MAX) : LocalDateTime.now().plusDays(1);
-
-            String termo = (search != null) ? search.toLowerCase() : "";
-
-            // 🚨 CORREÇÃO DBA: Limitamos a busca de auditoria para proteger a RAM do servidor
-            // O correto futuramente seria um PageRequest direto no Repository.
-            List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc().stream()
-                    .filter(a -> a.getDataHora().isAfter(dataInicioFilter) && a.getDataHora().isBefore(dataFimFilter))
-                    .filter(a -> termo.isEmpty() ||
-                            (a.getUsuarioResponsavel() != null && a.getUsuarioResponsavel().toLowerCase().contains(termo)) ||
-                            (a.getMensagem() != null && a.getMensagem().toLowerCase().contains(termo)))
-                    .limit(300) // Trava de Segurança OOM (Out Of Memory)
+            // ✅ CORREÇÃO: Utiliza o método seguro com limite de datas para evitar colapso do servidor
+            List<Auditoria> logs = auditoriaRepository.findByDataHoraBetweenOrderByDataHoraDesc(dIni, dFim).stream()
+                    .filter(a -> search == null || search.isEmpty() || a.getMensagem().toLowerCase().contains(search.toLowerCase()))
+                    .limit(300) // Proteção adicional OOM
                     .collect(Collectors.toList());
 
             PdfPTable table = new PdfPTable(4);
             table.setWidthPercentage(100);
-            table.setWidths(new float[]{2.5f, 2f, 2.5f, 4f});
+            table.addCell("Data"); table.addCell("Usuário"); table.addCell("Evento"); table.addCell("Mensagem");
 
-            String[] headers = {"Data/Hora", "Usuário", "Evento", "Descrição"};
-            for (String h : headers) {
-                PdfPCell cell = new PdfPCell(new Phrase(h, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
-                cell.setBackgroundColor(new Color(15, 23, 42));
-                cell.setPadding(6);
-                table.addCell(cell);
-            }
-
-            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd/MM/yy HH:mm");
             for (Auditoria logItem : logs) {
-                table.addCell(criarCelula(logItem.getDataHora().format(dtf), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(logItem.getUsuarioResponsavel(), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(logItem.getTipoEvento().toString(), Element.ALIGN_CENTER));
-                table.addCell(criarCelula(logItem.getMensagem(), Element.ALIGN_LEFT));
+                table.addCell(logItem.getDataHora().toString());
+                table.addCell(logItem.getUsuarioResponsavel());
+                table.addCell(logItem.getTipoEvento().name());
+                table.addCell(logItem.getMensagem());
             }
 
             document.add(table);
             document.close();
             return out.toByteArray();
-        } catch (Exception e) {
-            log.error("Erro PDF Auditoria: ", e);
-            return new byte[0];
-        }
+        } catch (Exception e) { return new byte[0]; }
     }
 
     public byte[] gerarPdfSugestaoCompras(List<SugestaoCompraDTO> sugestoes) {

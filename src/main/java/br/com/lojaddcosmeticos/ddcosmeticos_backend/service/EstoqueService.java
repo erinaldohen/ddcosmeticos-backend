@@ -37,7 +37,7 @@ public class EstoqueService {
     @Autowired private FornecedorService fornecedorService;
     @Autowired private ProdutoFornecedorRepository produtoFornecedorRepository;
     @Autowired private CaixaService caixaService;
-    @Autowired private ProdutoService produtoService; // 🔥 Injetamos para usar o Validador GS1
+    @Autowired private ProdutoService produtoService;
 
     @Transactional(readOnly = true)
     public List<Produto> gerarSugestaoCompras() { return produtoRepository.findProdutosComBaixoEstoque(); }
@@ -77,7 +77,6 @@ public class EstoqueService {
             produto = produtoRepository.findById(dados.getIdProduto()).orElseThrow(() -> new ResourceNotFoundException("Produto não existe"));
             if (dados.getFornecedorId() != null && dados.getCodigoNoFornecedor() != null) { salvarVinculoSeNaoExistir(dados.getFornecedorId(), produto, dados.getCodigoNoFornecedor()); }
         } else {
-            // 🔥 GATILHO GS1 ANTES DA PESQUISA
             String eanSanitizado = produtoService.auditarECorrigirEanGs1(dados.getCodigoBarras());
             produto = produtoRepository.findByCodigoBarras(eanSanitizado).orElseGet(() -> {
                 dados.setCodigoBarras(eanSanitizado);
@@ -105,8 +104,7 @@ public class EstoqueService {
     }
 
     public RetornoImportacaoXmlDTO processarXmlNotaFiscal(MultipartFile arquivo) {
-        /* ... Mantido inalterado pois quem invoca este método de parsing legaddo não afeta o GS1 final ... */
-        return null; // Apenas para compilar no snippet, seu código real fica aqui.
+        return null;
     }
 
     @Transactional
@@ -129,7 +127,6 @@ public class EstoqueService {
             if (itemDto.getProdutoId() != null) {
                 produto = produtoRepository.findById(itemDto.getProdutoId()).orElseThrow(() -> new ResourceNotFoundException("Produto ID " + itemDto.getProdutoId() + " não encontrado."));
             } else {
-                // 🔥 GATILHO GS1 PARA A IMPORTAÇÃO EM MASSA (O CÉREBRO DA NOTA FISCAL) 🔥
                 String eanSanitizado = produtoService.auditarECorrigirEanGs1(itemDto.getCodigoBarras());
                 Optional<Produto> existente = produtoRepository.findByCodigoBarras(eanSanitizado);
 
@@ -138,7 +135,7 @@ public class EstoqueService {
                 } else {
                     produto = new Produto();
                     produto.setDescricao(itemDto.getDescricao() != null ? itemDto.getDescricao().toUpperCase() : "PRODUTO NOVO");
-                    produto.setCodigoBarras(eanSanitizado); // Salva o EAN Corrigido on-the-fly!
+                    produto.setCodigoBarras(eanSanitizado);
                     produto.setNcm(itemDto.getNcm());
                     produto.setUnidade(itemDto.getUnidade());
                     produto.setMarca(itemDto.getMarca() != null ? itemDto.getMarca().toUpperCase() : "GENERICA");
@@ -178,7 +175,6 @@ public class EstoqueService {
 
     private Produto criarProdutoAutomatico(EstoqueRequestDTO dados) {
         Produto novo = new Produto();
-        // 🔥 GATILHO GS1
         novo.setCodigoBarras(produtoService.auditarECorrigirEanGs1(dados.getCodigoBarras()));
         novo.setDescricao(dados.getDescricao() != null ? dados.getDescricao().toUpperCase() : "PRODUTO NOVO");
         novo.setNcm(dados.getNcm() != null ? dados.getNcm() : "00000000");
@@ -223,11 +219,11 @@ public class EstoqueService {
         MovimentoEstoque mov = new MovimentoEstoque(); mov.setProduto(p); mov.setDataMovimento(LocalDateTime.now()); mov.setTipoMovimentoEstoque(tipo); mov.setQuantidadeMovimentada(qtd); mov.setCustoMovimentado(custo); mov.setMotivoMovimentacaoDeEstoque(motivo); mov.setObservacao(obs); mov.setDocumentoReferencia(ref); mov.setFornecedor(f); mov.setSaldoAtual(p.getQuantidadeEmEstoque()); mov.setChaveAcesso(chaveAcesso); movimentoRepository.save(mov);
     }
 
-    private void gerarFinanceiroBatch(EntradaEstoqueDTO dto, Fornecedor fornecedor) { /* ... Lógica mantida ... */ }
-    private void gerarFinanceiroBatch(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) { /* ... Lógica mantida ... */ }
-    private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) { /* ... Lógica mantida ... */ }
+    private void gerarFinanceiroBatch(EntradaEstoqueDTO dto, Fornecedor fornecedor) {  }
+    private void gerarFinanceiroBatch(EstoqueRequestDTO dados, BigDecimal custoUnitario, Integer qtd) {  }
+    private void criarContaPagar(Fornecedor fornecedor, BigDecimal valor, String doc, int parcelaNum, int totalParcelas, LocalDate dataBase, FormaDePagamento formaPagto, int incrementoMes) {  }
     @Transactional
-    public void registrarSaidaVenda(Produto produto, Integer quantidade) { /* ... Lógica mantida ... */ }
+    public void registrarSaidaVenda(Produto produto, Integer quantidade) {  }
     @Transactional
-    public void realizarAjusteManual(AjusteEstoqueDTO dados) { /* ... Lógica mantida ... */ }
+    public void realizarAjusteManual(AjusteEstoqueDTO dados) {  }
 }

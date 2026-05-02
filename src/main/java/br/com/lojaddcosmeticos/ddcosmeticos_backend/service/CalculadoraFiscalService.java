@@ -20,9 +20,6 @@ import java.util.regex.Pattern;
 @Service
 public class CalculadoraFiscalService {
 
-    @Autowired
-    private RegraTributariaRepository regraRepository;
-
     // --- CONSTANTES FINANCEIRAS OTIMIZADAS PARA PERFORMANCE ---
     private static final BigDecimal CEM = new BigDecimal("100");
     private static final BigDecimal ALIQ_IBS_PADRAO = new BigDecimal("17.5");

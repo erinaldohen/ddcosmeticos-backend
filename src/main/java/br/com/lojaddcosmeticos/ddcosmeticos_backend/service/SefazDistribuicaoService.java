@@ -50,7 +50,9 @@ public class SefazDistribuicaoService {
     @Transactional
     public void buscarNovasNotasNaSefaz(ConfiguracoesNfe configPlaceholder, String cnpjEmpresa) throws Exception {
 
-        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L).orElseThrow();
+        // ✅ CORREÇÃO: Utilizando a nova lógica de busca global
+        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findFirstByOrderByIdAsc().orElseThrow();
+
         ControleSefazNsu controleNsu = nsuRepository.findByCnpjEmpresa(cnpjEmpresa)
                 .orElse(new ControleSefazNsu(cnpjEmpresa, "0"));
 
@@ -110,7 +112,6 @@ public class SefazDistribuicaoService {
         }
     }
 
-    // 🔥 NOVO: MÉTODO PARA MANIFESTAÇÃO (Ciência da Operação) 🔥
     @Transactional
     public String manifestarEBaixarXmlCompleto(ConfiguracoesNfe config, String chaveAcesso) throws Exception {
         String cnpjEmpresa = config.getCertificado().getCnpjCpf();
@@ -142,7 +143,8 @@ public class SefazDistribuicaoService {
 
     @Transactional
     public String buscarNotaPorChaveEspecifca(ConfiguracoesNfe configPlaceholder, String cnpjEmpresa, String chaveAcesso) throws Exception {
-        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findById(1L).orElseThrow();
+        // ✅ CORREÇÃO: Utilizando a nova lógica de busca global
+        ConfiguracaoLoja configLoja = configuracaoLojaRepository.findFirstByOrderByIdAsc().orElseThrow();
         chaveAcesso = chaveAcesso.replaceAll("\\D", "");
 
         if (chaveAcesso.length() != 44) {
@@ -172,7 +174,7 @@ public class SefazDistribuicaoService {
 
         if ("138".equals(cStat)) {
             processarDocumentosDoLote(responseBody);
-            return "XML Completo descarregado com sucesso!"; // Mensagem alterada para indicar sucesso no download
+            return "XML Completo descarregado com sucesso!";
         }
 
         throw new RuntimeException("A SEFAZ respondeu: " + xMotivo + " (Status: " + cStat + ")");
@@ -281,11 +283,9 @@ public class SefazDistribuicaoService {
             return;
         }
 
-        // Verifica se a nota já existe para poder ATUALIZAR de PENDENTE para PRONTO
         NotaPendenteImportacao nota = notaPendenteRepository.findByChaveAcesso(chaveAcesso).orElse(null);
 
         if (nota != null && "PRONTO_IMPORTACAO".equals(nota.getStatus()) && "PENDENTE_MANIFESTACAO".equals(status)) {
-            // Se já tem o XML completo, não esmaga com o resumo
             return;
         }
 
@@ -303,7 +303,6 @@ public class SefazDistribuicaoService {
         String cnpj = extrairComRegex(xml, "CNPJ");
         if (cnpj == null) cnpj = extrairComRegex(xml, "CPF");
 
-        // 🔥 CORREÇÃO: Limpa o CNPJ para caber no Banco (VARCHAR 14) 🔥
         if (cnpj != null) {
             cnpj = cnpj.replaceAll("\\D", "");
             if (cnpj.length() > 14) cnpj = cnpj.substring(0, 14);

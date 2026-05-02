@@ -369,17 +369,12 @@ public class CaixaService {
     @Transactional(readOnly = true)
     public Page<CaixaDiarioDTO> listarHistoricoPaginado(LocalDate inicio, LocalDate fim, Pageable pageable) {
         Page<CaixaDiario> paginaCaixas;
-
         if (inicio != null && fim != null) {
             paginaCaixas = caixaDiarioRepository.findByDataAberturaBetweenComUsuario(
-                    inicio.atStartOfDay(),
-                    fim.atTime(23, 59, 59),
-                    pageable
-            );
+                    inicio.atStartOfDay(), fim.atTime(23, 59, 59), pageable);
         } else {
             paginaCaixas = caixaDiarioRepository.findAllComUsuario(pageable);
         }
-
         return paginaCaixas.map(this::converterParaDTOCompleto);
     }
 

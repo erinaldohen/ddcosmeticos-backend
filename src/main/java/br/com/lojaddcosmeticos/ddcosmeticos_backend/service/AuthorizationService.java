@@ -15,8 +15,7 @@ public class AuthorizationService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        // CORREÇÃO: O 'username' aqui é o email que veio do login.
-        // O repository retorna Optional, então usamos .orElseThrow()
+        // ✅ CORREÇÃO: Respeita o retorno Optional do Repository e lança o erro nativo do Spring Security se falhar
         return repository.findByMatriculaOrEmail(username, username)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado com e-mail/matrícula: " + username));
     }

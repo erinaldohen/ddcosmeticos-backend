@@ -100,7 +100,6 @@ public class VendaService {
         venda.setCaixa(caixa);
         venda.setDescontoTotal(nvl(dto.descontoTotal()));
 
-        // 🔥 CORREÇÃO DE COMPILAÇÃO: Criada a referência final para uso nos lambdas
         final Venda vendaRef = venda;
 
         List<ItemVenda> itens = dto.itens().stream().map(itemDto -> {
@@ -108,7 +107,7 @@ public class VendaService {
             if (produto == null) throw new ResourceNotFoundException("Produto não encontrado ID: " + itemDto.produtoId());
 
             ItemVenda item = new ItemVenda();
-            item.setVenda(vendaRef); // Usa a referência imutável
+            item.setVenda(vendaRef);
             item.setProduto(produto);
             item.setQuantidade(itemDto.quantidade());
             item.setPrecoUnitario(nvl(itemDto.precoUnitario()));
@@ -196,7 +195,7 @@ public class VendaService {
 
         List<PagamentoVenda> pagamentos = dto.pagamentos().stream().map(pgDto -> {
             PagamentoVenda pg = new PagamentoVenda();
-            pg.setVenda(vendaRef); // Usa a referência imutável
+            pg.setVenda(vendaRef);
             pg.setFormaPagamento(pgDto.formaPagamento());
             pg.setValor(nvl(pgDto.valor()));
             pg.setParcelas(pgDto.parcelas() != null ? pgDto.parcelas() : 1);
@@ -269,10 +268,10 @@ public class VendaService {
                 if (cleanCnpj.length() == 14) cnpjStr = cleanCnpj;
             }
 
-            String uf = "26"; // PE
+            String uf = "26";
             LocalDateTime data = venda.getDataVenda() != null ? venda.getDataVenda() : LocalDateTime.now();
             String anoMes = String.format("%02d%02d", data.getYear() % 100, data.getMonthValue());
-            String modelo = "65"; // NFC-e
+            String modelo = "65";
 
             boolean isProducao = config != null && config.getFiscal() != null && "PRODUCAO".equals(config.getFiscal().getAmbiente());
 
@@ -291,14 +290,14 @@ public class VendaService {
             venda.setNumeroNfce(idVendaSeguro);
             venda.setSerieNfce(serieConfig);
 
-            String tipoEmissao = "1"; // 1 = Normal
+            String tipoEmissao = "1";
             String cNF = String.format("%08d", new Random().nextInt(99999999));
 
             String chaveSemDV = uf + anoMes + cnpjStr + modelo + serie + numeroNfce + tipoEmissao + cNF;
             String dv = calcularDigitoVerificadorModulo11(chaveSemDV);
 
             venda.setChaveAcessoNfce(chaveSemDV + dv);
-            venda.setStatusNfce(StatusFiscal.AUTORIZADA); // Fica pre-autorizada até a thread background validar
+            venda.setStatusNfce(StatusFiscal.AUTORIZADA);
 
             String ambiente = isProducao ? "1" : "2";
             venda.setProtocolo(ambiente + uf + String.format("%012d", System.currentTimeMillis() % 1000000000000L));
@@ -445,7 +444,8 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public List<VendaResponseDTO> listarVendasSuspensas() {
-        return vendaRepository.findByStatusNfce(StatusFiscal.PENDENTE).stream().map(VendaResponseDTO::new).collect(Collectors.toList());
+        // ✅ CORREÇÃO: Utilizando Pageable.unpaged() compatível com as alterações dos Repositories
+        return vendaRepository.findByStatusNfce(StatusFiscal.PENDENTE, Pageable.unpaged()).getContent().stream().map(VendaResponseDTO::new).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -503,7 +503,7 @@ public class VendaService {
                 titulo.setVendaId(vendaSalva.getIdVenda());
                 titulo.setDescricao("Venda PDV #" + vendaSalva.getIdVenda());
                 titulo.setDataCompra(LocalDate.now());
-                titulo.setDataVencimento(LocalDate.now().plusDays(30)); // 30 dias de prazo padrão
+                titulo.setDataVencimento(LocalDate.now().plusDays(30));
                 titulo.setValorTotal(pg.getValor());
                 titulo.setSaldoDevedor(pg.getValor());
                 titulo.setValorPago(BigDecimal.ZERO);
@@ -595,10 +595,6 @@ public class VendaService {
         BigDecimal divida = nvl(contaReceberRepository.somarDividaTotalPorDocumento(cliente.getDocumento()));
         if (divida.add(valor).compareTo(cliente.getLimiteCredito()) > 0) throw new ValidationException("Limite de crédito excedido!");
     }
-
-    // =========================================================================
-    // MÉTODOS AUXILIARES DE E-MAIL E PDF (USAM CONFIG SIMPLES)
-    // =========================================================================
 
     private ConfiguracaoLoja obterConfiguracaoSimples() {
         ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
@@ -800,7 +796,8 @@ public class VendaService {
 
     @Transactional(readOnly = true)
     public List<HistoricoCompraDTO> buscarHistoricoPorCliente(Long idCliente) {
-        List<Venda> vendas = vendaRepository.findByClienteIdOrderByDataVendaDesc(idCliente);
+        // ✅ CORREÇÃO: Utilizando a assinatura correta do repository para histórico de clientes com Pageable
+        List<Venda> vendas = vendaRepository.findByClienteIdOrderByDataVendaDesc(idCliente, Pageable.unpaged()).getContent();
         return vendas.stream().map(HistoricoCompraDTO::new).toList();
     }
 

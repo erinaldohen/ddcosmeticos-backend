@@ -38,14 +38,9 @@ public class DocumentoFiscalPdfService {
     @Autowired
     private MovimentoEstoqueRepository movimentoEstoqueRepository;
 
-    // Paleta de Cores Premium para o PDF
-    private final DeviceRgb HEADER_BG = new DeviceRgb(15, 23, 42); // Escuro profundo
-    private final DeviceRgb HEADER_TEXT = new DeviceRgb(255, 255, 255); // Branco
-    private final DeviceRgb LIGHT_BG = new DeviceRgb(241, 245, 249); // Cinza super claro
-
-    // ==========================================================
-    // UTILITÁRIOS DE FORMATAÇÃO
-    // ==========================================================
+    private final DeviceRgb HEADER_BG = new DeviceRgb(15, 23, 42);
+    private final DeviceRgb HEADER_TEXT = new DeviceRgb(255, 255, 255);
+    private final DeviceRgb LIGHT_BG = new DeviceRgb(241, 245, 249);
 
     private String formatarCnpjCpf(String documento) {
         if (documento == null || documento.isBlank()) return "Não Informado";
@@ -56,7 +51,7 @@ public class DocumentoFiscalPdfService {
         } else if (apenasNumeros.length() == 11) {
             return apenasNumeros.replaceFirst("(\\d{3})(\\d{3})(\\d{3})(\\d{2})", "$1.$2.$3-$4");
         }
-        return documento; // Retorna original se o tamanho for atípico
+        return documento;
     }
 
     private String formatarMoeda(BigDecimal valor) {
@@ -65,9 +60,6 @@ public class DocumentoFiscalPdfService {
         return formatoMoeda.format(valor);
     }
 
-    // ==========================================================
-    // 1. GERADOR DE CUPOM FISCAL (NFC-E) - FORMATO TÉRMICO 80mm
-    // ==========================================================
     public byte[] gerarCupomNfce(Venda venda, ConfiguracaoLoja config) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PdfWriter writer = new PdfWriter(out);
@@ -135,9 +127,6 @@ public class DocumentoFiscalPdfService {
         return out.toByteArray();
     }
 
-    // ==========================================================
-    // 2. GERADOR DE DANFE (NF-E) - FORMATO A4 PARA EMPRESAS
-    // ==========================================================
     public byte[] gerarDanfeNfe(Venda venda, ConfiguracaoLoja config) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PdfWriter writer = new PdfWriter(out);
@@ -196,9 +185,6 @@ public class DocumentoFiscalPdfService {
         return out.toByteArray();
     }
 
-    // ==========================================================
-    // 3. GERADOR DE DANFE ESPELHO (ENTRADA) - APRIMORADO
-    // ==========================================================
     public byte[] gerarDanfePdf(String numeroNota) {
 
         List<MovimentoEstoque> itens = movimentoEstoqueRepository.buscarItensDaNota(numeroNota);
@@ -210,7 +196,6 @@ public class DocumentoFiscalPdfService {
         MovimentoEstoque primeiroItem = itens.get(0);
         String fornecedorNome = primeiroItem.getFornecedor() != null ? primeiroItem.getFornecedor().getNomeFantasia() : "Fornecedor Não Informado";
 
-        // Aplica a máscara no CNPJ
         String fornecedorCnpj = primeiroItem.getFornecedor() != null ? formatarCnpjCpf(primeiroItem.getFornecedor().getCnpj()) : "---";
         String dataEntrada = primeiroItem.getDataMovimento() != null ? primeiroItem.getDataMovimento().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) : "---";
 
@@ -225,7 +210,6 @@ public class DocumentoFiscalPdfService {
             Document document = new Document(pdf);
             document.setMargins(30, 30, 30, 30);
 
-            // --- BLOCO 1: CABEÇALHO ---
             Table header = new Table(UnitValue.createPercentArray(new float[]{50, 50})).useAllAvailableWidth();
             header.setBorder(new SolidBorder(ColorConstants.GRAY, 1));
 
@@ -242,9 +226,8 @@ public class DocumentoFiscalPdfService {
             header.addCell(dadosNota);
 
             document.add(header);
-            document.add(new Paragraph("\n")); // Espaçamento
+            document.add(new Paragraph("\n"));
 
-            // --- BLOCO 2: DADOS DO FORNECEDOR ---
             Cell headerForn = new Cell().add(new Paragraph("DADOS DO FORNECEDOR / REMETENTE").setBold().setFontSize(10).setFontColor(HEADER_TEXT));
             headerForn.setBackgroundColor(HEADER_BG).setPadding(4);
 
@@ -253,12 +236,11 @@ public class DocumentoFiscalPdfService {
 
             Table fornInner = new Table(UnitValue.createPercentArray(new float[]{60, 40})).useAllAvailableWidth();
             fornInner.addCell(new Cell().add(new Paragraph("RAZÃO SOCIAL:\n" + fornecedorNome).setFontSize(9)).setPadding(5));
-            fornInner.addCell(new Cell().add(new Paragraph("CNPJ:\n" + fornecedorCnpj).setFontSize(9)).setPadding(5)); // CNPJ Mascarado
+            fornInner.addCell(new Cell().add(new Paragraph("CNPJ:\n" + fornecedorCnpj).setFontSize(9)).setPadding(5));
             document.add(fornInner);
 
             document.add(new Paragraph("\n"));
 
-            // --- BLOCO 3: CÁLCULO E TOTAIS ---
             Cell headerTotais = new Cell().add(new Paragraph("RESUMO E TOTAIS DA OPERAÇÃO").setBold().setFontSize(10).setFontColor(HEADER_TEXT));
             headerTotais.setBackgroundColor(HEADER_BG).setPadding(4);
 
@@ -267,30 +249,26 @@ public class DocumentoFiscalPdfService {
 
             Table totaisInner = new Table(UnitValue.createPercentArray(new float[]{50, 50})).useAllAvailableWidth();
             totaisInner.addCell(new Cell().add(new Paragraph("QUANTIDADE TOTAL DE ITENS FÍSICOS:\n" + itens.size() + " Volumes").setFontSize(9)).setPadding(5));
-            totaisInner.addCell(new Cell().add(new Paragraph("VALOR TOTAL DA NOTA:\n" + formatarMoeda(valorTotalNota)).setBold().setFontSize(11)).setPadding(5)); // Moeda BRL
+            totaisInner.addCell(new Cell().add(new Paragraph("VALOR TOTAL DA NOTA:\n" + formatarMoeda(valorTotalNota)).setBold().setFontSize(11)).setPadding(5));
             document.add(totaisInner);
 
             document.add(new Paragraph("\n"));
 
-            // --- BLOCO 4: TABELA DE ITENS DA NOTA ---
             document.add(new Paragraph("RELAÇÃO DE PRODUTOS IMPORTADOS").setBold().setFontSize(10).setBackgroundColor(LIGHT_BG).setPadding(4));
 
             Table tableItens = new Table(UnitValue.createPercentArray(new float[]{15, 45, 10, 15, 15})).useAllAvailableWidth();
 
-            // Cabeçalho da Tabela
             tableItens.addHeaderCell(new Cell().add(new Paragraph("CÓDIGO").setFontSize(8).setBold()).setBackgroundColor(HEADER_BG).setFontColor(HEADER_TEXT).setPadding(4));
             tableItens.addHeaderCell(new Cell().add(new Paragraph("DESCRIÇÃO DO PRODUTO").setFontSize(8).setBold()).setBackgroundColor(HEADER_BG).setFontColor(HEADER_TEXT).setPadding(4));
             tableItens.addHeaderCell(new Cell().add(new Paragraph("QTD").setFontSize(8).setBold().setTextAlignment(TextAlignment.CENTER)).setBackgroundColor(HEADER_BG).setFontColor(HEADER_TEXT).setPadding(4));
             tableItens.addHeaderCell(new Cell().add(new Paragraph("V. UNIT").setFontSize(8).setBold().setTextAlignment(TextAlignment.RIGHT)).setBackgroundColor(HEADER_BG).setFontColor(HEADER_TEXT).setPadding(4));
             tableItens.addHeaderCell(new Cell().add(new Paragraph("V. TOTAL").setFontSize(8).setBold().setTextAlignment(TextAlignment.RIGHT)).setBackgroundColor(HEADER_BG).setFontColor(HEADER_TEXT).setPadding(4));
 
-            // Loop para preencher os itens reais
             for (MovimentoEstoque item : itens) {
                 String codigo = item.getProduto() != null ? String.valueOf(item.getProduto().getId()) : "N/A";
                 String descricao = item.getProduto() != null ? item.getProduto().getDescricao() : "Produto Indefinido";
                 String qtd = String.valueOf(item.getQuantidadeMovimentada());
 
-                // Formatação Monetária correta nos itens da DANFE
                 String vUnit = formatarMoeda(item.getCustoMovimentado());
                 String vTot = formatarMoeda(item.getCustoMovimentado().multiply(item.getQuantidadeMovimentada()));
 

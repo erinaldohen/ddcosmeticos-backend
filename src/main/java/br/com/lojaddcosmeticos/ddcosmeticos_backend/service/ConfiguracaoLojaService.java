@@ -65,8 +65,8 @@ public class ConfiguracaoLojaService {
 
     @Transactional
     public ConfiguracaoLoja buscarConfiguracao() {
-        return repository.findAll().stream()
-                .findFirst()
+        // ✅ CORREÇÃO: Tratamento adequado do Optional vindo do Repository atualizado
+        return repository.findFirstByOrderByIdAsc()
                 .map(config -> {
                     config.garantirInstancias();
                     return config;
@@ -172,12 +172,10 @@ public class ConfiguracaoLojaService {
     private void atualizarEntidade(ConfiguracaoLoja configuracaoLoja, ConfiguracaoDTO configuracaoDTO) {
         configuracaoLoja.garantirInstancias();
 
-        // 🚨 1. SALVANDO E-MAIL (SMTP) E INTEGRAÇÕES NA RAIZ DA ENTIDADE
         if (configuracaoDTO.smtpHost() != null) configuracaoLoja.setSmtpHost(configuracaoDTO.smtpHost());
         if (configuracaoDTO.smtpPort() != null) configuracaoLoja.setSmtpPort(configuracaoDTO.smtpPort());
         if (configuracaoDTO.smtpUsername() != null) configuracaoLoja.setSmtpUsername(configuracaoDTO.smtpUsername());
 
-        // Só atualiza a senha de e-mail se o usuário digitou uma nova (proteção de frontend)
         if (configuracaoDTO.smtpPassword() != null && !configuracaoDTO.smtpPassword().isBlank()) {
             configuracaoLoja.setSmtpPassword(configuracaoDTO.smtpPassword());
         }
@@ -186,7 +184,6 @@ public class ConfiguracaoLojaService {
         if (configuracaoDTO.infinitepayClientId() != null) configuracaoLoja.setInfinitepayClientId(configuracaoDTO.infinitepayClientId());
         if (configuracaoDTO.infinitepayClientSecret() != null) configuracaoLoja.setInfinitepayClientSecret(configuracaoDTO.infinitepayClientSecret());
         if (configuracaoDTO.infinitepayWalletId() != null) configuracaoLoja.setInfinitepayWalletId(configuracaoDTO.infinitepayWalletId());
-        // -------------------------------------------------------------
 
         String logoAtual = configuracaoLoja.getLoja().getLogoUrl();
         configuracaoLoja.setLoja(new ConfiguracaoLoja.DadosLoja(
@@ -203,28 +200,23 @@ public class ConfiguracaoLojaService {
         ));
 
         ConfiguracaoLoja.DadosFiscal f = configuracaoLoja.getFiscal();
-
         String senhaCertAtual = f.getSenhaCert();
         String caminhoCertAtual = f.getCaminhoCertificado();
         byte[] arquivoCertAtual = f.getArquivoCertificado();
 
         f.setAmbiente(configuracaoDTO.fiscal().ambiente());
         f.setRegime(configuracaoDTO.fiscal().regime());
-
         f.setTokenHomologacao(configuracaoDTO.fiscal().tokenHomologacao());
         f.setCscIdHomologacao(configuracaoDTO.fiscal().cscIdHomologacao());
         f.setSerieHomologacao(configuracaoDTO.fiscal().serieHomologacao() != null ? configuracaoDTO.fiscal().serieHomologacao() : 1);
         f.setNfeHomologacao(configuracaoDTO.fiscal().nfeHomologacao() != null ? configuracaoDTO.fiscal().nfeHomologacao() : 1);
-
         f.setTokenProducao(configuracaoDTO.fiscal().tokenProducao());
         f.setCscIdProducao(configuracaoDTO.fiscal().cscIdProducao());
         f.setSerieProducao(configuracaoDTO.fiscal().serieProducao() != null ? configuracaoDTO.fiscal().serieProducao() : 1);
         f.setNfeProducao(configuracaoDTO.fiscal().nfeProducao() != null ? configuracaoDTO.fiscal().nfeProducao() : 1);
-
         f.setSenhaCert(configuracaoDTO.fiscal().senhaCert() != null && !configuracaoDTO.fiscal().senhaCert().isEmpty() ? configuracaoDTO.fiscal().senhaCert() : senhaCertAtual);
         f.setCaminhoCertificado(configuracaoDTO.fiscal().caminhoCertificado() != null && !configuracaoDTO.fiscal().caminhoCertificado().isEmpty() ? configuracaoDTO.fiscal().caminhoCertificado() : caminhoCertAtual);
         f.setArquivoCertificado(arquivoCertAtual);
-
         f.setCsrtId(configuracaoDTO.fiscal().csrtId());
         f.setCsrtHash(configuracaoDTO.fiscal().csrtHash());
         f.setIbptToken(configuracaoDTO.fiscal().ibptToken());
@@ -254,7 +246,6 @@ public class ConfiguracaoLojaService {
         fin.setMultaAtraso(configuracaoDTO.financeiro().multaAtraso());
         fin.setDiasCarencia(configuracaoDTO.financeiro().diasCarencia());
         fin.setFechamentoCego(configuracaoDTO.financeiro().fechamentoCego());
-
         fin.setAceitaDinheiro(configuracaoDTO.financeiro().aceitaDinheiro() != null ? configuracaoDTO.financeiro().aceitaDinheiro() : true);
         fin.setAceitaPix(configuracaoDTO.financeiro().aceitaPix() != null ? configuracaoDTO.financeiro().aceitaPix() : true);
         fin.setAceitaCredito(configuracaoDTO.financeiro().aceitaCredito() != null ? configuracaoDTO.financeiro().aceitaCredito() : true);
@@ -282,18 +273,14 @@ public class ConfiguracaoLojaService {
     private ConfiguracaoDTO converterParaDTO(ConfiguracaoLoja c) {
         return new ConfiguracaoDTO(
                 c.getId(),
-
-                // 🚨 2. ENVIANDO OS CAMPOS RAIZ PARA O FRONTEND
                 c.getSmtpHost() != null ? c.getSmtpHost() : "",
                 c.getSmtpPort() != null ? c.getSmtpPort() : 587,
                 c.getSmtpUsername() != null ? c.getSmtpUsername() : "",
-                "", // Envia a senha em branco por segurança
+                "",
                 c.getGatewayPagamento() != null ? c.getGatewayPagamento() : "MANUAL",
                 c.getInfinitepayClientId() != null ? c.getInfinitepayClientId() : "",
                 c.getInfinitepayClientSecret() != null ? c.getInfinitepayClientSecret() : "",
                 c.getInfinitepayWalletId() != null ? c.getInfinitepayWalletId() : "",
-                // -------------------------------------------------------------
-
                 new ConfiguracaoDTO.LojaDTO(
                         c.getLoja().getRazaoSocial(), c.getLoja().getNomeFantasia(), c.getLoja().getCnpj(), c.getLoja().getIe(),
                         c.getLoja().getIm(), c.getLoja().getCnae(), c.getLoja().getEmail(), c.getLoja().getTelefone(),
@@ -312,7 +299,7 @@ public class ConfiguracaoLojaService {
                         c.getFiscal().getSerieHomologacao(), c.getFiscal().getNfeHomologacao(),
                         c.getFiscal().getTokenProducao(), c.getFiscal().getCscIdProducao(),
                         c.getFiscal().getSerieProducao(), c.getFiscal().getNfeProducao(),
-                        c.getFiscal().getCaminhoCertificado(), "", // Senha do certificado enviada em branco
+                        c.getFiscal().getCaminhoCertificado(), "",
                         c.getFiscal().getCsrtId(), c.getFiscal().getCsrtHash(),
                         c.getFiscal().getIbptToken(), c.getFiscal().getNaturezaPadrao(), c.getFiscal().getEmailContabil(),
                         c.getFiscal().getEnviarXmlAutomatico(), c.getFiscal().getAliquotaInterna(),
@@ -358,7 +345,7 @@ public class ConfiguracaoLojaService {
         config.getSistema().setTema("light");
         config.getSistema().setImpressaoAuto(true);
         config.getFiscal().setAmbiente("HOMOLOGACAO");
-        config.setGatewayPagamento("MANUAL"); // Define o manual como padrão inicial
+        config.setGatewayPagamento("MANUAL");
 
         return repository.save(config);
     }

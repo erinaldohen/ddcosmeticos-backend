@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,8 +24,6 @@ public class CrediarioService {
     @Autowired
     private VendaRepository vendaRepository;
 
-    // TODO: @Autowired private CaixaDiarioService caixaService; (Para injetar o dinheiro recebido no caixa do dia)
-
     @Transactional(readOnly = true)
     public List<DevedorResumoDTO> listarResumoDevedores() {
         return tituloReceberRepository.findResumoDevedores();
@@ -35,19 +32,17 @@ public class CrediarioService {
     @Transactional(readOnly = true)
     public List<FaturaClienteDTO> listarFaturasAbertasDoCliente(Long idCliente) {
 
-        // 🚨 CORREÇÃO: Agora buscamos TODOS os títulos (Pendentes e Pagos)
+        // ✅ CORREÇÃO APLICADA: Chamada limpa apenas com o ID, combinando com o Repository.
         List<TituloReceber> titulos = tituloReceberRepository.findByClienteIdOrderByDataCompraDesc(idCliente);
 
         return titulos.stream().map(t -> {
             String statusAtual = t.getStatus().name();
-            // Mantém a regra visual de atraso para os pendentes
             if (t.getStatus() == StatusTitulo.PENDENTE && t.getDataVencimento().isBefore(LocalDate.now())) {
                 statusAtual = "ATRASADO";
             }
 
             long dias = java.time.temporal.ChronoUnit.DAYS.between(t.getDataCompra(), LocalDate.now());
 
-            // Busca os itens da Venda
             List<FaturaClienteDTO.ItemFaturaDTO> itensDaVenda = new java.util.ArrayList<>();
             if (t.getVendaId() != null) {
                 vendaRepository.findByIdComItens(t.getVendaId()).ifPresent(venda -> {
@@ -91,7 +86,6 @@ public class CrediarioService {
             throw new br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException("O valor do pagamento não pode ser maior que o saldo devedor.");
         }
 
-        // Dá baixa no Título
         titulo.setValorPago(titulo.getValorPago().add(totalPagoNaOperacao));
         titulo.setSaldoDevedor(titulo.getSaldoDevedor().subtract(totalPagoNaOperacao));
         titulo.setDataPagamento(LocalDate.now());
@@ -103,10 +97,5 @@ public class CrediarioService {
         }
 
         tituloReceberRepository.save(titulo);
-
-        // TODO: Para injetar no caixa, você precisaria injetar o CaixaDiarioRepository,
-        // buscar o caixa aberto do usuário logado (SecurityContextHolder) e somar os valores
-        // exatamente como fizemos no VendaService (atualizarFinanceiro).
-        // Exemplo: Para cada pagamento na lista, se for DINHEIRO, soma em caixa.saldoAtual e caixa.totalRecebimentoCrediario.
     }
 }

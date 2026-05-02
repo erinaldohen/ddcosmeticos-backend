@@ -19,7 +19,6 @@ import java.util.ArrayList;
 @Service
 public class PedidoCompraService {
 
-    // Injeção de dependência via Construtor (Melhor prática: Facilita testes e evita Null Pointers)
     private final PedidoCompraRepository pedidoRepository;
     private final ProdutoRepository produtoRepository;
     private final CalculadoraFiscalService calculadoraFiscal;
@@ -45,7 +44,7 @@ public class PedidoCompraService {
         pedido.setUfOrigem(dto.getUfOrigem());
         pedido.setUfDestino(dto.getUfDestino());
         pedido.setStatus(StatusPedido.EM_COTACAO);
-        pedido.setItens(new ArrayList<>()); // 🔥 PROTEÇÃO: Evita NullPointerException ao adicionar itens
+        pedido.setItens(new ArrayList<>());
 
         BigDecimal totalProdutos = BigDecimal.ZERO;
         BigDecimal totalImpostos = BigDecimal.ZERO;
@@ -73,7 +72,6 @@ public class PedidoCompraService {
             item.setValorIcmsSt(impostoItem);
 
             BigDecimal custoFinalTotal = valorTotalItem.add(impostoItem);
-            // Prevenção de divisão por zero
             if (itemDto.getQuantidade().compareTo(BigDecimal.ZERO) <= 0) {
                 throw new ValidationException("A quantidade do produto " + produto.getDescricao() + " deve ser maior que zero.");
             }
@@ -107,14 +105,12 @@ public class PedidoCompraService {
             throw new ValidationException("Este pedido já foi recebido e processado no estoque anteriormente.");
         }
 
-        // 🔥 PROTEÇÃO CONTÁBIL E DE PERFORMANCE: Busca direta no BD e trava se não existir
         Fornecedor fornecedor = fornecedorRepository.findByRazaoSocialIgnoreCase(pedido.getFornecedorNome())
                 .orElseThrow(() -> new ValidationException(
                         "Fornecedor '" + pedido.getFornecedorNome() + "' não encontrado no cadastro. " +
                                 "Cadastre-o com este nome exato antes de dar entrada na nota para não gerar erros no Contas a Pagar."
                 ));
 
-        // Processa Estoque item a item
         for (ItemPedidoCompra item : pedido.getItens()) {
             estoqueService.processarEntradaDePedido(
                     item.getProduto(),
@@ -125,7 +121,6 @@ public class PedidoCompraService {
             );
         }
 
-        // Lança o Contas a Pagar
         financeiroService.lancarDespesaDeCompra(
                 null,
                 fornecedor.getId(),

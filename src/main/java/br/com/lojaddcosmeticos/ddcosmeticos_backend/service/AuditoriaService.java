@@ -52,23 +52,12 @@ public class AuditoriaService {
     @Autowired private ProdutoRepository produtoRepository;
     @Autowired private UsuarioRepository usuarioRepository;
 
-    // =========================================================================
-    // 1. REGISTRO DE EVENTOS E AUDITORIA (INCLUINDO INTEGRAÇÃO IA)
-    // =========================================================================
-
-    /**
-     * MÉTODO ADICIONADO: Compatibilidade direta com as chamadas da IA
-     * @param acao O código da ação (ex: "IA_ANALYSIS")
-     * @param usuario O usuário responsável (ou "SISTEMA_IA")
-     * @param detalhes O texto detalhado do log (ex: "Fraude detetada...")
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void registrarAcao(String acao, String usuario, String detalhes) {
         TipoEvento tipoEventoEnum;
         try {
             tipoEventoEnum = TipoEvento.valueOf(acao.toUpperCase());
         } catch (Exception e) {
-            // Se o Enum TipoEvento não tiver "IA_ANALYSIS", mapeia por defeito para INFO
             tipoEventoEnum = TipoEvento.INFO;
         }
 
@@ -77,7 +66,7 @@ public class AuditoriaService {
             auditoria.setDataHora(LocalDateTime.now());
             auditoria.setTipoEvento(tipoEventoEnum);
             auditoria.setMensagem(detalhes);
-            auditoria.setEntidadeAfetada(acao); // Regista o módulo que chamou (ex: IA_ANALYSIS)
+            auditoria.setEntidadeAfetada(acao);
             auditoria.setUsuarioResponsavel(usuario != null ? usuario : "Sistema");
 
             auditoriaRepository.save(auditoria);
@@ -120,10 +109,6 @@ public class AuditoriaService {
         }
     }
 
-    // =========================================================================
-    // 2. CONSULTAS GERAIS
-    // =========================================================================
-
     @Transactional(readOnly = true)
     public List<AuditoriaRequestDTO> listarUltimosEventos(int limite) {
         Pageable pageable = PageRequest.of(0, limite, Sort.by("dataHora").descending());
@@ -146,10 +131,6 @@ public class AuditoriaService {
 
         return auditoriaRepository.buscarPorFiltros(termoBusca, dataInicio, dataFim, pageable);
     }
-
-    // =========================================================================
-    // 3. HIBERNATE ENVERS (HISTÓRICO E LIXEIRA)
-    // =========================================================================
 
     @Transactional(readOnly = true)
     public List<HistoricoProdutoDTO> buscarHistoricoDoProduto(Long idProduto) {
@@ -184,15 +165,10 @@ public class AuditoriaService {
         return historico;
     }
 
-    /**
-     * NOVO MÉTODO: OBTENÇÃO DOS ITENS EXCLUÍDOS (LIXEIRA)
-     * Utiliza o Hibernate Envers para buscar entidades onde o RevisionType seja DEL (Deletado)
-     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> obterItensLixeira(String search, LocalDate inicio, LocalDate fim) {
         AuditReader reader = AuditReaderFactory.get(entityManager);
 
-        // Busca exclusões (DEL) da entidade Produto
         List<Object[]> results = reader.createQuery()
                 .forRevisionsOfEntity(Produto.class, false, true)
                 .add(AuditEntity.revisionType().eq(RevisionType.DEL))
@@ -208,18 +184,15 @@ public class AuditoriaService {
 
             LocalDateTime dataExclusao = LocalDateTime.ofInstant(new Date(rev.getTimestamp()).toInstant(), ZoneId.systemDefault());
 
-            // 1. Filtros de Data
             if (inicio != null && dataExclusao.toLocalDate().isBefore(inicio)) continue;
             if (fim != null && dataExclusao.toLocalDate().isAfter(fim)) continue;
 
-            // 2. Filtro de Pesquisa (Nome, Código ou Responsável)
             boolean matchesSearch = search == null || search.isBlank() ||
                     (p.getDescricao() != null && p.getDescricao().toLowerCase().contains(search.toLowerCase())) ||
                     (p.getCodigoBarras() != null && p.getCodigoBarras().contains(search)) ||
                     (rev.getUsuarioResponsavel() != null && rev.getUsuarioResponsavel().toLowerCase().contains(search.toLowerCase()));
 
             if (matchesSearch) {
-                // Monta o objeto no formato exato que o React (Lixeira) espera
                 Map<String, Object> item = new HashMap<>();
                 item.put("id", p.getId());
                 item.put("descricao", p.getDescricao());
@@ -232,13 +205,13 @@ public class AuditoriaService {
         return lixeira;
     }
 
-    // =========================================================================
-    // 4. RELATÓRIOS (PDF)
-    // =========================================================================
-
     @Transactional(readOnly = true)
     public byte[] gerarRelatorioMensalPDF() {
-        List<Auditoria> logs = auditoriaRepository.findAllByOrderByDataHoraDesc();
+        // ✅ CORREÇÃO: Usar o método paginado com datas (últimos 30 dias)
+        LocalDateTime inicio = LocalDateTime.now().minusDays(30);
+        LocalDateTime fim = LocalDateTime.now();
+        List<Auditoria> logs = auditoriaRepository.findByDataHoraBetweenOrderByDataHoraDesc(inicio, fim);
+
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfWriter writer = new PdfWriter(out);
             PdfDocument pdf = new PdfDocument(writer);
@@ -266,10 +239,6 @@ public class AuditoriaService {
             return new byte[0];
         }
     }
-
-    // =========================================================================
-    // 5. AUXILIARES
-    // =========================================================================
 
     private String capturarNomeUsuarioLogado() {
         try {

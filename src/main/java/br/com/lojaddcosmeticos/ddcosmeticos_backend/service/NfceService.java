@@ -54,7 +54,8 @@ public class NfceService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NfceResponseDTO emitirNfce(Venda vendaDesanexada) {
-        Venda venda = vendaRepository.findById(vendaDesanexada.getIdVenda())
+        // ✅ CORREÇÃO: Utilizando o método que garante o JOIN FETCH dos itens e pagamentos
+        Venda venda = vendaRepository.findByIdComItens(vendaDesanexada.getIdVenda())
                 .orElseThrow(() -> new ValidationException("Venda não encontrada para emissão."));
 
         ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
@@ -128,7 +129,6 @@ public class NfceService {
         TNFe.InfNFeSupl infNFeSupl = new TNFe.InfNFeSupl();
         infNFeSupl.setQrCode(qrCodeStr);
 
-        // 🔥 CORREÇÃO DA REJEIÇÃO 878: A Sefaz PE exige a string exata (sem http://) para ambos os ambientes
         infNFeSupl.setUrlChave("nfce.sefaz.pe.gov.br/nfce/consulta");
 
         nfe.setInfNFeSupl(infNFeSupl);
@@ -249,9 +249,6 @@ public class NfceService {
             p.setCProd(item.getProduto().getId().toString());
 
             String ean = item.getProduto().getCodigoBarras();
-            // A Sefaz permite "SEM GTIN" se o código for nulo, branco ou inválido.
-            // Para não correr riscos com DVs incorretos (Rejeição 611),
-            // se o código começar com 2 (internos/balança) ou não for GTIN válido, evitamos enviá-lo.
             if (ean != null && ean.matches("\\d{8}|\\d{12}|\\d{13}|\\d{14}") && isValidGTIN(ean)) {
                 p.setCEAN(ean);
                 p.setCEANTrib(ean);
@@ -381,7 +378,7 @@ public class NfceService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transmitirNotaContingencia(Venda vendaDesanexada) {
         try {
-            Venda venda = vendaRepository.findById(vendaDesanexada.getIdVenda()).orElse(vendaDesanexada);
+            Venda venda = vendaRepository.findByIdComItens(vendaDesanexada.getIdVenda()).orElse(vendaDesanexada);
             ConfiguracaoLoja configLoja = configuracaoLojaService.buscarConfiguracao();
             if (configLoja.getFiscal() == null || configLoja.getFiscal().getArquivoCertificado() == null) return;
             processarEmissao(venda, configLoja, "1", true);
@@ -390,9 +387,10 @@ public class NfceService {
             log.error("❌ Falha na transmissão automática da venda {}: {}", vendaDesanexada.getIdVenda(), e.getMessage());
         }
     }
+
     private boolean isValidGTIN(String gtin) {
         if (gtin == null || !gtin.matches("\\d+")) return false;
-        if (gtin.startsWith("2")) return false; // Códigos iniciados com 2 são de uso restrito/interno (Sefaz rejeita se não for bem parametrizado)
+        if (gtin.startsWith("2")) return false;
 
         int sum = 0;
         int length = gtin.length();

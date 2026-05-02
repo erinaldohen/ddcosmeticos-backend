@@ -21,20 +21,22 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
     // SEÇÃO 1: CONSULTAS OPERACIONAIS E PDV (CRÍTICAS)
     // ==================================================================================
 
-    // Cirúrgica (uma única venda) = List é seguro.
     @Query("SELECT c FROM ContaReceber c JOIN FETCH c.cliente WHERE c.venda = :venda")
     List<ContaReceber> findByVenda(@Param("venda") Venda venda);
 
     @Query("SELECT c FROM ContaReceber c WHERE c.venda.idVenda = :vendaId")
     List<ContaReceber> findByVendaId(@Param("vendaId") Long vendaId);
 
-    // Relatórios de fechamento (Potencialmente grandes) = Page é obrigatório.
+    // ✅ CORREÇÃO: Sobrecarga de métodos. Permite que serviços antigos usem a Lista (já que 1 dia tem poucos dados)
+    // e serviços novos usem a Paginação. O Spring Data resolve ambos automaticamente!
+    List<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status);
     Page<ContaReceber> findByDataPagamentoAndStatus(LocalDate dataPagamento, StatusConta status, Pageable pageable);
 
+    List<ContaReceber> findByStatus(StatusConta status);
     Page<ContaReceber> findByStatus(StatusConta status, Pageable pageable);
 
     // ==================================================================================
-    // SEÇÃO 2: MOTOR DE CRÉDITO E CRM (Comportamento Excelente Mantido)
+    // SEÇÃO 2: MOTOR DE CRÉDITO E CRM
     // ==================================================================================
 
     @Query("SELECT COALESCE(SUM(c.valorTotal), 0) FROM ContaReceber c " +
@@ -48,7 +50,6 @@ public interface ContaReceberRepository extends JpaRepository<ContaReceber, Long
             "AND c.dataVencimento < :hoje")
     boolean existeContaVencida(@Param("documento") String documento, @Param("hoje") LocalDate hoje);
 
-    // Lista Cirúrgica para o extrato de UM cliente
     @Query("SELECT c FROM ContaReceber c " +
             "WHERE c.cliente.documento = :documento " +
             "AND c.status <> 'PAGA' " +

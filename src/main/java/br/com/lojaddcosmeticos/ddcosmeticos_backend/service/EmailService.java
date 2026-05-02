@@ -21,7 +21,6 @@ public class EmailService {
         ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
         JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
 
-        // 🚨 CORREÇÃO: Lendo direto da raiz da configuração (sem getFiscal)
         mailSender.setHost(config.getSmtpHost() != null ? config.getSmtpHost() : "smtp.gmail.com");
         mailSender.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
         mailSender.setUsername(config.getSmtpUsername());
@@ -45,7 +44,6 @@ public class EmailService {
 
             ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
 
-            // 🚨 CORREÇÃO: Lendo direto da raiz
             helper.setFrom(config.getSmtpUsername() != null ? config.getSmtpUsername() : "naoresponda@ddcosmeticos.com.br");
             helper.setTo(destinatario);
             helper.setSubject(assunto);
@@ -69,7 +67,6 @@ public class EmailService {
 
             ConfiguracaoLoja config = configuracaoLojaService.buscarConfiguracao();
 
-            // 🚨 CORREÇÃO: Lendo direto da raiz
             helper.setFrom(config.getSmtpUsername() != null ? config.getSmtpUsername() : "naoresponda@ddcosmeticos.com.br");
             helper.setTo(emailDestino);
             helper.setSubject(assunto);

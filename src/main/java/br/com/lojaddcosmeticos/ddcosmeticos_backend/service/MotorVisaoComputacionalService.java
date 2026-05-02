@@ -2,7 +2,7 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.OpenBeautyFactsService; // <-- Novo
+import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.integracao.OpenBeautyFactsService;
 import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
 import org.jsoup.Jsoup;
@@ -31,8 +31,8 @@ import java.util.UUID;
 public class MotorVisaoComputacionalService {
 
     @Autowired private ProdutoRepository produtoRepository;
-    @Autowired private OpenBeautyFactsService openBeautyFactsService; // Zero Cost
-    @Autowired private TesseractOcrService tesseractOcrService; // Zero Cost
+    @Autowired private OpenBeautyFactsService openBeautyFactsService;
+    @Autowired private TesseractOcrService tesseractOcrService;
 
     private final String DIRETORIO_IMAGENS = "uploads/produtos/";
 
@@ -78,13 +78,11 @@ public class MotorVisaoComputacionalService {
     private String buscarImagemLivre(Produto produto) {
         String ean = produto.getCodigoBarras();
 
-        // 1ª Tentativa: Base de Dados Colaborativa (100% Free)
         if (ean != null && ean.length() >= 8 && !ean.startsWith("2")) {
             String urlDbLivre = openBeautyFactsService.buscarImagemPorEan(ean);
             if (urlDbLivre != null) return urlDbLivre;
         }
 
-        // 2ª Tentativa: Scraper Google + Validação OCR (Ler Rótulo)
         return simularAgenteOcrWeb(produto);
     }
 
@@ -103,7 +101,6 @@ public class MotorVisaoComputacionalService {
                 String imgUrl = img.attr("src");
                 if (!imgUrl.startsWith("http") || imgUrl.contains("favicon")) continue;
 
-                // O nosso Tesseract entra em ação
                 if (tesseractOcrService.auditarImagemLocalmente(imgUrl, produto.getDescricao())) {
                     return imgUrl;
                 }

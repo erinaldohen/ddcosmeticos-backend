@@ -20,14 +20,9 @@ public class TributosService {
 
     private final IbptRepository ibptRepository;
 
-    // Alíquotas de Segurança (Média do setor de cosméticos)
-    // Usadas APENAS se o NCM do produto não for encontrado na tabela IBPT
     private static final BigDecimal ALIQUOTA_FALLBACK_FEDERAL = new BigDecimal("15.00");
     private static final BigDecimal ALIQUOTA_FALLBACK_ESTADUAL = new BigDecimal("18.00");
 
-    /**
-     * Calcula o valor aproximado dos tributos para exibir na nota (Lei 12.741/2012).
-     */
     public String calcularTextoTransparencia(Venda venda) {
         BigDecimal totalFederal = BigDecimal.ZERO;
         BigDecimal totalEstadual = BigDecimal.ZERO;
@@ -38,17 +33,13 @@ public class TributosService {
 
             if (produto == null) continue;
 
-            // CORREÇÃO AQUI NA LINHA 42:
-            // Como item.getQuantidade() já é BigDecimal, usamos direto.
             BigDecimal valorTotalItem = item.getPrecoUnitario().multiply(item.getQuantidade());
 
-            // Limpa o NCM para busca (remove pontos e traços)
             String ncmLimpo = (produto.getNcm() != null) ? produto.getNcm().replaceAll("[^0-9]", "") : "";
 
             Optional<Ibpt> ibptOpt = ibptRepository.findByNcm(ncmLimpo);
 
             if (ibptOpt.isPresent()) {
-                // --- CENÁRIO 1: NCM ENCONTRADO (DADOS REAIS) ---
                 Ibpt ibpt = ibptOpt.get();
                 boolean isImportado = isProdutoImportado(produto.getOrigem());
 
@@ -63,7 +54,6 @@ public class TributosService {
                 }
 
             } else {
-                // --- CENÁRIO 2: NCM NÃO ENCONTRADO (USAR FALLBACK) ---
                 usouEstimativa = true;
                 log.warn("⚠️ TributacaoService: NCM '{}' não encontrado para o produto '{}'. Usando alíquota média.",
                         ncmLimpo, produto.getDescricao());
@@ -73,7 +63,6 @@ public class TributosService {
             }
         }
 
-        // Se usou estimativa em algum item, avisamos na fonte para transparência total
         String fonte = usouEstimativa ? "IBPT/Estimativa" : "IBPT";
 
         return String.format("Trib aprox R$ %.2f Fed, R$ %.2f Est. Fonte: %s",
@@ -87,7 +76,6 @@ public class TributosService {
 
     private boolean isProdutoImportado(String origem) {
         if (origem == null) return false;
-        // Origens 1, 2, 6, 7 indicam produto importado
         return origem.equals("1") || origem.equals("2") || origem.equals("6") || origem.equals("7");
     }
 }

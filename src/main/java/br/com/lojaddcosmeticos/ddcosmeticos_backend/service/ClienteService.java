@@ -103,9 +103,6 @@ public class ClienteService {
                 .map(this::converterParaDTO);
     }
 
-    // ========================================================================
-    // 🔥 CENTRAL DE VALIDAÇÃO DE OBRIGATORIEDADE DINÂMICA
-    // ========================================================================
     private void validarRegrasNegocio(ClienteDTO dto, Cliente clienteExistente) {
         String docLimpo = dto.documento() != null ? dto.documento().replaceAll("\\D", "") : "";
         String telLimpo = dto.telefone() != null ? dto.telefone().replaceAll("\\D", "") : "";
@@ -143,7 +140,6 @@ public class ClienteService {
         cliente.setDocumento(dto.documento());
         cliente.setTelefone(dto.telefone());
 
-        // Determina o tipo de pessoa pelo tamanho do documento se não for enviado
         String docLimpo = dto.documento() != null ? dto.documento().replaceAll("\\D", "") : "";
         if (dto.tipoPessoa() != null && !dto.tipoPessoa().isBlank()) {
             cliente.setTipoPessoa(dto.tipoPessoa().toUpperCase());
@@ -151,14 +147,12 @@ public class ClienteService {
             cliente.setTipoPessoa(docLimpo.length() == 14 ? "JURIDICA" : "FISICA");
         }
 
-        // Apenas salva a IE se for CNPJ (14 dígitos).
         if (docLimpo.length() == 14) {
             cliente.setInscricaoEstadual(dto.inscricaoEstadual());
         } else {
             cliente.setInscricaoEstadual(null);
         }
 
-        // Endereço desmembrado
         cliente.setCep(dto.cep());
         cliente.setLogradouro(dto.logradouro());
         cliente.setNumero(dto.numero());
@@ -167,8 +161,6 @@ public class ClienteService {
         cliente.setCidade(dto.cidade());
         cliente.setUf(dto.uf());
 
-        // Mantemos o setLimiteCredito caso a sua Entidade Cliente ainda precise dele.
-        // Como o DTO não exige mais, se vier null, salvamos 0 ou mantemos o atual.
         if (dto.limiteCredito() != null) {
             cliente.setLimiteCredito(dto.limiteCredito());
         } else if (cliente.getLimiteCredito() == null) {
@@ -181,7 +173,7 @@ public class ClienteService {
                 c.getId(),
                 c.getNome(),
                 c.getNomeFantasia(),
-                c.getTipoPessoa(),       // 🔥 Mapeado para o Frontend (Abas)
+                c.getTipoPessoa(),
                 c.getDocumento(),
                 c.getInscricaoEstadual(),
                 c.getTelefone(),
@@ -193,7 +185,7 @@ public class ClienteService {
                 c.getCidade(),
                 c.getUf(),
                 c.getLimiteCredito(),
-                c.getTotalGasto(),       // 🔥 Mapeado para o Frontend (Ranking)
+                c.getTotalGasto(),
                 c.getDataCadastro(),
                 c.isAtivo()
         );

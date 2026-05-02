@@ -33,11 +33,8 @@ import java.time.format.DateTimeFormatter;
 public class ImpressaoService {
 
     private final VendaRepository vendaRepository;
-    private final ConfiguracaoLojaService configuracaoLojaService; // <-- Puxa os dados REAIS da loja
+    private final ConfiguracaoLojaService configuracaoLojaService;
 
-    // =========================================================================
-    // 1. CUPOM TÉRMICO (80mm) PARA CLIENTES FINAIS (B2C)
-    // =========================================================================
     @Transactional(readOnly = true)
     public byte[] gerarCupomNfce(Long idVenda) {
         Venda venda = vendaRepository.findByIdComItens(idVenda)
@@ -47,12 +44,10 @@ public class ImpressaoService {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfWriter writer = new PdfWriter(out);
             PdfDocument pdf = new PdfDocument(writer);
-            // Largura de 80mm
             pdf.setDefaultPageSize(new PageSize(226f, 1500f));
             Document document = new Document(pdf);
             document.setMargins(10, 5, 10, 5);
 
-            // --- CABEÇALHO DA EMPRESA REAIS ---
             document.add(new Paragraph(config.getLoja().getRazaoSocial() != null ? config.getLoja().getRazaoSocial() : "LOJA DD COSMETICOS")
                     .setBold().setTextAlignment(TextAlignment.CENTER).setFontSize(9));
             document.add(new Paragraph("CNPJ: " + (config.getLoja().getCnpj() != null ? config.getLoja().getCnpj() : "Não Informado"))
@@ -74,7 +69,6 @@ public class ImpressaoService {
             }
             document.add(new Paragraph("---------------------------------------------------------").setTextAlignment(TextAlignment.CENTER).setFontSize(8));
 
-            // --- ITENS DA VENDA (SEM CORTES, COM EAN COMPLETO) ---
             Table table = new Table(UnitValue.createPercentArray(new float[]{15, 45, 10, 10, 20})).useAllAvailableWidth();
             table.addCell(new Cell().add(new Paragraph("CÓD")).setBorder(Border.NO_BORDER).setFontSize(7).setBold());
             table.addCell(new Cell().add(new Paragraph("DESCRIÇÃO")).setBorder(Border.NO_BORDER).setFontSize(7).setBold());
@@ -87,7 +81,6 @@ public class ImpressaoService {
                 BigDecimal totalItem = item.getPrecoUnitario().multiply(item.getQuantidade()).subtract(item.getDesconto() != null ? item.getDesconto() : BigDecimal.ZERO);
 
                 table.addCell(new Cell().add(new Paragraph(ean)).setBorder(Border.NO_BORDER).setFontSize(6));
-                // Descrição completa sem cortar
                 table.addCell(new Cell().add(new Paragraph(item.getProduto().getDescricao())).setBorder(Border.NO_BORDER).setFontSize(6));
                 table.addCell(new Cell().add(new Paragraph(item.getQuantidade().setScale(0, RoundingMode.DOWN).toString())).setBorder(Border.NO_BORDER).setFontSize(6));
                 table.addCell(new Cell().add(new Paragraph("UN")).setBorder(Border.NO_BORDER).setFontSize(6));
@@ -97,7 +90,6 @@ public class ImpressaoService {
 
             document.add(new Paragraph("---------------------------------------------------------").setTextAlignment(TextAlignment.CENTER).setFontSize(8));
 
-            // --- TOTAIS ---
             document.add(new Paragraph("QTD. TOTAL DE ITENS: " + venda.getItens().size()).setFontSize(8));
             document.add(new Paragraph("VALOR TOTAL R$: " + venda.getValorTotal().add(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP)).setFontSize(8));
             if (venda.getDescontoTotal() != null && venda.getDescontoTotal().compareTo(BigDecimal.ZERO) > 0) {
@@ -113,14 +105,12 @@ public class ImpressaoService {
                 }
             }
 
-            // --- TRIBUTOS (Conforme exigido) ---
             BigDecimal tribFed = venda.getValorTotal().multiply(new BigDecimal("0.15")).setScale(2, RoundingMode.HALF_UP);
             BigDecimal tribEst = venda.getValorTotal().multiply(new BigDecimal("0.18")).setScale(2, RoundingMode.HALF_UP);
             document.add(new Paragraph(String.format("\nTrib aprox R$ %.2f Fed, R$ %.2f Est. Fonte: Estimativa/IBPT", tribFed, tribEst)).setFontSize(6).setTextAlignment(TextAlignment.CENTER));
 
             document.add(new Paragraph("---------------------------------------------------------").setTextAlignment(TextAlignment.CENTER).setFontSize(8));
 
-            // --- RODAPÉ FISCAL ---
             if (isFiscal) {
                 document.add(new Paragraph("Consulte pela Chave de Acesso em:").setTextAlignment(TextAlignment.CENTER).setFontSize(7).setBold());
                 document.add(new Paragraph("http://nfce.sefaz.pe.gov.br/nfce/consulta").setTextAlignment(TextAlignment.CENTER).setFontSize(7));
@@ -156,9 +146,6 @@ public class ImpressaoService {
         }
     }
 
-    // =========================================================================
-    // 2. DANFE (NF-E) FORMATO A4 PARA EMPRESAS (B2B)
-    // =========================================================================
     @Transactional(readOnly = true)
     public byte[] gerarDanfeA4(Long idVenda) {
         Venda venda = vendaRepository.findByIdComItens(idVenda)
@@ -172,7 +159,6 @@ public class ImpressaoService {
             Document document = new Document(pdf);
             document.setMargins(20, 20, 20, 20);
 
-            // --- CABEÇALHO DANFE A4 ---
             Table header = new Table(UnitValue.createPercentArray(new float[]{50, 50})).useAllAvailableWidth();
 
             Cell emitente = new Cell().setBorder(new DashedBorder(ColorConstants.GRAY, 1));
@@ -193,14 +179,12 @@ public class ImpressaoService {
 
             document.add(header);
 
-            // --- DESTINATÁRIO ---
             document.add(new Paragraph("\nDESTINATÁRIO / REMETENTE").setBold().setFontSize(10).setBackgroundColor(ColorConstants.LIGHT_GRAY));
             Table dest = new Table(UnitValue.createPercentArray(new float[]{60, 40})).useAllAvailableWidth();
             dest.addCell(new Cell().add(new Paragraph("NOME / RAZÃO SOCIAL: " + (venda.getClienteNome() != null ? venda.getClienteNome() : "Não Identificado"))).setFontSize(9));
             dest.addCell(new Cell().add(new Paragraph("CNPJ / CPF: " + (venda.getClienteDocumento() != null ? venda.getClienteDocumento() : "Não Identificado"))).setFontSize(9));
             document.add(dest);
 
-            // --- TOTAIS ---
             document.add(new Paragraph("\nCÁLCULO DO IMPOSTO / TOTAIS").setBold().setFontSize(10).setBackgroundColor(ColorConstants.LIGHT_GRAY));
             Table totais = new Table(UnitValue.createPercentArray(new float[]{33, 33, 34})).useAllAvailableWidth();
             totais.addCell(new Cell().add(new Paragraph("VALOR PRODUTOS:\nR$ " + venda.getValorTotal().add(venda.getDescontoTotal() != null ? venda.getDescontoTotal() : BigDecimal.ZERO))).setFontSize(9));
@@ -208,7 +192,6 @@ public class ImpressaoService {
             totais.addCell(new Cell().add(new Paragraph("VALOR TOTAL DA NOTA:\nR$ " + venda.getValorTotal())).setBold().setFontSize(10));
             document.add(totais);
 
-            // --- ITENS (DESCRIÇÃO E EAN COMPLETOS) ---
             document.add(new Paragraph("\nDADOS DOS PRODUTOS / SERVIÇOS").setBold().setFontSize(10).setBackgroundColor(ColorConstants.LIGHT_GRAY));
             Table tableItens = new Table(UnitValue.createPercentArray(new float[]{15, 45, 10, 10, 20})).useAllAvailableWidth();
             tableItens.addCell(new Cell().add(new Paragraph("CÓDIGO (EAN)").setFontSize(8).setBold()));
@@ -239,7 +222,6 @@ public class ImpressaoService {
         }
     }
 
-    // Método de Etiqueta mantido intacto
     public String gerarEtiquetaTermica(Produto produto) {
         String nome = produto.getDescricao().length() > 25 ?
                 produto.getDescricao().substring(0, 25) :

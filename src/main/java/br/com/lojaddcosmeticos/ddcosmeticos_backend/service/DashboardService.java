@@ -60,7 +60,7 @@ public class DashboardService {
 
         ConfiguracaoLoja config = null;
         try {
-            config = configuracaoRepository.findAll().stream().findFirst().orElse(null);
+            config = configuracaoRepository.findFirstByOrderByIdAsc().orElse(null);
         } catch (Exception e) { log.warn("Aviso ao ler Configurações."); }
 
         BigDecimal metaMensal = BigDecimal.ZERO;
@@ -74,10 +74,6 @@ public class DashboardService {
                 metaDiariaConfig = config.getFinanceiro().getMetaDiaria();
             }
         }
-
-        // ==============================================================================
-        // EXTRAÇÃO DE DADOS
-        // ==============================================================================
 
         BigDecimal faturamentoPeriodo = BigDecimal.ZERO;
         BigDecimal descontosPeriodo = BigDecimal.ZERO;
@@ -184,9 +180,6 @@ public class DashboardService {
         fluxo7Dias.put("despesasPrevistas", totalDespesas);
         fluxo7Dias.put("saldoProjetado", faturamentoPeriodo.subtract(totalDespesas));
 
-        // ==============================================================================
-        // FORMATAR E CALCULAR KPI'S
-        // ==============================================================================
         BigDecimal ticketMedio = quantidadeVendas > 0 ? faturamentoPeriodo.divide(new BigDecimal(quantidadeVendas), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         double mixProdutos = quantidadeVendas > 0 ? (double) totalLinhasItensPeriodo / quantidadeVendas : 0.0;
         BigDecimal impostoMes = faturamentoPeriodo.multiply(new BigDecimal("0.04"));
@@ -223,7 +216,6 @@ public class DashboardService {
         int diasNoMes = YearMonth.from(inicioRef).lengthOfMonth();
         BigDecimal runRate = faturamentoPeriodo.divide(new BigDecimal(diasPassados), 2, RoundingMode.HALF_UP).multiply(new BigDecimal(diasNoMes));
 
-        // 🔥 O VERDADEIRO MOTOR DO IMPACTO DA IA
         BigDecimal roiValor = BigDecimal.ZERO;
         Long roiItens = 0L;
         try {
@@ -259,7 +251,7 @@ public class DashboardService {
         response.put("topProdutos", topProdutosList);
         response.put("performanceVendedores", performanceVendedores);
         response.put("inventario", inventarioNode);
-        response.put("inteligencia", inteligenciaNode); // 🔥 NÓ DA IA ADICIONADO AO RESPONSE
+        response.put("inteligencia", inteligenciaNode);
 
         int diasNoMesFim = diasNoMes;
         response.put("metaDiaria", metaDiariaConfig.compareTo(BigDecimal.ZERO) > 0 ? metaDiariaConfig : metaMensal.divide(new BigDecimal(diasNoMesFim), 2, RoundingMode.HALF_UP));
@@ -281,7 +273,6 @@ public class DashboardService {
         }
     }
 
-    // Mock Methods para compatibilidade de Interfaces do Controller
     @Transactional(readOnly = true)
     public List<Map<String, Object>> obterListaRisco(String tipo) { return new ArrayList<>(); }
 

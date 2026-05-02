@@ -3,8 +3,6 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.repository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DevedorResumoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.enums.StatusTitulo;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.TituloReceber;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -14,7 +12,7 @@ import java.util.List;
 @Repository
 public interface TituloReceberRepository extends JpaRepository<TituloReceber, Long> {
 
-    // 1. ✅ OTIMIZADO: Retorna Page para carregar o Dashboard de Inadimplência infinitamente sem travar.
+    // 1. ✅ CORRIGIDO: Removido o 'Pageable' e regressou a 'List' para não quebrar a sua camada Service.
     @Query("""
         SELECT new br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.DevedorResumoDTO(
             c.id, c.nome, c.documento, c.telefone,
@@ -27,12 +25,12 @@ public interface TituloReceberRepository extends JpaRepository<TituloReceber, Lo
         GROUP BY c.id, c.nome, c.documento, c.telefone
         ORDER BY SUM(t.saldoDevedor) DESC
     """)
-    Page<DevedorResumoDTO> findResumoDevedores(Pageable pageable);
+    List<DevedorResumoDTO> findResumoDevedores();
 
-    // 2. CIRÚRGICA: Busca boletos/faturas ABERTAS de um cliente (costumam ser poucos, List é seguro)
+    // 2. Busca os boletos/faturas abertas de um cliente específico
     List<TituloReceber> findByClienteIdAndStatusNotInOrderByDataVencimentoAsc(
             Long clienteId, List<StatusTitulo> statusIgnorados);
 
-    // 3. ✅ OTIMIZADO: O Histórico COMPLETO de um cliente agora tem Paginação para proteger a RAM.
-    Page<TituloReceber> findByClienteIdOrderByDataCompraDesc(Long clienteId, Pageable pageable);
+    // 3. Histórico de compras a crédito do cliente (Compatibilidade mantida com o Service)
+    List<TituloReceber> findByClienteIdOrderByDataCompraDesc(Long clienteId);
 }

@@ -19,88 +19,48 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/operacoes")
-@Tag(name = "Operações de Loja", description = "Módulo de PDV, Impressão e Relatórios Operacionais")
+@Tag(name = "Operações e Logística", description = "Ferramentas de Impressão Térmica de Gôndola e Relatórios Operacionais")
 public class OperacoesController {
 
     @Autowired private RelatorioService relatorioService;
     @Autowired private EstoqueService estoqueService;
     @Autowired private ProdutoRepository produtoRepository;
 
-    // ==================================================================================
-    // SESSÃO 2: RELATÓRIOS GERENCIAIS (PDF)
-    // ==================================================================================
-
     @GetMapping("/relatorio-compras/pdf")
-    @Operation(summary = "Gerar Lista de Compras (PDF)", description = "Analisa estoque baixo e gera PDF para fornecedores.")
+    @Operation(summary = "Gerar Lista de Compras de Reposição (PDF)", description = "Analisa estoques críticos e gera uma folha de pedido para fornecedores (Mapeado por IA).")
     public ResponseEntity<byte[]> baixarListaComprasPdf() {
-        // 1. Busca a inteligência do estoque (Retorna List<Produto>)
         List<Produto> produtosBaixoEstoque = estoqueService.gerarSugestaoCompras();
-
-        // 2. Converte Produtos para DTOs (Mapeamento)
-        List<SugestaoCompraDTO> sugestoes = produtosBaixoEstoque.stream()
-                .map(this::converterParaDTO)
-                .collect(Collectors.toList());
-
-        // 3. Transforma em binário do PDF
+        List<SugestaoCompraDTO> sugestoes = produtosBaixoEstoque.stream().map(this::converterParaDTO).collect(Collectors.toList());
         byte[] pdfBytes = relatorioService.gerarPdfSugestaoCompras(sugestoes);
 
-        // 4. Retorna como download
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=lista_compras.pdf")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=Folha_Lista_Compras_Aprovadas.pdf")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdfBytes);
     }
 
-    // ==================================================================================
-    // SESSÃO 3: SAÍDA PARA HARDWARE (Impressoras Térmicas)
-    // ==================================================================================
-
     @GetMapping("/etiqueta/{codigoBarras}")
-    @Operation(summary = "Gerar Etiqueta de Gôndola", description = "Retorna texto puro formatado para impressoras térmicas.")
+    @Operation(summary = "Gerar Etiqueta de Gôndola (Raw)", description = "Retorna o RAW Text (ZPL) formatado para impressoras térmicas baseadas no padrão Zebra/Epson.")
     public ResponseEntity<String> gerarEtiqueta(@PathVariable String codigoBarras) {
-        Produto p = produtoRepository.findByCodigoBarras(codigoBarras)
-                .orElseThrow(() -> new RuntimeException("Produto não encontrado para impressão"));
-
-        String textoTermico = relatorioService.gerarEtiquetaTermica(p);
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_PLAIN)
-                .body(textoTermico);
+        Produto p = produtoRepository.findByCodigoBarras(codigoBarras).orElseThrow(() -> new RuntimeException("EAN não localizado na base."));
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(relatorioService.gerarEtiquetaTermica(p));
     }
 
-    // --- Método Auxiliar de Conversão (CORRIGIDO PARA RECORD) ---
+    // Helper de conversão direta.
     private SugestaoCompraDTO converterParaDTO(Produto produto) {
-        // 1. Cálculos de Estoque
         int min = produto.getEstoqueMinimo() != null ? produto.getEstoqueMinimo() : 0;
         int atual = produto.getQuantidadeEmEstoque() != null ? produto.getQuantidadeEmEstoque() : 0;
-
-        // Calcula a sugestão (se atual > min, sugestão é 0)
         int sugestao = Math.max(min - atual, 0);
 
-        // 2. Cálculo de Custo Estimado (Novo campo do Record)
-        BigDecimal custoEstimado = BigDecimal.ZERO;
-        if (produto.getPrecoCusto() != null && sugestao > 0) {
-            custoEstimado = produto.getPrecoCusto().multiply(new BigDecimal(sugestao));
-        }
+        BigDecimal custoEstimado = (produto.getPrecoCusto() != null && sugestao > 0)
+                ? produto.getPrecoCusto().multiply(new BigDecimal(sugestao))
+                : BigDecimal.ZERO;
 
-        // 3. Definição de Urgência (Novo campo do Record)
-        String urgencia = "NORMAL";
-        if (atual == 0) {
-            urgencia = "CRÍTICO (ZERADO)";
-        } else if (atual <= (min / 2)) {
-            urgencia = "ALTA";
-        }
+        String urgencia = (atual == 0) ? "CRÍTICO (ZERADO)" : (atual <= (min / 2)) ? "ALTA" : "NORMAL";
 
-        // 4. Instanciação via Construtor (Records não têm setters)
         return new SugestaoCompraDTO(
-                produto.getCodigoBarras(),
-                produto.getDescricao(),
-                produto.getMarca(),
-                atual,
-                min,
-                sugestao,
-                urgencia,      // Campo novo obrigatório
-                custoEstimado  // Campo novo obrigatório
+                produto.getCodigoBarras(), produto.getDescricao(), produto.getMarca(),
+                atual, min, sugestao, urgencia, custoEstimado
         );
     }
 }

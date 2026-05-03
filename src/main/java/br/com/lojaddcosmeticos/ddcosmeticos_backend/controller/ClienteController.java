@@ -8,7 +8,7 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ClienteService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -18,84 +18,79 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/clientes")
-@Tag(name = "Clientes", description = "Gestão de Clientes e Limites de Crédito")
+@RequiredArgsConstructor
+@Tag(name = "Clientes (CRM)", description = "Gestão de Cadastro de Clientes e Motor de Análise de Crédito")
 public class ClienteController {
 
-    @Autowired
-    private ClienteService clienteService;
-    @Autowired
-    private ClienteRepository clienteRepository;
+    private final ClienteService clienteService;
+    private final ClienteRepository clienteRepository;
 
     @GetMapping
-    @Operation(summary = "Listar Clientes (Com suporte a filtro B2B/B2C)")
+    @Operation(summary = "Listar Clientes", description = "Lista paginada com suporte a filtro de tipo (Pessoa Física vs Pessoa Jurídica B2B)")
     public ResponseEntity<Page<ClienteDTO>> listar(
             @RequestParam(required = false) String termo,
-            @RequestParam(required = false) String tipo, // 🔥 NOVO: Suporte para as abas PF/PJ do CRM
+            @RequestParam(required = false) String tipo,
             Pageable pageable) {
 
-        // Se a tela do CRM mandar "?tipo=FISICA" ou "?tipo=JURIDICA", aciona a nova lógica
         if (tipo != null && !tipo.isBlank()) {
             return ResponseEntity.ok(clienteService.listarPorTipo(tipo, pageable));
         }
-
-        // Se não mandar tipo, mantém a funcionalidade original intacta
         return ResponseEntity.ok(clienteService.listar(termo, pageable));
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Buscar Cliente por ID")
     public ResponseEntity<ClienteDTO> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(clienteService.buscarPorId(id));
     }
 
     @GetMapping("/cpf/{cpf}")
+    @Operation(summary = "Busca de Ficha Cadastral via Documento (CPF/CNPJ)")
     public ResponseEntity<ClienteDTO> buscarPorCpf(@PathVariable String cpf) {
         return ResponseEntity.ok(clienteService.buscarPorDocumento(cpf));
     }
 
     @PostMapping
-    @Operation(summary = "Cadastrar Cliente")
+    @Operation(summary = "Cadastrar Novo Cliente")
     public ResponseEntity<ClienteDTO> cadastrar(@RequestBody @Valid ClienteDTO dto) {
         return ResponseEntity.status(HttpStatus.CREATED).body(clienteService.salvar(dto));
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Atualizar Cliente")
+    @Operation(summary = "Atualizar Cliente Existente")
     public ResponseEntity<ClienteDTO> atualizar(@PathVariable Long id, @RequestBody @Valid ClienteDTO dto) {
         return ResponseEntity.ok(clienteService.atualizar(id, dto));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasAnyRole('GERENTE', 'ADMIN')")
-    @Operation(summary = "Ativar/Inativar Cliente")
+    @Operation(summary = "Ativar ou Bloquear Cliente (Inadimplência)")
     public ResponseEntity<Void> alternarStatus(@PathVariable Long id) {
         clienteService.alternarStatus(id);
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/analise-credito/{documento}")
+    @Operation(summary = "Motor de Crédito (IA)", description = "Verifica score interno, atrasos e gera um limite aprovado de venda a prazo (fiado) sugerido.")
     public ResponseEntity<AnaliseCreditoDTO> analisarCredito(@PathVariable String documento) {
         try {
-            AnaliseCreditoDTO analise = clienteService.analisarCredito(documento);
-            return ResponseEntity.ok(analise);
+            return ResponseEntity.ok(clienteService.analisarCredito(documento));
         } catch (br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ValidationException e) {
             return ResponseEntity.notFound().build();
         }
     }
 
     @GetMapping("/telefone/{telefone}")
+    @Operation(summary = "Identificação Rápida via Telefone (Caller ID / WhatsApp)")
     public ResponseEntity<Cliente> buscarPorTelefone(@PathVariable String telefone) {
         String telLimpo = telefone.replaceAll("\\D", "");
-        return clienteRepository.findByTelefone(telLimpo)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        return clienteRepository.findByTelefone(telLimpo).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    // 🔥 MUDANÇA: Otimizado. Sem Stream pesada na tabela inteira.
     @GetMapping("/documento/{documento}")
+    @Operation(summary = "Verificação Rápida Otimizada por Documento")
     public ResponseEntity<Cliente> buscarPorDocumentoExato(@PathVariable String documento) {
         String docLimpo = documento.replaceAll("\\D", "");
-        return clienteRepository.findByDocumento(docLimpo)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return clienteRepository.findByDocumento(docLimpo).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
     }
 }

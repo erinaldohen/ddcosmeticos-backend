@@ -2,29 +2,26 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoVisualDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.CatalogoService;
-import org.springframework.beans.factory.annotation.Autowired;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/catalogo")
+@RequestMapping("/api/v1/catalogo") // 🔥 ADICIONADO O V1 PARA MANTER CONSISTÊNCIA DA API
+@Tag(name = "Catálogo Web (Montra)", description = "Busca Ultraleve otimizada para o Site/Frontend (Cliente Final)")
+@RequiredArgsConstructor
 public class CatalogoController {
 
-    @Autowired
-    private CatalogoService catalogoService;
+    private final CatalogoService catalogoService;
 
-    // Exemplo de uso: /api/catalogo/busca?termo=shampoo
-    // Ou vazio: /api/catalogo/busca (traz os destaques)
     @GetMapping("/busca")
+    @Operation(summary = "Motor de Busca de Artigos Puros", description = "Se o termo for vazio, retorna os Destaques da Loja.")
     public ResponseEntity<List<ProdutoVisualDTO>> buscar(@RequestParam(required = false) String termo) {
         List<ProdutoVisualDTO> resultado = catalogoService.buscarProdutos(termo);
-
-        if (resultado.isEmpty()) {
-            return ResponseEntity.noContent().build();
-        }
-
-        return ResponseEntity.ok(resultado);
+        return resultado.isEmpty() ? ResponseEntity.noContent().build() : ResponseEntity.ok(resultado);
     }
 }

@@ -3,18 +3,20 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.service;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoVisualDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor // Injeção de dependências moderna e segura
 public class CatalogoService {
 
-    @Autowired
-    private ProdutoRepository produtoRepository;
+    private final ProdutoRepository produtoRepository;
 
     @Transactional(readOnly = true)
     public List<ProdutoVisualDTO> buscarProdutos(String termo) {
@@ -22,10 +24,12 @@ public class CatalogoService {
 
         if (termo == null || termo.trim().isEmpty()) {
             // OTIMIZAÇÃO: Busca direto no banco apenas os 50 ativos mais recentes
-            // Antes fazia findAll() -> filtrava na memoria (lento)
+            // Antes fazia findAll() -> filtrava na memória (muito lento)
+            log.debug("A buscar destaques do catálogo (Últimos 50 itens ativos).");
             produtos = produtoRepository.findTop50ByAtivoTrueOrderByIdDesc();
         } else {
             // Usa a query restaurada que busca em Marca, Categoria, Nome e EAN
+            log.info("A buscar produtos no catálogo com o termo: {}", termo);
             produtos = produtoRepository.buscarInteligente(termo);
         }
 
@@ -35,12 +39,9 @@ public class CatalogoService {
     }
 
     private ProdutoVisualDTO converterParaVisual(Produto p) {
-        // Lógica de UX para o Estoque
+        // Lógica de UX para o Estoque (Alivia o Frontend)
         String status = "DISPONÍVEL";
         String cor = "GREEN";
-
-        // Proteção contra null pointer se o método não existir na Model atual
-        // p.atualizarSaldoTotal();
 
         int qtd = p.getQuantidadeEmEstoque() != null ? p.getQuantidadeEmEstoque() : 0;
         int min = p.getEstoqueMinimo() != null ? p.getEstoqueMinimo() : 0;

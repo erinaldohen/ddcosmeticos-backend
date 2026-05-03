@@ -19,7 +19,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/tributacao")
-@Tag(name = "Tributação e Fiscal", description = "Simulações da Reforma Tributária 2026 e Split Payment")
+@Tag(name = "Tributação e Fiscal", description = "Simulações da Reforma Tributária 2026 e Split Payment Automático")
 public class TributacaoController {
 
     @Autowired
@@ -28,63 +28,54 @@ public class TributacaoController {
     @Autowired
     private ProdutoService produtoService;
 
-
     @PostMapping("/simular-carrinho")
+    @Operation(summary = "Simula os impostos incidentes sobre um conjunto de itens do PDV")
     public ResponseEntity<ResumoFiscalCarrinhoDTO> simularCarrinho(@RequestBody List<ItemSplitRequest> itensDto) {
 
         List<ItemVenda> itensParaCalculo = new ArrayList<>();
-
         for (ItemSplitRequest req : itensDto) {
-            // Busca produto real no banco para pegar preço e dados fiscais
             Produto p = produtoService.buscarPorId(req.idProduto());
-
             ItemVenda item = new ItemVenda();
             item.setProduto(p);
             item.setQuantidade(req.quantidade());
-            // Usa o preço do cadastro (ou o enviado pelo front se permitir alteração)
             item.setPrecoUnitario(p.getPrecoVenda());
-
             itensParaCalculo.add(item);
         }
 
         ResumoFiscalCarrinhoDTO resumo = calculadoraFiscalService.calcularTotaisCarrinho(itensParaCalculo);
         return ResponseEntity.ok(resumo);
     }
-    // --- Endpoint Simples (Mantido) ---
+
     @GetMapping("/simular-iva-2026")
+    @Operation(summary = "Comparador Simples Nacional Atual vs IVA Dual/IBS (2026)")
     public ResponseEntity<Map<String, BigDecimal>> simularIva2026(
             @RequestParam BigDecimal valorVenda,
             @RequestParam(defaultValue = "false") boolean isMonofasico) {
         return ResponseEntity.ok(calculadoraFiscalService.simularTributacao2026(valorVenda, isMonofasico));
     }
 
-    // --- Endpoint Gerencial (Mantido) ---
     @GetMapping("/comparativo-regimes")
+    @Operation(summary = "Gera um texto avaliativo recomendando o melhor regime tributário")
     public ResponseEntity<String> compararRegimes(
             @RequestParam BigDecimal faturamentoMensal,
             @RequestParam BigDecimal comprasMensais) {
         return ResponseEntity.ok(calculadoraFiscalService.analisarCenarioMaisVantajoso(faturamentoMensal, comprasMensais));
     }
 
-    // --- NOVO: Endpoint para o PDV (Split Payment) ---
     @PostMapping("/calcular-split-venda")
-    @Operation(summary = "Calcular Split Payment (Pré-Venda)", description = "Recebe uma lista de IDs de produtos e quantidades para prever a retenção do banco.")
+    @Operation(summary = "Calcular Split Payment (Pré-Venda)", description = "Recebe uma lista de IDs de produtos para prever a retenção tributária do banco/adquirente.")
     public ResponseEntity<SplitPaymentDTO> calcularSplit(@RequestBody List<ItemSplitRequest> itensRequest) {
-        // Converte o Request simples em Itens de Venda para a calculadora processar
         List<ItemVenda> itens = new ArrayList<>();
-
         for (ItemSplitRequest req : itensRequest) {
             Produto p = produtoService.buscarPorId(req.idProduto());
             ItemVenda item = new ItemVenda();
             item.setProduto(p);
             item.setQuantidade(req.quantidade());
-            item.setPrecoUnitario(p.getPrecoVenda()); // Usa preço atual
+            item.setPrecoUnitario(p.getPrecoVenda());
             itens.add(item);
         }
-
         return ResponseEntity.ok(calculadoraFiscalService.calcularSplitPayment(itens));
     }
 
-    // Record auxiliar para o Request
     public record ItemSplitRequest(Long idProduto, BigDecimal quantidade) {}
 }

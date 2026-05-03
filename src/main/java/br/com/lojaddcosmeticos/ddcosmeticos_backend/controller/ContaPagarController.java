@@ -14,13 +14,14 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/contas-pagar")
-@Tag(name = "Contas a Pagar", description = "Gestão de despesas e fornecedores")
+@Tag(name = "Contas a Pagar", description = "Gestão de Despesas, Fornecedores e Custos Fixos")
 @RequiredArgsConstructor
 public class ContaPagarController {
 
     private final ContaPagarService service;
 
     @GetMapping
+    @Operation(summary = "Lista todas as Contas a Pagar", description = "Suporta filtros de status e termo de busca (Fornecedor/Descrição).")
     public ResponseEntity<List<ContaPagarDTO>> listar(
             @RequestParam(required = false, defaultValue = "TODAS") String status,
             @RequestParam(required = false) String termo) {
@@ -28,11 +29,11 @@ public class ContaPagarController {
     }
 
     @GetMapping("/resumo")
+    @Operation(summary = "Dashboard de Saldos (Contas a Pagar)")
     public ResponseEntity<ContaPagarDTO.ResumoPagarDTO> obterResumo() {
         return ResponseEntity.ok(service.obterResumo());
     }
 
-    // NOVO ENDPOINT: Usado pelo Dashboard para o Termômetro de Equilíbrio
     @GetMapping("/analise-mensal")
     @Operation(summary = "Análise inteligente de custos do mês (Fixos, Variáveis e Mercadorias)")
     public ResponseEntity<Map<String, Object>> obterAnaliseMensal(
@@ -46,11 +47,13 @@ public class ContaPagarController {
     }
 
     @PostMapping
+    @Operation(summary = "Criar nova Despesa/Conta a Pagar manualmente")
     public ResponseEntity<ContaPagarDTO> criar(@RequestBody ContaPagarDTO.NovaContaDTO dto) {
         return ResponseEntity.ok(service.criar(dto));
     }
 
     @PostMapping("/{id}/pagar")
+    @Operation(summary = "Efetuar o pagamento (Baixa) de uma Conta")
     public ResponseEntity<Void> pagarConta(
             @PathVariable Long id,
             @RequestBody ContaPagarDTO.BaixaContaPagarDTO dto) {

@@ -36,7 +36,7 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/caixas")
-@Tag(name = "Caixa", description = "Gestão operacional de caixa")
+@Tag(name = "Caixa / Operações Financeiras PDV", description = "Fechos de Caixa, Sangrias, Aberturas e Vendas Perdidas")
 @RequiredArgsConstructor
 public class CaixaController {
 
@@ -46,104 +46,75 @@ public class CaixaController {
     private final VendaRepository vendaRepository;
     private final VendaPerdidaRepository vendaPerdidaRepository;
 
-    // --- OPERACIONAL ---
-
     @GetMapping("/alertas")
     @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Alarme de Desvio Financeiro", description = "Alerta o painel quando há grandes quebras na contagem do Caixa Físico (Quebra Cega).")
     public ResponseEntity<List<CaixaDiarioDTO>> getAlertasDeRisco() {
         return ResponseEntity.ok(caixaService.buscarAlertasRiscoDashboard());
     }
 
-    // ==================================================================================
-    // MOTOR DE SUGESTÕES DE VENDA (IA DE BALCÃO)
-    // ==================================================================================
-
     @GetMapping("/sugestao-ia/{produtoId}")
-    @Operation(summary = "Gera sugestões de cross-sell baseadas no carrinho atual")
+    @Operation(summary = "Cross-Sell Inteligente", description = "Lança sugestões para o operador do Caixa oferecer no balcão.")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<String>> getSugestaoIA(@PathVariable Long produtoId) {
         try {
-            List<String> sugestoes = vendaRepository.buscarSugestoesParaProduto(produtoId);
-            return ResponseEntity.ok(sugestoes);
+            return ResponseEntity.ok(vendaRepository.buscarSugestoesParaProduto(produtoId));
         } catch (Exception e) {
-            log.error("Erro ao gerar sugestão de IA para o produto {}: {}", produtoId, e.getMessage());
+            log.warn("Erro ao gerar sugestão de IA para o produto {}: {}", produtoId, e.getMessage());
             return ResponseEntity.ok(List.of());
         }
     }
 
-    // ==================================================================================
-    // FLUXO DE FECHAMENTO (COM BLINDAGEM ANTI-FRAUDE)
-    // ==================================================================================
-
-    /**
-     * Rota chamada pela tela ResumoFechamento.jsx ANTES de fechar o caixa.
-     * Ela devolve o DTO que pode esconder o saldo se o "Fechamento Cego" estiver ativo.
-     */
     @GetMapping("/resumo-fechamento")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Busca o resumo do caixa aberto do usuário para conferência")
+    @Operation(summary = "Buscar mapa do caixa antes do Fecho")
     public ResponseEntity<FechamentoCaixaDTO> obterResumoParaFechamento() {
         CaixaDiario caixaAberto = caixaService.buscarCaixaAberto();
-        if (caixaAberto == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        FechamentoCaixaDTO resumo = caixaService.obterResumoFechamento(caixaAberto.getId());
-        return ResponseEntity.ok(resumo);
+        if (caixaAberto == null) return ResponseEntity.badRequest().build();
+        return ResponseEntity.ok(caixaService.obterResumoFechamento(caixaAberto.getId()));
     }
 
     @PostMapping("/fechar")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Executa o fechamento e grava a declaração física do operador")
+    @Operation(summary = "Fechar Turno/Caixa", description = "Consolida os pagamentos e verifica as quebras com base na contagem do operador.")
     public ResponseEntity<Void> fecharCaixa(@Valid @RequestBody FechamentoCaixaRequestDTO request) {
         caixaService.fecharCaixa(request.valorFisicoInformado(), request.justificativaDiferenca());
         return ResponseEntity.ok().build();
     }
 
     @GetMapping("/status")
-    @Operation(summary = "Verifica se o operador logado tem um caixa aberto")
-    public ResponseEntity<?> verificarStatusCaixa() {
+    @Operation(summary = "Verificar Operador Ativo", description = "Confirma se a sessão tem autorização (Caixa Aberto) para lançar vendas.")
+    public ResponseEntity<Map<String, Object>> verificarStatusCaixa() {
         try {
             CaixaDiarioDTO caixa = caixaService.buscarStatusAtual();
+            boolean isAberto = caixa != null && "ABERTO".equals(caixa.status());
 
-            if (caixa != null && "ABERTO".equals(caixa.status())) {
-                return ResponseEntity.ok(Map.of(
-                        "status", "ABERTO",
-                        "aberto", true,
-                        "caixa", caixa
-                ));
-            } else {
-                return ResponseEntity.ok(Map.of(
-                        "status", "FECHADO",
-                        "aberto", false
-                ));
-            }
+            return ResponseEntity.ok(isAberto
+                    ? Map.of("status", "ABERTO", "aberto", true, "caixa", caixa)
+                    : Map.of("status", "FECHADO", "aberto", false));
         } catch (Exception e) {
             log.error("Erro crítico ao verificar status do caixa: {}", e.getMessage(), e);
-            return ResponseEntity.ok(Map.of(
-                    "status", "FECHADO",
-                    "aberto", false
-            ));
+            return ResponseEntity.ok(Map.of("status", "FECHADO", "aberto", false));
         }
     }
 
     @PostMapping("/abrir")
     @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Abrir Turno")
     public ResponseEntity<CaixaDiarioDTO> abrirCaixa(@RequestBody Map<String, BigDecimal> payload) {
-        BigDecimal saldoInicial = payload.get("saldoInicial");
-        return ResponseEntity.ok(caixaService.abrirCaixa(saldoInicial));
+        return ResponseEntity.ok(caixaService.abrirCaixa(payload.get("saldoInicial")));
     }
-
-    // --- MOVIMENTAÇÕES ---
 
     @GetMapping("/motivos")
     @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Autocompletar motivos standard de sangria/suprimento")
     public ResponseEntity<List<String>> getMotivosFrequentes() {
         return ResponseEntity.ok(caixaService.listarMotivosFrequentes());
     }
 
     @PostMapping("/sangria")
     @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Retirar Trocos/Numerário (Sangria)")
     public ResponseEntity<Void> realizarSangria(@RequestBody MovimentacaoDTO dto) {
         caixaService.realizarSangria(dto.getValor(), dto.getMotivo());
         return ResponseEntity.ok().build();
@@ -151,31 +122,30 @@ public class CaixaController {
 
     @PostMapping("/suprimento")
     @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Injetar Trocos/Numerário (Suprimento)")
     public ResponseEntity<Void> realizarSuprimento(@RequestBody MovimentacaoDTO dto) {
         caixaService.realizarSuprimento(dto.getValor(), dto.getMotivo());
         return ResponseEntity.ok().build();
     }
 
-    // --- HISTÓRICO E RELATÓRIOS ---
-
     @GetMapping
+    @Operation(summary = "Histórico de Turnos Globais da Loja")
     public ResponseEntity<Page<CaixaDiarioDTO>> listarTodos(
             Pageable pageable,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim
-    ) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
         return ResponseEntity.ok(caixaService.listarHistoricoPaginado(inicio, fim, pageable));
     }
 
     @GetMapping("/diario")
-    public ResponseEntity<List<MovimentacaoCaixa>> getHistoricoDiario(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data
-    ) {
+    @Operation(summary = "Ver detalhes do dia (Timeline de eventos de caixa)")
+    public ResponseEntity<List<MovimentacaoCaixa>> getHistoricoDiario(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
         LocalDate target = (data != null) ? data : LocalDate.now();
         return ResponseEntity.ok(caixaService.buscarHistorico(target, target));
     }
 
     @GetMapping("/relatorio/pdf")
+    @Operation(summary = "Baixar Resumo de Fecho(s) de Caixa em PDF")
     public void gerarRelatorioPdf(
             HttpServletResponse response,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
@@ -194,8 +164,7 @@ public class CaixaController {
         LocalDate dFim = (fim != null) ? fim : LocalDate.now();
 
         List<CaixaDiario> lista = caixaRepository.findByDataAberturaBetweenOrderByDataAberturaDesc(
-                dInicio.atStartOfDay(),
-                dFim.atTime(23, 59, 59)
+                dInicio.atStartOfDay(), dFim.atTime(23, 59, 59)
         );
 
         relatorioService.exportarPdf(response, lista, dInicio.toString(), dFim.toString());
@@ -203,18 +172,13 @@ public class CaixaController {
 
     @GetMapping("/{id}")
     @Transactional(readOnly = true)
+    @Operation(summary = "Aceder à Ficha Técnica de um Fecho de Caixa Antigo")
     public ResponseEntity<CaixaDiarioDTO> buscarPorId(@PathVariable Long id) {
-        return caixaRepository.findById(id)
-                .map(caixaService::converterParaDTOCompleto)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return caixaRepository.findById(id).map(caixaService::converterParaDTOCompleto).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
     }
 
-    // ==================================================================================
-    // RUPTURA: REGISTO DE VENDA PERDIDA NO PDV
-    // ==================================================================================
     @PostMapping("/venda-perdida")
-    @Operation(summary = "Registra um produto que o cliente pediu mas não tinha no estoque")
+    @Operation(summary = "Alarme de Rotura (Ruptura Física)", description = "O Operador de caixa reporta quando um cliente procurou por algo mas a loja não tinha estoque.")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> registrarVendaPerdida(@RequestBody Map<String, String> payload) {
         VendaPerdida vp = new VendaPerdida();

@@ -4,7 +4,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Produto;
-import br.com.lojaddcosmeticos.ddcosmeticos_backend.repository.ProdutoRepository;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ProdutoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,19 +24,17 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/produtos")
-@Tag(name = "Produtos", description = "Gestão de Catálogo e Estoque")
-@Slf4j
+@Tag(name = "Produtos", description = "Gestão de Catálogo, IA e Estoque")
 public class ProdutoController {
 
     @Autowired
     private ProdutoService produtoService;
 
-    @Autowired
-    private ProdutoRepository produtoRepository;
-
     @GetMapping("/ncm/sugestoes")
+    @Operation(summary = "Busca sugestões inteligentes de NCM baseadas no histórico")
     public ResponseEntity<List<Map<String, String>>> buscarSugestoesNcm(@RequestParam String termo) {
         if (termo == null || termo.length() < 2) {
             return ResponseEntity.ok(Collections.emptyList());
@@ -46,7 +43,7 @@ public class ProdutoController {
     }
 
     @GetMapping
-    @Operation(summary = "Lista produtos com filtros avançados")
+    @Operation(summary = "Lista produtos com filtros avançados (Catálogo)")
     public ResponseEntity<Page<ProdutoListagemDTO>> listar(
             @RequestParam(required = false) String termo,
             @RequestParam(required = false) String marca,
@@ -55,61 +52,64 @@ public class ProdutoController {
             @RequestParam(required = false) Boolean semImagem,
             @RequestParam(required = false) Boolean semNcm,
             @RequestParam(required = false) Boolean precoZero,
-            @RequestParam(required = false) Boolean revisaoPendente, // 🚩 PARÂMETRO ADICIONADO PARA O FILTRO DO ALERTA
+            @RequestParam(required = false) Boolean revisaoPendente,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("descricao"));
-
-        // Passa todos os 8 parâmetros de filtro para o Service
         return ResponseEntity.ok(produtoService.listarResumo(
                 termo, marca, categoria, statusEstoque, semImagem, semNcm, precoZero, revisaoPendente, pageable
         ));
     }
 
     @GetMapping("/lixeira")
+    @Operation(summary = "Lista produtos inativos")
     public ResponseEntity<List<Produto>> listarLixeira() {
         return ResponseEntity.ok(produtoService.buscarLixeira());
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Busca produto por ID")
     public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {
         return ResponseEntity.ok(produtoService.buscarPorId(id));
     }
 
     @GetMapping("/{id}/historico")
+    @Operation(summary = "Busca a trilha de auditoria (Envers) do produto")
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistorico(@PathVariable Long id) {
         return ResponseEntity.ok(produtoService.buscarHistorico(id));
     }
 
     @GetMapping("/baixo-estoque")
+    @Operation(summary = "Lista produtos com estoque crítico")
     public ResponseEntity<List<Produto>> listarBaixoEstoque() {
         return ResponseEntity.ok(produtoService.listarBaixoEstoque());
     }
 
     @GetMapping("/ean/{ean}")
+    @Operation(summary = "Busca produto por EAN (Local ou API Externa)")
     public ResponseEntity<ProdutoDTO> buscarPorEan(@PathVariable String ean) {
         return ResponseEntity.ok(produtoService.buscarPorEanOuExterno(ean));
     }
 
     @GetMapping("/pdv")
+    @Operation(summary = "Lista rápida de produtos para o Frente de Caixa (PDV)")
     public ResponseEntity<Page<ProdutoListagemDTO>> buscarParaPdv(
             @RequestParam(required = false) String termo,
             Pageable pageable) {
-        // Para a busca do PDV, a flag de revisaoPendente é 'false' ou irrelevante (por isso passamos null/false no final)
         return ResponseEntity.ok(produtoService.listarResumo(
                 termo, null, null, null, false, false, false, false, pageable
         ));
     }
 
-    // --- ESCRITA ---
-
     @PostMapping
+    @Operation(summary = "Cadastra novo produto")
     public ResponseEntity<ProdutoDTO> criar(@RequestBody ProdutoDTO dto) {
         return ResponseEntity.ok(produtoService.salvar(dto));
     }
 
     @PutMapping("/{id}")
+    @Operation(summary = "Atualiza produto existente")
     public ResponseEntity<Produto> atualizar(@PathVariable Long id, @RequestBody ProdutoDTO dto) {
         return ResponseEntity.ok(produtoService.atualizar(id, dto));
     }
@@ -124,7 +124,6 @@ public class ProdutoController {
         return ResponseEntity.noContent().build();
     }
 
-    // NOVO: Endpoint para gestão rápida de compras
     @PatchMapping("/{id}/custo")
     @Operation(summary = "Atualização rápida do Custo de Aquisição")
     public ResponseEntity<Void> atualizarCusto(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
@@ -136,7 +135,7 @@ public class ProdutoController {
     }
 
     @DeleteMapping("/{ean}")
-    @Operation(summary = "Inativa um produto (move para lixeira)")
+    @Operation(summary = "Inativa um produto (Move para lixeira)")
     public ResponseEntity<Void> inativar(@PathVariable String ean) {
         produtoService.inativarPorEan(ean);
         return ResponseEntity.noContent().build();
@@ -149,9 +148,6 @@ public class ProdutoController {
         return ResponseEntity.ok().build();
     }
 
-    // --- FISCAL & INTELIGÊNCIA ---
-
-    // 🚩 NOVO: Endpoint para o React enviar a descrição do produto para a IA analisar
     @PostMapping("/analisar-ia")
     @Operation(summary = "Pede à IA para deduzir NCM e Categoria do Produto")
     public ResponseEntity<Map<String, String>> analisarProdutoIA(@RequestBody Map<String, String> payload) {
@@ -159,12 +155,11 @@ public class ProdutoController {
     }
 
     @PostMapping("/saneamento-fiscal")
-    @Operation(summary = "Recalcula tributos e SALVA no banco")
+    @Operation(summary = "Auditoria fiscal em massa (Recalcula tributos e SALVA no banco)")
     public ResponseEntity<Map<String, Object>> realizarSaneamento() {
         return ResponseEntity.ok(produtoService.saneamentoFiscal());
     }
 
-    // NOVO: Arruma o banco de dados para o Dashboard funcionar
     @PostMapping("/saneamento-custos")
     @Operation(summary = "Preenche custos zerados com base no preço de venda (Markup 100%)")
     public ResponseEntity<Map<String, Object>> realizarSaneamentoCustos() {
@@ -172,19 +167,19 @@ public class ProdutoController {
     }
 
     @PostMapping("/corrigir-ncms-ia")
-    @Operation(summary = "Correção de NCMs usando Inteligência")
+    @Operation(summary = "Correção de NCMs usando Inteligência de Padrões")
     public ResponseEntity<Map<String, Object>> corrigirNcmsIA() {
         return ResponseEntity.ok(produtoService.corrigirNcmsEmMassa());
     }
 
-    // --- IMPORTAÇÃO E EXPORTAÇÃO ---
-
     @PostMapping("/importar")
+    @Operation(summary = "Importação de Catálogo via Planilha (Excel/CSV)")
     public ResponseEntity<Map<String, Object>> importarArquivo(@RequestParam("arquivo") MultipartFile arquivo) {
         return ResponseEntity.ok(produtoService.importarProdutos(arquivo));
     }
 
     @GetMapping("/exportar/csv")
+    @Operation(summary = "Baixar todo o catálogo em formato CSV")
     public ResponseEntity<byte[]> exportarCsv() {
         byte[] dados = produtoService.gerarRelatorioCsv();
         return ResponseEntity.ok()
@@ -194,6 +189,7 @@ public class ProdutoController {
     }
 
     @GetMapping("/exportar/excel")
+    @Operation(summary = "Baixar todo o catálogo em formato Excel (XLSX)")
     public ResponseEntity<byte[]> exportarExcel() {
         byte[] dados = produtoService.gerarRelatorioExcel();
         return ResponseEntity.ok()
@@ -202,123 +198,98 @@ public class ProdutoController {
                 .body(dados);
     }
 
-    // --- UTILITÁRIOS ---
-
     @GetMapping("/proximo-sequencial")
-    @Operation(summary = "Gera o próximo código de barras interno (começado com 2)")
+    @Operation(summary = "Gera o próximo código de barras interno disponível")
     public ResponseEntity<String> obterProximoSequencial() {
-        String proximoEan = produtoService.gerarProximoEanInterno();
-        return ResponseEntity.ok(proximoEan);
+        return ResponseEntity.ok(produtoService.gerarProximoEanInterno());
     }
 
     @GetMapping("/alertas/pendentes-revisao")
-    @Operation(summary = "Conta os produtos que precisam de revisão")
+    @Operation(summary = "Conta os produtos sinalizados com alertas de sistema")
     public ResponseEntity<Long> contarProdutosPendentes() {
-        long pendentes = produtoRepository.countProdutosPendentesDeRevisao();
-        return ResponseEntity.ok(pendentes);
+        return ResponseEntity.ok(produtoService.obterRaioXInteligenciaArtificial().get("totalAnomalias") != null
+                ? ((Number) produtoService.obterRaioXInteligenciaArtificial().get("totalAnomalias")).longValue() : 0L);
     }
 
-    // =======================================================
-    // 🔥 ADICIONE ESTE BLOCO AQUI (Antes do @GetMapping("/{id}"))
-    // =======================================================
     @GetMapping("/cross-sell")
     @Operation(summary = "Sugestões inteligentes de produtos complementares (Cross-Sell)")
     public ResponseEntity<List<Produto>> buscarSugestoesCrossSell(
             @RequestParam Long produtoBaseId,
             @RequestParam(defaultValue = "3") int limite) {
-
-        // Retorna as sugestões da IA ou produtos da mesma subcategoria
         return ResponseEntity.ok(produtoService.buscarSugestoesCrossSell(produtoBaseId, limite));
     }
-    // =========================================================================
-    // 🔥 ROTA DO ROBÔ DE EANs INTERNOS 🔥
-    // =========================================================================
+
     @PostMapping("/corrigir-eans-internos-ia")
+    @Operation(summary = "Saneamento Matemático de EANs Internos (GS1)")
     public ResponseEntity<?> corrigirEansInternosIa() {
         try {
             return ResponseEntity.ok(produtoService.corrigirEansInternosIa());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(java.util.Map.of(
-                    "sucesso", false,
-                    "mensagem", "Erro na IA de EAN: " + e.getMessage()
-            ));
+            return ResponseEntity.badRequest().body(Map.of("sucesso", false, "mensagem", "Erro na IA de EAN: " + e.getMessage()));
         }
     }
-    // =========================================================================
-    // 🔥 ENDPOINT DA IMPRESSORA TÉRMICA (ZPL) 🔥
-    // =========================================================================
-    /**
-     * Retorna o código ZPL bruto (em texto) para impressão térmica.
-     * Produz 'text/plain' para não causar problemas no navegador/frontend.
-     */
-    @GetMapping(value = "/{id}/etiqueta", produces = org.springframework.http.MediaType.TEXT_PLAIN_VALUE)
-    public org.springframework.http.ResponseEntity<String> imprimirEtiqueta(@PathVariable Long id) {
+
+    @GetMapping(value = "/{id}/etiqueta", produces = MediaType.TEXT_PLAIN_VALUE)
+    @Operation(summary = "Gera o código de impressão térmica (ZPL) de um produto")
+    public ResponseEntity<String> imprimirEtiqueta(@PathVariable Long id) {
         try {
-            String zpl = produtoService.imprimirEtiqueta(id);
-            return org.springframework.http.ResponseEntity.ok(zpl);
-        } catch (br.com.lojaddcosmeticos.ddcosmeticos_backend.exception.ResourceNotFoundException e) {
-            return org.springframework.http.ResponseEntity.notFound().build();
+            return ResponseEntity.ok(produtoService.imprimirEtiqueta(id));
         } catch (Exception e) {
-            log.error("Erro ao gerar etiqueta ZPL para o produto ID: {}", id, e);
-            return org.springframework.http.ResponseEntity.internalServerError().body("Erro ao gerar etiqueta.");
+            log.error("Erro ao gerar etiqueta ZPL", e);
+            return ResponseEntity.internalServerError().body("Erro ao gerar etiqueta.");
         }
     }
-    // =========================================================================
-    // 🔥 ROTAS DO DASHBOARD DE IA (RAIO-X E QUICK FIX)
-    // =========================================================================
 
     @GetMapping("/dashboard-ia")
-    public org.springframework.http.ResponseEntity<Map<String, Object>> obterRaioXIA() {
-        return org.springframework.http.ResponseEntity.ok(produtoService.obterRaioXInteligenciaArtificial());
+    @Operation(summary = "Traz o Raio-X completo das anomalias no Catálogo")
+    public ResponseEntity<Map<String, Object>> obterRaioXIA() {
+        return ResponseEntity.ok(produtoService.obterRaioXInteligenciaArtificial());
     }
 
     @PostMapping("/quick-fix-ia/{tipo}")
-    public org.springframework.http.ResponseEntity<Map<String, Object>> aplicarQuickFixIA(@PathVariable String tipo) {
-        return org.springframework.http.ResponseEntity.ok(produtoService.aplicarQuickFixIA(tipo));
+    @Operation(summary = "Aplica a resolução rápida de IA baseada no impasse")
+    public ResponseEntity<Map<String, Object>> aplicarQuickFixIA(@PathVariable String tipo) {
+        return ResponseEntity.ok(produtoService.aplicarQuickFixIA(tipo));
     }
-    // =========================================================================
-    // 🔥 ROTAS DO MODO AUDITOR DE GÔNDOLA
-    // =========================================================================
 
-    // 1. Busca rápida por EAN (Otimizada para o leitor de código de barras)
     @GetMapping("/codigo/{ean}")
-    public org.springframework.http.ResponseEntity<br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO> buscarPorEanRapido(@PathVariable String ean) {
-        br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoDTO prod = produtoService.buscarPorEanOuExterno(ean);
-        if (prod != null && prod.id() != null) {
-            return org.springframework.http.ResponseEntity.ok(prod);
-        }
-        return org.springframework.http.ResponseEntity.notFound().build();
+    @Operation(summary = "Busca ultrarrápida por código de barras (Frente de Loja)")
+    public ResponseEntity<ProdutoDTO> buscarPorEanRapido(@PathVariable String ean) {
+        ProdutoDTO prod = produtoService.buscarPorEanOuExterno(ean);
+        return (prod != null && prod.id() != null) ? ResponseEntity.ok(prod) : ResponseEntity.notFound().build();
     }
 
-    // 2. Recebe o alerta do telemóvel e marca o produto como pendente
     @PostMapping("/{id}/divergencia")
-    public org.springframework.http.ResponseEntity<Void> reportarDivergencia(@PathVariable Long id) {
+    @Operation(summary = "Recebe alerta de preço errado via app/coletor de gôndola")
+    public ResponseEntity<Void> reportarDivergencia(@PathVariable Long id) {
         produtoService.sinalizarDivergenciaGondola(id);
-        return org.springframework.http.ResponseEntity.ok().build();
+        return ResponseEntity.ok().build();
     }
+
     @GetMapping("/divergencias-gondola")
-    public org.springframework.http.ResponseEntity<List<br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ProdutoListagemDTO>> listarDivergencias() {
-        return org.springframework.http.ResponseEntity.ok(produtoService.listarDivergenciasGondola());
+    @Operation(summary = "Lista produtos sinalizados com divergência de preço física")
+    public ResponseEntity<List<ProdutoListagemDTO>> listarDivergencias() {
+        return ResponseEntity.ok(produtoService.listarDivergenciasGondola());
     }
 
     @PostMapping("/{id}/resolver-divergencia")
-    public org.springframework.http.ResponseEntity<Map<String, String>> resolverDivergencia(
-            @PathVariable Long id,
-            @RequestParam java.math.BigDecimal novoPreco) {
-        return org.springframework.http.ResponseEntity.ok(produtoService.resolverDivergenciaEImprimir(id, novoPreco));
+    @Operation(summary = "Resolve divergência e devolve ZPL da nova etiqueta")
+    public ResponseEntity<Map<String, String>> resolverDivergencia(
+            @PathVariable Long id, @RequestParam BigDecimal novoPreco) {
+        return ResponseEntity.ok(produtoService.resolverDivergenciaEImprimir(id, novoPreco));
     }
-    // =========================================================================
-    // 🔥 ROTAS PARA EDIÇÃO INLINE (MODO EXCEL)
-    // =========================================================================
+
     @PatchMapping("/{id}/preco-venda")
-    public org.springframework.http.ResponseEntity<Void> atualizarPrecoVendaRapido(@PathVariable Long id, @RequestParam java.math.BigDecimal valor) {
+    @Operation(summary = "Modo Excel: Salva Preço Retalho rapidamente")
+    public ResponseEntity<Void> atualizarPrecoVendaRapido(@PathVariable Long id, @RequestParam BigDecimal valor) {
         produtoService.definirPrecoVenda(id, valor);
-        return org.springframework.http.ResponseEntity.ok().build();
+        return ResponseEntity.ok().build();
     }
 
     @PatchMapping("/{id}/estoque")
-    public org.springframework.http.ResponseEntity<Void> atualizarEstoqueRapido(@PathVariable Long id, @RequestParam Integer quantidade) {
+    @Operation(summary = "Modo Excel: Salva Estoque Físico rapidamente")
+    public ResponseEntity<Void> atualizarEstoqueRapido(@PathVariable Long id, @RequestParam Integer quantidade) {
         produtoService.ajustarEstoqueRapido(id, quantidade);
-        return org.springframework.http.ResponseEntity.ok().build();
+        return ResponseEntity.ok().build();
     }
 }

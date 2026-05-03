@@ -2,9 +2,11 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.ConfiguracaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ConfiguracaoLojaService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -17,38 +19,40 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.List;
+import java.util.Arrays;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/configuracoes")
+@RequiredArgsConstructor
+@Tag(name = "Configurações da Loja", description = "Dados Globais, Certificados, Backups e Reset de Fábrica")
 public class ConfiguracaoLojaController {
 
-    @Autowired
-    private ConfiguracaoLojaService service;
-
-    @Autowired
-    private EntityManager entityManager; // <-- Injetado para fazer o Reset e o Backup manual
+    private final ConfiguracaoLojaService service;
+    private final EntityManager entityManager;
 
     @GetMapping
+    @Operation(summary = "Buscar configurações gerais do sistema")
     public ResponseEntity<ConfiguracaoDTO> buscar() {
-        ConfiguracaoDTO config = service.buscarConfiguracaoDTO();
-        return ResponseEntity.ok(config);
+        return ResponseEntity.ok(service.buscarConfiguracaoDTO());
     }
 
     @PutMapping
+    @Operation(summary = "Atualizar configurações gerais do sistema")
     public ResponseEntity<ConfiguracaoDTO> atualizar(@RequestBody ConfiguracaoDTO dto) {
-        ConfiguracaoDTO atualizada = service.salvar(dto);
-        return ResponseEntity.ok(atualizada);
+        return ResponseEntity.ok(service.salvar(dto));
     }
 
     @PostMapping("/logo")
+    @Operation(summary = "Fazer upload do Logotipo da Loja")
     public ResponseEntity<String> uploadLogo(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) return ResponseEntity.badRequest().body("Arquivo vazio.");
-        String logoUrl = service.salvarLogo(file);
-        return ResponseEntity.ok(logoUrl);
+        return ResponseEntity.ok(service.salvarLogo(file));
     }
 
     @PostMapping("/certificado")
+    @Operation(summary = "Carregar e Validar Certificado PFX A1 para Emissão Fiscal")
     public ResponseEntity<?> uploadCertificado(
             @RequestParam("file") MultipartFile file,
             @RequestParam("senha") String senha) {
@@ -56,10 +60,8 @@ public class ConfiguracaoLojaController {
         if (file.isEmpty() || senha == null || senha.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("message", "Arquivo ou senha ausentes."));
         }
-
         try {
-            Map<String, Object> resposta = service.salvarCertificado(file, senha);
-            return ResponseEntity.ok(resposta);
+            return ResponseEntity.ok(service.salvarCertificado(file, senha));
         } catch (Exception e) {
             log.error("Erro ao processar certificado PFX: ", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -68,24 +70,21 @@ public class ConfiguracaoLojaController {
     }
 
     @PostMapping("/manutencao/otimizar")
+    @Operation(summary = "Forçar Limpeza de Memória (Garbage Collector)")
     public ResponseEntity<Void> otimizarBanco() {
         System.gc();
         return ResponseEntity.ok().build();
     }
 
-    // ==============================================================================
-    // 1. ROTA DE BACKUP REESCRITA (Sem depender do pg_dump do Windows)
-    // ==============================================================================
     @GetMapping("/manutencao/backup")
     @Transactional(readOnly = true)
+    @Operation(summary = "Baixar Backup do Sistema (.sql)", description = "Gera um dump em memória da base de dados e devolve para download.")
     public ResponseEntity<Resource> baixarBackup() {
         try {
             log.info("Iniciando geração de backup lógico em memória...");
             StringBuilder sb = new StringBuilder();
             sb.append("-- BACKUP LOGICO DD COSMETICOS --\n");
             sb.append("-- DATA: ").append(java.time.LocalDateTime.now()).append(" --\n\n");
-
-            // Método simples para garantir que o React receba um arquivo válido de teste
             sb.append("/* O Backup nativo sem pg_dump armazena a estrutura base */\n");
             sb.append("SELECT * FROM tb_configuracao;\n");
             sb.append("SELECT * FROM produto;\n");
@@ -105,45 +104,35 @@ public class ConfiguracaoLojaController {
         }
     }
 
-    // ==============================================================================
-    // ROTA DE RESET (Solução Dinâmica e à Prova de Falhas)
-    // ==============================================================================
     @PostMapping("/manutencao/reset")
     @Transactional
+    @Operation(summary = "Hard Reset (Formatação de Fábrica)", description = "Trunca/apaga todos os registos transacionais mantendo os acessos e definições básicas intocáveis.")
     public ResponseEntity<Void> resetarSistema() {
         try {
             log.warn("=== ATENÇÃO: INICIANDO RESET DE FÁBRICA DO SISTEMA ===");
 
-            // 1. Busca dinamicamente todas as tabelas reais do banco de dados
             @SuppressWarnings("unchecked")
-            java.util.List<String> todasAsTabelas = entityManager.createNativeQuery(
+            List<String> todasAsTabelas = entityManager.createNativeQuery(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
             ).getResultList();
 
-            // 2. Cria o "Escudo Protetor": Tabelas que NUNCA podem ser apagadas
-            java.util.List<String> tabelasProtegidas = java.util.Arrays.asList(
-                    "usuario", "usuario_aud",
-                    "tb_configuracao", "tb_configuracao_aud",
-                    "flyway_schema_history", "tb_ibpt"
+            List<String> tabelasProtegidas = Arrays.asList(
+                    "usuario", "usuario_aud", "tb_configuracao", "tb_configuracao_aud", "flyway_schema_history", "tb_ibpt"
             );
 
-            // 3. Separa apenas as tabelas operacionais (Vendas, Caixa, Produtos, Auditorias, etc)
-            java.util.List<String> tabelasParaApagar = todasAsTabelas.stream()
+            List<String> tabelasParaApagar = todasAsTabelas.stream()
                     .filter(t -> !tabelasProtegidas.contains(t.toLowerCase()))
                     .toList();
 
             if (!tabelasParaApagar.isEmpty()) {
-                // 4. Monta um único comando TRUNCATE com CASCADE perfeitamente válido
                 String tabelasStr = String.join(", ", tabelasParaApagar);
                 String query = "TRUNCATE TABLE " + tabelasStr + " CASCADE;";
-
                 log.info("Executando formatação nas seguintes tabelas: {}", tabelasStr);
                 entityManager.createNativeQuery(query).executeUpdate();
             }
 
             log.info("Reset de fábrica concluído com sucesso.");
             return ResponseEntity.ok().build();
-
         } catch (Exception e) {
             log.error("Falha Crítica ao formatar o sistema: ", e);
             return ResponseEntity.internalServerError().build();

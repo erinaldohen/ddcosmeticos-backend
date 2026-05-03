@@ -4,6 +4,8 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.HistoricoProdutoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.model.Auditoria;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.AuditoriaService;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -15,124 +17,89 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/auditoria")
-@RequiredArgsConstructor // Substitui os múltiplos @Autowired, gerando construtores seguros
+@RequiredArgsConstructor
+@Tag(name = "Auditoria (Envers) e Timeline", description = "Monitorização de ações de operadores e rastreamento contínuo de segurança")
 public class AuditoriaController {
 
     private final AuditoriaService auditoriaService;
     private final RelatorioService relatorioService;
 
-    // =========================================================================
-    // 1. BUSCA SINCRONIZADA DA TIMELINE (BLINDADA CONTRA ERROS DE DATA)
-    // =========================================================================
     @GetMapping("/eventos")
+    @Operation(summary = "Listar Eventos Globais do Sistema", description = "Extrai eventos ordenados com conversão segura de Fuso Horário.")
     public ResponseEntity<Page<Auditoria>> listarEventos(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String inicio,
             @RequestParam(required = false) String fim,
             Pageable pageable) {
-
         try {
-            // Converte a string "YYYY-MM-DD" do React para LocalDateTime com horas exatas
-            LocalDateTime dataInicio = (inicio != null && !inicio.isBlank())
-                    ? LocalDate.parse(inicio).atStartOfDay()
-                    : null;
-
-            LocalDateTime dataFim = (fim != null && !fim.isBlank())
-                    ? LocalDate.parse(fim).atTime(LocalTime.MAX)
-                    : null;
-
+            LocalDateTime dataInicio = (inicio != null && !inicio.isBlank()) ? LocalDate.parse(inicio).atStartOfDay() : null;
+            LocalDateTime dataFim = (fim != null && !fim.isBlank()) ? LocalDate.parse(fim).atTime(LocalTime.MAX) : null;
             return ResponseEntity.ok(auditoriaService.buscarFiltrado(search, dataInicio, dataFim, pageable));
-
         } catch (Exception e) {
             log.error("Erro ao processar datas na Timeline de Auditoria: ", e);
             return ResponseEntity.badRequest().build();
         }
     }
 
-    // =========================================================================
-    // 2. OBTENÇÃO DA LIXEIRA (BLINDADA)
-    // =========================================================================
     @GetMapping("/lixeira")
+    @Operation(summary = "Obter Ficheiros/Produtos em Lixeira (Reciclagem)")
     public ResponseEntity<?> obterLixeira(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String inicio,
             @RequestParam(required = false) String fim) {
-
         try {
             LocalDate dataInicio = (inicio != null && !inicio.isBlank()) ? LocalDate.parse(inicio) : null;
             LocalDate dataFim = (fim != null && !fim.isBlank()) ? LocalDate.parse(fim) : null;
-
-            var itensExcluidos = auditoriaService.obterItensLixeira(search, dataInicio, dataFim);
-            return ResponseEntity.ok(itensExcluidos);
-
+            return ResponseEntity.ok(auditoriaService.obterItensLixeira(search, dataInicio, dataFim));
         } catch (Exception e) {
             log.error("Erro ao buscar lixeira: {}", e.getMessage());
             return ResponseEntity.internalServerError().body("Erro ao processar lixeira: " + e.getMessage());
         }
     }
 
-    // =========================================================================
-    // 3. EXPORTAÇÃO DE PDF COM GESTÃO DE STREAM
-    // =========================================================================
     @GetMapping("/relatorio/pdf")
+    @Operation(summary = "Baixar Dossiê Completo de Auditoria em PDF")
     public ResponseEntity<byte[]> exportarRelatorio(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String inicio,
             @RequestParam(required = false) String fim) {
-
         try {
-            // O Service processa o HTML/Thymeleaf e converte para PDF
             byte[] pdfBytes = relatorioService.gerarPdfAuditoria(search, inicio, fim);
-
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
-
-            // Define o nome do arquivo para o navegador
-            String filename = "Auditoria_DD_" + System.currentTimeMillis() + ".pdf";
-            headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
-
-            // Cache-Control para evitar que o navegador armazene versões antigas de relatórios
+            headers.setContentDisposition(ContentDisposition.attachment().filename("Auditoria_DD_" + System.currentTimeMillis() + ".pdf").build());
             headers.setCacheControl(CacheControl.noCache().getHeaderValue());
-
             return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
-
         } catch (Exception e) {
             log.error("Erro ao gerar PDF de Auditoria: ", e);
             return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
-    // =========================================================================
-    // 4. HISTÓRICO INDIVIDUAL DO PRODUTO
-    // =========================================================================
     @GetMapping("/produto/{id}")
+    @Operation(summary = "Timeline Isolada por Produto", description = "Rastreia quem e a que horas alterou o preço ou as características críticas do artigo.")
     public ResponseEntity<List<HistoricoProdutoDTO>> buscarHistoricoProduto(@PathVariable Long id) {
         try {
-            List<HistoricoProdutoDTO> historico = auditoriaService.buscarHistoricoDoProduto(id);
-            return ResponseEntity.ok(historico);
+            return ResponseEntity.ok(auditoriaService.buscarHistoricoDoProduto(id));
         } catch (Exception e) {
             log.error("🚨 ERRO CRÍTICO AO BUSCAR AUDITORIA DO PRODUTO {} 🚨", id, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-    // =========================================================================
-    // 5. REGISTRO DE NOVA AUDITORIA (POST) BLINDADO
-    // =========================================================================
+
     @PostMapping
-    public ResponseEntity<Void> registrarAuditoriaManual(@RequestBody java.util.Map<String, Object> payload) {
+    @Operation(summary = "Criar Registo de Log Manual", description = "Usado pelo Frontend para reportar acessos anómalos ou erros visuais.")
+    public ResponseEntity<Void> registrarAuditoriaManual(@RequestBody Map<String, Object> payload) {
         try {
-            // Extrai os dados exatamente como o React envia hoje, ignorando a data do frontend (que causava o erro)
             String acao = (String) payload.getOrDefault("acao", "INFO");
             String usuario = (String) payload.getOrDefault("operador", "Sistema");
             String detalhes = (String) payload.getOrDefault("detalhes", "");
-
-            // Passa para o Service que já trata fallback de Enums e gera a dataHora no servidor
             auditoriaService.registrarAcao(acao, usuario, detalhes);
-
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("Erro ao salvar log de auditoria via API: ", e);

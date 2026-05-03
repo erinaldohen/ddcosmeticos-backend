@@ -14,24 +14,19 @@ import org.springframework.web.bind.annotation.*;
 
 @Slf4j
 @RestController
-// 🚨 CORREÇÃO: Mapeamento duplo para suportar a rota do frontend perfeitamente
-@RequestMapping({"/api/v1/fiscal/nfe", "/api/v1/nfe"})
-@Tag(name = "Fiscal NF-e (Modelo 55)", description = "Emissão de Notas para Atacado/Empresas e Status Sefaz")
+@RequestMapping("/api/v1/fiscal/nfe")
+@Tag(name = "Fiscal NF-e (Modelo 55)", description = "Emissão de Notas para Atacado, Devoluções e Fornecedores")
 public class NfeController {
 
-    @Autowired
-    private NfeService nfeService;
-
-    @Autowired
-    private ImpressaoService impressaoService; // 🚨 INJEÇÃO DO SERVIÇO DE IMPRESSÃO
+    @Autowired private NfeService nfeService;
+    @Autowired private ImpressaoService impressaoService;
 
     @GetMapping("/status")
     @Operation(summary = "Verificar Status SEFAZ NF-e", description = "Testa a comunicação com a SEFAZ para Notas Maiores (Modelo 55).")
     public ResponseEntity<String> verificarStatusSefaz() {
         try {
-            log.info("Iniciando ping no servidor da SEFAZ (NF-e)...");
-            String status = nfeService.consultarStatusSefaz();
-            return ResponseEntity.ok(status);
+            log.info("A iniciar ping ao servidor da SEFAZ (NF-e)...");
+            return ResponseEntity.ok(nfeService.consultarStatusSefaz());
         } catch (Exception e) {
             log.error("Falha de comunicação SEFAZ NF-e: ", e);
             return ResponseEntity.internalServerError().body("Erro ao consultar SEFAZ NF-e: " + e.getMessage());
@@ -39,9 +34,9 @@ public class NfeController {
     }
 
     @PostMapping("/emitir/{idVenda}")
-    @Operation(summary = "Emitir NF-e", description = "Gera, assina e transmite uma NF-e modelo 55 para o Governo.")
+    @Operation(summary = "Emitir NF-e", description = "Gera, assina e transmite uma NF-e modelo 55 para a SEFAZ.")
     public ResponseEntity<?> emitirNfe(@PathVariable Long idVenda) {
-        log.info("Recebida solicitação de emissão NF-e (Modelo 55) para venda ID: {}", idVenda);
+        log.info("Solicitação de emissão NF-e (Modelo 55) recebida para Venda ID: {}", idVenda);
         try {
             NfceResponseDTO retorno = nfeService.emitirNfeModelo55(idVenda);
             return ResponseEntity.ok(retorno);
@@ -51,21 +46,13 @@ public class NfeController {
         }
     }
 
-    // =====================================================================
-    // 🚨 NOVA ROTA: SERVE O PDF DA DANFE A4 PARA O NAVEGADOR
-    // =====================================================================
     @GetMapping(value = "/{idVenda}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @Operation(summary = "Imprimir DANFE (PDF)", description = "Gera o PDF da DANFE A4 pronto para impressão.")
+    @Operation(summary = "Visualizar DANFE A4 (PDF)", description = "Gera o PDF da DANFE A4 pronto para impressão (Inline viewer).")
     public ResponseEntity<byte[]> baixarDanfePdf(@PathVariable Long idVenda) {
         byte[] pdfBytes = impressaoService.gerarDanfeA4(idVenda);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        // "inline" faz o PDF abrir no navegador em vez de baixar automaticamente
-        headers.setContentDispositionFormData("inline", "DANFE_" + idVenda + ".pdf");
-
         return ResponseEntity.ok()
-                .headers(headers)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=DANFE_" + idVenda + ".pdf")
+                .contentType(MediaType.APPLICATION_PDF)
                 .body(pdfBytes);
     }
 }

@@ -7,6 +7,9 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.ImportacaoXmlService
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.SefazDistribuicaoService;
 import br.com.swconsultoria.nfe.dom.ConfiguracoesNfe;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -16,129 +19,109 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/estoque/notas-pendentes")
-@CrossOrigin(origins = "*")
+@Tag(name = "Estoque / Recepção Fiscal", description = "Monitorização e Importação de Notas Fiscais emitidas contra o CNPJ (Manifestação de Destinatário)")
 public class NotaPendenteController {
 
-    @Autowired
-    private NotaPendenteImportacaoRepository notaPendenteRepository;
+    @Autowired private NotaPendenteImportacaoRepository notaPendenteRepository;
+    @Autowired private ImportacaoXmlService importacaoXmlService;
+    @Autowired private SefazDistribuicaoService sefazDistribuicaoService;
+    @Autowired private NfeConfig nfeConfigBuilder;
 
-    @Autowired
-    private ImportacaoXmlService importacaoXmlService;
-
-    @Autowired
-    private SefazDistribuicaoService sefazDistribuicaoService;
-
-    @Autowired
-    private NfeConfig nfeConfigBuilder;
-
-    // 🔥 ATUALIZADO: Agora suporta Filtros de Emissão, Paginação e Inclusão de Histórico (Toggle Switch)
     @GetMapping
+    @Operation(summary = "Lista Notas Fiscais de Entrada", description = "Retorna XMLs prontos para importar ou o histórico de recebimentos.")
     public ResponseEntity<Page<NotaPendenteImportacao>> listarNotasProntasParaImportar(
             @RequestParam(required = false) String dataInicio,
             @RequestParam(required = false) String dataFim,
             @RequestParam(defaultValue = "false") boolean incluirImportadas,
             @PageableDefault(size = 50, sort = "dataCaptura") Pageable pageable) {
 
+        boolean isFiltroDataValido = (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty());
         Page<NotaPendenteImportacao> notasPage;
 
-        // Lógica de Filtro com Datas e Status
-        if (dataInicio != null && !dataInicio.isEmpty() && dataFim != null && !dataFim.isEmpty()) {
-            if (incluirImportadas) {
-                // Traz TUDO dentro do período
-                notasPage = notaPendenteRepository.findByDataEmissaoBetweenOrderByDataCapturaDesc(dataInicio, dataFim, pageable);
-            } else {
-                // Traz apenas as PENDENTES dentro do período
-                notasPage = notaPendenteRepository.findByDataEmissaoBetweenAndStatusNotOrderByDataCapturaDesc(dataInicio, dataFim, "IMPORTADA", pageable);
-            }
+        if (isFiltroDataValido) {
+            notasPage = incluirImportadas
+                    ? notaPendenteRepository.findByDataEmissaoBetweenOrderByDataCapturaDesc(dataInicio, dataFim, pageable)
+                    : notaPendenteRepository.findByDataEmissaoBetweenAndStatusNotOrderByDataCapturaDesc(dataInicio, dataFim, "IMPORTADA", pageable);
         } else {
-            // Busca Padrão (Sem datas)
-            if (incluirImportadas) {
-                notasPage = notaPendenteRepository.findAllByOrderByDataCapturaDesc(pageable);
-            } else {
-                notasPage = notaPendenteRepository.findAllByStatusNotOrderByDataCapturaDesc("IMPORTADA", pageable);
-            }
+            notasPage = incluirImportadas
+                    ? notaPendenteRepository.findAllByOrderByDataCapturaDesc(pageable)
+                    : notaPendenteRepository.findAllByStatusNotOrderByDataCapturaDesc("IMPORTADA", pageable);
         }
 
         return ResponseEntity.ok(notasPage);
     }
 
     @PostMapping("/{id}/importar")
+    @Operation(summary = "Efetivar Entrada de XML", description = "Marca o XML da nuvem como importado internamente.")
     public ResponseEntity<String> efetivarImportacao(@PathVariable Long id) {
         Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
-
-        if (notaOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        NotaPendenteImportacao nota = notaOpt.get();
+        if (notaOpt.isEmpty()) return ResponseEntity.notFound().build();
 
         try {
-            // A linha de processamento antigo comentada, pois quem salva os itens agora é o React
-            nota.setStatus("IMPORTADA"); // 🔥 PADRONIZADO PARA "IMPORTADA" (Feminino) para bater com o Frontend
+            NotaPendenteImportacao nota = notaOpt.get();
+            nota.setStatus("IMPORTADA");
             notaPendenteRepository.save(nota);
-            return ResponseEntity.ok("Nota importada com sucesso para o estoque e financeiro!");
+            return ResponseEntity.ok("Nota registada como importada com sucesso no sistema local!");
         } catch (Exception e) {
+            log.error("Erro ao efetivar importação", e);
             return ResponseEntity.badRequest().body("Erro ao importar a nota: " + e.getMessage());
         }
     }
 
     @PostMapping("/sincronizar")
+    @Operation(summary = "Sincronização Manual SEFAZ", description = "Varre a base nacional de NF-e à procura de novas notas emitidas para o CNPJ (Fornecedores).")
     public ResponseEntity<String> forcarSincronizacaoSefaz() {
         try {
             ConfiguracoesNfe config = nfeConfigBuilder.construirConfiguracaoDinamica(true);
-            String cnpjEmpresa = config.getCertificado().getCnpjCpf();
-            sefazDistribuicaoService.buscarNovasNotasNaSefaz(config, cnpjEmpresa);
-            return ResponseEntity.ok("Sincronização com a SEFAZ PRD concluída!");
+            sefazDistribuicaoService.buscarNovasNotasNaSefaz(config, config.getCertificado().getCnpjCpf());
+            return ResponseEntity.ok("Varredura na Nuvem da SEFAZ Nacional (MDe) concluída!");
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.badRequest().body("Erro ao comunicar com a SEFAZ: " + e.getMessage());
+            log.error("Falha na sincronização Sefaz: ", e);
+            return ResponseEntity.internalServerError().body("Erro de comunicação com a SEFAZ: " + e.getMessage());
         }
     }
 
     @PostMapping("/buscar-chave/{chave}")
+    @Operation(summary = "Download Forçado por Chave", description = "Busca uma nota fiscal específica a partir da sua chave de acesso de 44 dígitos.")
     public ResponseEntity<String> buscarNotaPorChave(@PathVariable String chave) {
         try {
             ConfiguracoesNfe config = nfeConfigBuilder.construirConfiguracaoDinamica(true);
-            String cnpjEmpresa = config.getCertificado().getCnpjCpf();
-            String mensagem = sefazDistribuicaoService.buscarNotaPorChaveEspecifca(config, cnpjEmpresa, chave);
+            String mensagem = sefazDistribuicaoService.buscarNotaPorChaveEspecifca(config, config.getCertificado().getCnpjCpf(), chave);
             return ResponseEntity.ok(mensagem);
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.badRequest().body(e.getMessage());
+            log.error("Falha na busca forçada por chave: ", e);
+            return ResponseEntity.badRequest().body("Erro: " + e.getMessage());
         }
     }
 
     @PostMapping("/{id}/manifestar")
+    @Operation(summary = "Ciência da Operação", description = "Envia evento de ciência para a Receita para poder fazer o download do XML Completo do Fornecedor.")
     public ResponseEntity<String> solicitarXmlCompletoSeFaltante(@PathVariable Long id) {
         try {
-            NotaPendenteImportacao nota = notaPendenteRepository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Nota não encontrada na base."));
-
+            NotaPendenteImportacao nota = notaPendenteRepository.findById(id).orElseThrow(() -> new RuntimeException("Registo Cloud não encontrado."));
             ConfiguracoesNfe config = nfeConfigBuilder.construirConfiguracaoDinamica(true);
             String msg = sefazDistribuicaoService.manifestarEBaixarXmlCompleto(config, nota.getChaveAcesso());
             return ResponseEntity.ok(msg);
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.badRequest().body("Erro ao processar a Ciência da Operação: " + e.getMessage());
+            log.error("Erro na manifestação MDe: ", e);
+            return ResponseEntity.badRequest().body("Erro ao emitir Ciência da Operação: " + e.getMessage());
         }
     }
 
     @GetMapping("/{id}/xml-parse")
+    @Operation(summary = "Ler/Decifrar XML Criptografado", description = "Lê o ficheiro RAW XML e devolve os dados estruturados numa árvore JSON para o Frontend.")
     public ResponseEntity<?> fazerParseDeXmlGuardado(@PathVariable Long id) {
-        Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
-
-        if (notaOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-
         try {
-            String xml = notaOpt.get().getXmlCompleto();
-            Object resultadoParse = importacaoXmlService.simularImportacaoXmlString(xml);
-            return ResponseEntity.ok(resultadoParse);
+            Optional<NotaPendenteImportacao> notaOpt = notaPendenteRepository.findById(id);
+            if (notaOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+            return ResponseEntity.ok(importacaoXmlService.simularImportacaoXmlString(notaOpt.get().getXmlCompleto()));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Erro ao ler o XML da base: " + e.getMessage());
+            log.error("Erro de Parsing XML: ", e);
+            return ResponseEntity.badRequest().body("Erro ao analisar a estrutura do ficheiro XML (O Ficheiro pode estar corrompido ou ser apenas o Resumo NSU): " + e.getMessage());
         }
     }
 }

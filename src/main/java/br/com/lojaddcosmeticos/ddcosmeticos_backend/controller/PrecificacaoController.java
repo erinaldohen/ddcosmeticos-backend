@@ -2,39 +2,37 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.AnalisePrecificacaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.PrecificacaoService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*; // Importei o * para pegar o @PathVariable
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Slf4j
 @RestController
-@RequestMapping("/api/precificacao")
+@RequestMapping("/api/v1/precificacao") // 🔥 ADICIONADO O V1
+@Tag(name = "Inteligência de Precificação", description = "Monitoramento de Margens de Lucro e Algoritmos Preditivos de Custo")
 public class PrecificacaoController {
 
-    @Autowired
-    private PrecificacaoService precificacaoService;
+    @Autowired private PrecificacaoService precificacaoService;
 
-    // 1. Retorna lista de produtos com problema (Dashboard)
     @GetMapping("/alertas-margem")
+    @Operation(summary = "Alarme de Compressão de Margem", description = "Varre a base devolvendo os produtos onde o lucro líquido está crítico face ao custo de reposição.")
     public ResponseEntity<List<AnalisePrecificacaoDTO>> getAlertasMargem() {
         List<AnalisePrecificacaoDTO> alertas = precificacaoService.buscarProdutosComMargemCritica();
-
-        if (alertas.isEmpty()) {
-            return ResponseEntity.noContent().build();
-        }
-
-        return ResponseEntity.ok(alertas);
+        return alertas.isEmpty() ? ResponseEntity.noContent().build() : ResponseEntity.ok(alertas);
     }
 
-    // 2. Retorna análise de UM produto específico (O QUE FALTAVA)
     @GetMapping("/analisar/{codigoBarras}")
+    @Operation(summary = "Análise Fina de um Produto (Simulador)", description = "Executa o Markup e Margem Teórica projetando os custos fiscais para formular o melhor PVP.")
     public ResponseEntity<AnalisePrecificacaoDTO> analisarIndividual(@PathVariable String codigoBarras) {
         try {
-            // Este método chama o calcularSugestao que adicionamos no Service
-            AnalisePrecificacaoDTO analise = precificacaoService.calcularSugestao(codigoBarras);
-            return ResponseEntity.ok(analise);
+            return ResponseEntity.ok(precificacaoService.calcularSugestao(codigoBarras));
         } catch (IllegalArgumentException e) {
+            log.warn("Falha ao analisar preço do EAN {}: {}", codigoBarras, e.getMessage());
             return ResponseEntity.notFound().build();
         }
     }

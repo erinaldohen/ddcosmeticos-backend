@@ -9,7 +9,6 @@ import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.MotorInteligenciaSer
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,63 +21,48 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/dashboard")
 @RequiredArgsConstructor
-@Tag(name = "Dashboard", description = "Endpoints para dados analíticos e indicadores")
+@Tag(name = "Dashboard", description = "Endpoints para KPIs, Indicadores Fiscais e Painel de Inteligência")
 public class DashboardController {
 
-    @Autowired
-    private MotorInteligenciaService motorIA;
-
-    @Autowired
-    private InsightIARepository insightIARepo;
-
+    private final MotorInteligenciaService motorIA;
+    private final InsightIARepository insightIARepo;
     private final DashboardService dashboardService;
 
-    // =========================================================================
-    // 1. ENDPOINT PRINCIPAL (COM FILTRO DE DATA "A MÁQUINA DO TEMPO")
-    // =========================================================================
     @GetMapping
-    @Operation(summary = "Carregar Dashboard Dinâmico")
+    @Operation(summary = "Carregar Dashboard Dinâmico (KPIs)")
     @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
-    public ResponseEntity<Map<String, Object>> getDashboardData(
-            @RequestParam(defaultValue = "este_mes") String periodo) {
+    public ResponseEntity<Map<String, Object>> getDashboardData(@RequestParam(defaultValue = "este_mes") String periodo) {
         return ResponseEntity.ok(dashboardService.obterDadosDoDashboard(periodo));
     }
 
-    // 2. Resumo Operacional
     @GetMapping("/resumo")
-    @Operation(summary = "Resumo Operacional")
+    @Operation(summary = "Resumo Operacional (Vendas vs Metas)")
     public ResponseEntity<DashboardResumoDTO> getResumoGeral() {
         return ResponseEntity.ok(dashboardService.obterResumoGeral());
     }
 
-    // 3. Alertas Padrão
     @GetMapping("/alertas")
-    @Operation(summary = "Alertas de Auditoria")
+    @Operation(summary = "Alertas Recentes da Trilha de Auditoria")
     public ResponseEntity<List<AuditoriaRequestDTO>> getAlertasRecentes() {
         return ResponseEntity.ok(dashboardService.buscarAlertasRecentes());
     }
 
-    // =========================================================================
-    // 3.1 ALERTA DE PRODUTOS PENDENTES DE REVISÃO (DO PDV)
-    // =========================================================================
     @GetMapping("/alertas/pendentes-revisao")
-    @Operation(summary = "Contagem de produtos vindos do PDV que precisam de revisão")
+    @Operation(summary = "Contagem de produtos vindos do PDV que precisam de revisão do Gestor")
     @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
     public ResponseEntity<Long> contarProdutosPendentesDeRevisao() {
         return ResponseEntity.ok(dashboardService.contarProdutosPendentesDeRevisao());
     }
 
-    // 4. Modal de Risco (Drill-Down do Estoque)
     @GetMapping("/risco-lista")
-    @Operation(summary = "Lista de Produtos em Risco")
+    @Operation(summary = "Drill-Down de Produtos em Risco (Estoque/Validade)")
     @PreAuthorize("hasAnyRole('ADMIN', 'GERENTE')")
     public ResponseEntity<List<Map<String, Object>>> getListaRisco(@RequestParam String tipo) {
         return ResponseEntity.ok(dashboardService.obterListaRisco(tipo));
     }
 
-    // 5. Dados Fiscais
     @GetMapping("/fiscal")
-    @Operation(summary = "Dados Fiscais")
+    @Operation(summary = "Gráficos de Projeção Fiscal (ICMS/Simples)")
     public ResponseEntity<FiscalDashboardDTO> getDadosFiscais(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate inicio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fim) {
@@ -89,21 +73,21 @@ public class DashboardController {
         return ResponseEntity.ok(dashboardService.getResumoFiscal(inicio, fim));
     }
 
-    // Retorna os alertas da IA para o Frontend
     @GetMapping("/insights")
+    @Operation(summary = "Ler insights e alertas gerados pela IA Diária")
     public ResponseEntity<?> getInsightsIA() {
         return ResponseEntity.ok(insightIARepo.findByResolvidoFalseOrderByCriticidadeAscDataGeracaoDesc());
     }
 
-    // Permite disparar o cálculo manualmente para testar agora mesmo
     @PostMapping("/insights/forcar-analise")
+    @Operation(summary = "Forçar varredura da IA sobre a base de dados (Manual)")
     public ResponseEntity<String> forcarAnaliseIA() {
         motorIA.processarInsightsDiarios();
         return ResponseEntity.ok("Análise da IA executada com sucesso!");
     }
 
-    // Permite ao gestor dispensar um alerta
     @PutMapping("/insights/{id}/resolver")
+    @Operation(summary = "Marcar alerta da IA como Resolvido/Ignorado")
     public ResponseEntity<?> resolverInsight(@PathVariable Long id) {
         return insightIARepo.findById(id).map(insight -> {
             insight.setResolvido(true);

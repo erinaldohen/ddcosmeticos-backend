@@ -3,7 +3,8 @@ package br.com.lojaddcosmeticos.ddcosmeticos_backend.controller;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioComissaoDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.dto.RelatorioVendasDTO;
 import br.com.lojaddcosmeticos.ddcosmeticos_backend.service.RelatorioService;
-import jakarta.servlet.http.HttpServletRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -17,25 +18,36 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/relatorios")
+@Tag(name = "Relatórios e BI", description = "Painéis de Inteligência e PDF Generativo")
 @RequiredArgsConstructor
 public class RelatorioController {
 
     private final RelatorioService relatorioService;
+
+    // Helper Limpo para Extração Segura de Datas do Frontend
+    private LocalDate parseDataSegura(String dataRaw) {
+        if (dataRaw == null || dataRaw.trim().isEmpty() || dataRaw.equals("undefined") || dataRaw.equals("null")) {
+            return null;
+        }
+        return LocalDate.parse(dataRaw);
+    }
+
+    private Long parseVendedorId(String idRaw) {
+        if (idRaw == null || idRaw.trim().isEmpty() || idRaw.equals("undefined") || idRaw.equals("null") || idRaw.equals("0")) {
+            return null;
+        }
+        try { return Long.parseLong(idRaw); } catch (NumberFormatException e) { return null; }
+    }
 
     // =========================================================================
     // 1. ROTAS DO PAINEL DE INTELIGÊNCIA (BI)
     // =========================================================================
 
     @GetMapping("/vendas")
-    public ResponseEntity<?> getRelatorioVendas(HttpServletRequest request) {
+    @Operation(summary = "Gerar DTO de Relatório de Vendas (BI)")
+    public ResponseEntity<?> getRelatorioVendas(@RequestParam(required = false) String inicio, @RequestParam(required = false) String fim) {
         try {
-            String inicioRaw = request.getParameter("inicio");
-            String fimRaw = request.getParameter("fim");
-
-            LocalDate inicio = (inicioRaw != null && !inicioRaw.isEmpty()) ? LocalDate.parse(inicioRaw) : null;
-            LocalDate fim = (fimRaw != null && !fimRaw.isEmpty()) ? LocalDate.parse(fimRaw) : null;
-
-            RelatorioVendasDTO relatorio = relatorioService.gerarRelatorioVendas(inicio, fim);
+            RelatorioVendasDTO relatorio = relatorioService.gerarRelatorioVendas(parseDataSegura(inicio), parseDataSegura(fim));
             return ResponseEntity.ok(relatorio);
         } catch (Exception e) {
             log.error("[BI VENDAS] Erro interno: ", e);
@@ -44,15 +56,10 @@ public class RelatorioController {
     }
 
     @GetMapping("/estoque")
-    public ResponseEntity<?> getRelatorioEstoque(HttpServletRequest request) {
+    @Operation(summary = "Gerar Dashboard de Estoque e Compras (BI)")
+    public ResponseEntity<?> getRelatorioEstoque(@RequestParam(required = false) String inicio, @RequestParam(required = false) String fim) {
         try {
-            String inicioRaw = request.getParameter("inicio");
-            String fimRaw = request.getParameter("fim");
-
-            LocalDate inicio = (inicioRaw != null && !inicioRaw.isEmpty()) ? LocalDate.parse(inicioRaw) : null;
-            LocalDate fim = (fimRaw != null && !fimRaw.isEmpty()) ? LocalDate.parse(fimRaw) : null;
-
-            Map<String, Object> relatorio = relatorioService.gerarRelatorioEstoque(inicio, fim);
+            Map<String, Object> relatorio = relatorioService.gerarRelatorioEstoque(parseDataSegura(inicio), parseDataSegura(fim));
             return ResponseEntity.ok(relatorio);
         } catch (Exception e) {
             log.error("[BI ESTOQUE] Erro interno: ", e);
@@ -61,15 +68,10 @@ public class RelatorioController {
     }
 
     @GetMapping("/financeiro")
-    public ResponseEntity<?> getRelatorioFinanceiro(HttpServletRequest request) {
+    @Operation(summary = "Gerar DRE e Fluxo de Caixa (BI)")
+    public ResponseEntity<?> getRelatorioFinanceiro(@RequestParam(required = false) String inicio, @RequestParam(required = false) String fim) {
         try {
-            String inicioRaw = request.getParameter("inicio");
-            String fimRaw = request.getParameter("fim");
-
-            LocalDate inicio = (inicioRaw != null && !inicioRaw.isEmpty()) ? LocalDate.parse(inicioRaw) : null;
-            LocalDate fim = (fimRaw != null && !fimRaw.isEmpty()) ? LocalDate.parse(fimRaw) : null;
-
-            Map<String, Object> relatorio = relatorioService.gerarRelatorioFinanceiro(inicio, fim);
+            Map<String, Object> relatorio = relatorioService.gerarRelatorioFinanceiro(parseDataSegura(inicio), parseDataSegura(fim));
             return ResponseEntity.ok(relatorio);
         } catch (Exception e) {
             log.error("[BI FINANCEIRO] Erro interno: ", e);
@@ -78,15 +80,10 @@ public class RelatorioController {
     }
 
     @GetMapping("/fiscal")
-    public ResponseEntity<?> getRelatorioFiscal(HttpServletRequest request) {
+    @Operation(summary = "Gerar Projeções de Simples Nacional (BI)")
+    public ResponseEntity<?> getRelatorioFiscal(@RequestParam(required = false) String inicio, @RequestParam(required = false) String fim) {
         try {
-            String inicioRaw = request.getParameter("inicio");
-            String fimRaw = request.getParameter("fim");
-
-            LocalDate inicio = (inicioRaw != null && !inicioRaw.isEmpty()) ? LocalDate.parse(inicioRaw) : null;
-            LocalDate fim = (fimRaw != null && !fimRaw.isEmpty()) ? LocalDate.parse(fimRaw) : null;
-
-            Map<String, Object> relatorio = relatorioService.gerarRelatorioFiscal(inicio, fim);
+            Map<String, Object> relatorio = relatorioService.gerarRelatorioFiscal(parseDataSegura(inicio), parseDataSegura(fim));
             return ResponseEntity.ok(relatorio);
         } catch (Exception e) {
             log.error("[BI FISCAL] Erro interno: ", e);
@@ -95,134 +92,87 @@ public class RelatorioController {
     }
 
     // =========================================================================
-    // 2. COMISSÕES E PDF (Mantidos e protegidos)
+    // 2. COMISSÕES E PDF
     // =========================================================================
 
     @GetMapping("/comissoes")
-    public ResponseEntity<?> buscarComissoes(HttpServletRequest request) {
-        String dataInicioRaw = request.getParameter("dataInicio");
-        String dataFimRaw = request.getParameter("dataFim");
-        String vendedorIdRaw = request.getParameter("vendedorId");
-
-        if (dataInicioRaw == null || dataFimRaw == null) {
-            return ResponseEntity.badRequest().body("Parâmetros de data são obrigatórios.");
-        }
-
+    @Operation(summary = "Calcular Folha de Comissões de Vendedores")
+    public ResponseEntity<?> buscarComissoes(
+            @RequestParam String dataInicio,
+            @RequestParam String dataFim,
+            @RequestParam(required = false) String vendedorId) {
         try {
-            LocalDateTime inicio = LocalDate.parse(dataInicioRaw).atStartOfDay();
-            LocalDateTime fim = LocalDate.parse(dataFimRaw).atTime(LocalTime.MAX);
-            Long idVendedor = parseVendedorId(vendedorIdRaw);
-
-            RelatorioComissaoDTO relatorio = relatorioService.gerarRelatorioComissoes(inicio, fim, idVendedor);
+            LocalDateTime inicioData = LocalDate.parse(dataInicio).atStartOfDay();
+            LocalDateTime fimData = LocalDate.parse(dataFim).atTime(LocalTime.MAX);
+            RelatorioComissaoDTO relatorio = relatorioService.gerarRelatorioComissoes(inicioData, fimData, parseVendedorId(vendedorId));
             return ResponseEntity.ok(relatorio);
-
         } catch (Exception e) {
             log.error("[COMISSOES] Falha ao processar relatório: ", e);
-            return ResponseEntity.internalServerError().body("Erro ao processar relatório.");
+            return ResponseEntity.badRequest().body("Erro ao processar parâmetros do relatório.");
         }
     }
 
     @GetMapping("/comissoes/pdf")
-    public ResponseEntity<?> baixarPdfComissoes(HttpServletRequest request) {
+    @Operation(summary = "Baixar Folha de Comissões assinável (PDF)")
+    public ResponseEntity<?> baixarPdfComissoes(
+            @RequestParam String dataInicio,
+            @RequestParam String dataFim,
+            @RequestParam(required = false) String vendedorId) {
         try {
-            String dataInicioRaw = request.getParameter("dataInicio");
-            String dataFimRaw = request.getParameter("dataFim");
-            String vendedorIdRaw = request.getParameter("vendedorId");
-
-            LocalDateTime inicio = LocalDate.parse(dataInicioRaw).atStartOfDay();
-            LocalDateTime fim = LocalDate.parse(dataFimRaw).atTime(LocalTime.MAX);
-            Long idVendedor = parseVendedorId(vendedorIdRaw);
-
-            RelatorioComissaoDTO dados = relatorioService.gerarRelatorioComissoes(inicio, fim, idVendedor);
+            LocalDateTime inicioData = LocalDate.parse(dataInicio).atStartOfDay();
+            LocalDateTime fimData = LocalDate.parse(dataFim).atTime(LocalTime.MAX);
+            RelatorioComissaoDTO dados = relatorioService.gerarRelatorioComissoes(inicioData, fimData, parseVendedorId(vendedorId));
             byte[] pdf = relatorioService.gerarPdfComissoes(dados);
-
-            if (pdf == null || pdf.length == 0) {
-                return ResponseEntity.internalServerError().body("Falha ao gerar conteúdo do PDF.");
-            }
 
             return ResponseEntity.ok()
                     .header("Content-Type", "application/pdf")
                     .header("Content-Disposition", "attachment; filename=comissoes_ddcosmeticos.pdf")
                     .body(pdf);
-
         } catch (Exception e) {
-            log.error("Erro ao processar PDF: ", e);
+            log.error("Erro ao processar PDF de Comissões: ", e);
             return ResponseEntity.internalServerError().body("Erro: " + e.getMessage());
         }
     }
 
-    private Long parseVendedorId(String idRaw) {
-        if (idRaw == null || idRaw.trim().isEmpty() ||
-                idRaw.equals("undefined") || idRaw.equals("null") || idRaw.equals("0")) {
-            return null;
-        }
-        try {
-            return Long.parseLong(idRaw);
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
+    // =========================================================================
+    // 3. DOSSIÊ EXECUTIVO 360º E EARNINGS
+    // =========================================================================
 
-    // =========================================================================
-    // 3. DOSSIÊ EXECUTIVO 360º (GERAÇÃO AVANÇADA EM PDF)
-    // =========================================================================
     @GetMapping("/dossie-executivo/pdf")
-    public ResponseEntity<byte[]> baixarDossieExecutivoPdf(HttpServletRequest request) {
+    @Operation(summary = "Gerar Dossiê Gerencial com síntese textual de IA (PDF)")
+    public ResponseEntity<byte[]> baixarDossieExecutivoPdf(@RequestParam(required = false) String inicio, @RequestParam(required = false) String fim) {
         try {
-            String inicioRaw = request.getParameter("inicio");
-            String fimRaw = request.getParameter("fim");
-
-            LocalDate inicio = (inicioRaw != null && !inicioRaw.isEmpty()) ? LocalDate.parse(inicioRaw) : LocalDate.now().withDayOfMonth(1);
-            LocalDate fim = (fimRaw != null && !fimRaw.isEmpty()) ? LocalDate.parse(fimRaw) : LocalDate.now();
-
-            // Chama o motor de IA e PDF no Service
-            byte[] pdfBytes = relatorioService.gerarDossieExecutivoPdf(inicio, fim);
-
-            if (pdfBytes == null || pdfBytes.length == 0) {
-                return ResponseEntity.internalServerError().body(null);
-            }
+            LocalDate dtInicio = parseDataSegura(inicio) != null ? parseDataSegura(inicio) : LocalDate.now().withDayOfMonth(1);
+            LocalDate dtFim = parseDataSegura(fim) != null ? parseDataSegura(fim) : LocalDate.now();
+            byte[] pdfBytes = relatorioService.gerarDossieExecutivoPdf(dtInicio, dtFim);
 
             return ResponseEntity.ok()
                     .header("Content-Type", "application/pdf")
                     .header("Content-Disposition", "attachment; filename=Dossie_Executivo_DD.pdf")
                     .body(pdfBytes);
-
         } catch (Exception e) {
             log.error("Erro Crítico ao gerar Dossiê Executivo: ", e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
-    // =========================================================================
-    // 4. BALANÇO TRIMESTRAL PARA INVESTIDORES / DIRETORIA (EARNINGS RELEASE)
-    // =========================================================================
     @GetMapping("/balanco-trimestral/pdf")
-    public ResponseEntity<byte[]> baixarBalancoTrimestral(
-            @RequestParam("ano") int ano,
-            @RequestParam("trimestre") int trimestre) {
+    @Operation(summary = "Gerar Balanço Oficial para Diretoria (PDF)")
+    public ResponseEntity<byte[]> baixarBalancoTrimestral(@RequestParam int ano, @RequestParam int trimestre) {
         try {
             byte[] pdfBytes = relatorioService.gerarBalancoTrimestralPdf(ano, trimestre);
-
-            if (pdfBytes == null || pdfBytes.length == 0) {
-                return ResponseEntity.internalServerError().body(null);
-            }
-
             return ResponseEntity.ok()
                     .header("Content-Type", "application/pdf")
                     .header("Content-Disposition", "attachment; filename=Balanco_DD_Cosmeticos_" + trimestre + "T" + ano + ".pdf")
                     .body(pdfBytes);
-
         } catch (Exception e) {
             log.error("Erro ao gerar Balanço Trimestral: ", e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
-    // =========================================================================
-    // 5. TESTES E FERRAMENTAS DE ADMINISTRAÇÃO
-    // =========================================================================
-
     @GetMapping(value = "/teste-email", produces = "text/plain;charset=UTF-8")
+    @Operation(summary = "Forçar envio manual do Dossiê Mensal por Email")
     public String dispararTesteManual() {
         try {
             relatorioService.dispararRelatorioMensalTeste();

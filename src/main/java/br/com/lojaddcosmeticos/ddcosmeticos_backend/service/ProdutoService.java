@@ -90,6 +90,26 @@ public class ProdutoService {
         return respostaIA;
     }
 
+    // =========================================================================
+    // 🔥 CONSULTAS E LISTAGENS DE CATÁLOGO
+    // =========================================================================
+    @Transactional(readOnly = true)
+    public Page<ProdutoListagemDTO> listarResumo(String termo, String marca, String categoria, String statusEstoque, Boolean semImagem, Boolean semNcm, Boolean precoZero, Boolean revisaoPendente, Pageable pageable) {
+        if (pageable == null) pageable = Pageable.unpaged();
+
+        String termoBusca = (termo == null || termo.trim().isEmpty()) ? null : "%" + termo.trim().toLowerCase() + "%";
+        String marcaBusca = (marca == null || marca.trim().isEmpty()) ? null : marca.trim().toLowerCase();
+        String catBusca = (categoria == null || categoria.trim().isEmpty()) ? null : categoria.trim().toLowerCase();
+        String status = (statusEstoque == null || statusEstoque.trim().isEmpty()) ? "TODOS" : statusEstoque.trim().toUpperCase();
+
+        if (semImagem == null) semImagem = false;
+        if (semNcm == null) semNcm = false;
+        if (precoZero == null) precoZero = false;
+        if (revisaoPendente == null) revisaoPendente = false;
+
+        return produtoRepository.buscarComFiltros(termoBusca, marcaBusca, catBusca, status, semImagem, semNcm, precoZero, revisaoPendente, pageable).map(this::toDTO);
+    }
+
     @Transactional(readOnly = true)
     public Page<ProdutoListagemDTO> listarResumo(String termo, Pageable pageable) {
         return listarResumo(termo, null, null, null, false, false, false, false, pageable);
@@ -146,18 +166,13 @@ public class ProdutoService {
     @CacheEvict(value = "produtos", allEntries = true)
     public Produto salvar(Produto produto) {
         produto.setCodigoBarras(auditarECorrigirEanGs1(produto.getCodigoBarras()));
-
-        // BARREIRA DE PREÇO: Guardamos o preço de venda para que o motor fiscal não o altere
         BigDecimal precoVendaOriginal = produto.getPrecoVenda();
-
         calculadoraFiscalService.aplicarRegrasFiscais(produto);
 
-        // RESTAURA O PREÇO DE VENDA: A Calculadora Fiscal NUNCA deve alterar o preço de retalho!
         if (precoVendaOriginal != null && precoVendaOriginal.compareTo(BigDecimal.ZERO) > 0) {
             produto.setPrecoVenda(precoVendaOriginal);
         }
 
-        // VERIFICA PREJUÍZO ANTES DE GUARDAR
         if (produto.getPrecoVenda() != null && produto.getPrecoCusto() != null
                 && produto.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0
                 && produto.getPrecoVenda().compareTo(produto.getPrecoCusto()) < 0) {
@@ -215,7 +230,7 @@ public class ProdutoService {
     public void reativarPorEan(String ean) { produtoRepository.findByEanIrrestrito(ean).ifPresent(p -> { p.setAtivo(true); produtoRepository.save(p); }); }
 
     // =========================================================================
-    // 🔥 MOTOR DE SANEAMENTO: EAN GS1
+    // 🔥 MOTOR MATEMÁTICO E SANEAMENTO GS1
     // =========================================================================
     @Transactional
     public java.util.Map<String, Object> corrigirEansInternosIa() {
@@ -235,41 +250,44 @@ public class ProdutoService {
     }
 
     public String auditarECorrigirEanGs1(String eanRaw) {
-        if (eanRaw != null && eanRaw.startsWith("2") && eanRaw.length() == 13) {
-            String base = eanRaw.substring(0, 12); int soma = 0;
-            for (int i = 0; i < 12; i++) { int digito = Character.getNumericValue(base.charAt(i)); soma += (i % 2 == 0) ? digito : (digito * 3); }
+        if (eanRaw == null || eanRaw.trim().isEmpty()) return null;
+        String cleanEan = eanRaw.replaceAll("[^0-9]", "");
+
+        if (cleanEan.startsWith("2")) {
+            String base = cleanEan;
+            if (base.length() >= 13) {
+                base = base.substring(0, 12);
+            } else {
+                StringBuilder sb = new StringBuilder(base);
+                while (sb.length() < 12) { sb.append("0"); }
+                base = sb.toString();
+            }
+
+            int soma = 0;
+            for (int i = 0; i < 12; i++) {
+                int digito = Character.getNumericValue(base.charAt(i));
+                soma += (i % 2 == 0) ? digito : (digito * 3);
+            }
             int digitoVerificadorEsperado = (10 - (soma % 10)) % 10;
             return base + digitoVerificadorEsperado;
         }
-        return eanRaw;
+        return cleanEan;
     }
 
     public String gerarProximoEanInterno() {
-        Long maxId = produtoRepository.findMaxId(); if (maxId == null) maxId = 0L; return String.format("2%012d", maxId + 1);
+        Long maxId = produtoRepository.findMaxId(); if (maxId == null) maxId = 0L; return auditarECorrigirEanGs1(String.format("2%012d", maxId + 1) + "0");
+    }
+
+    private String gerarEanUnico(AtomicLong counter, Map<String, Produto> sessao) {
+        String novoEan;
+        do {
+            novoEan = auditarECorrigirEanGs1(String.format("2%011d", counter.incrementAndGet()) + "0");
+        } while (sessao.containsKey(novoEan) || produtoRepository.findByCodigoBarras(novoEan).isPresent());
+        return novoEan;
     }
 
     // =========================================================================
-    // 🔥 ETIQUETAS ZPL E GÔNDOLA
-    // =========================================================================
-    @Transactional(readOnly = true)
-    public String imprimirEtiqueta(Long id) { return gerarZplProduto(buscarPorId(id)); }
-
-    private String gerarZplProduto(Produto produto) {
-        String ean = produto.getCodigoBarras() != null ? produto.getCodigoBarras() : "0000000000000";
-        String descricao = produto.getDescricao() != null ? produto.getDescricao() : "PRODUTO SEM NOME";
-        if (descricao.length() > 25) descricao = descricao.substring(0, 25);
-        String precoStr = produto.getPrecoVenda() != null ? String.format(java.util.Locale.of("pt", "BR"), "R$ %.2f", produto.getPrecoVenda().doubleValue()) : "R$ 0,00";
-        return "^XA\n^PW400\n^CF0,30\n^FO20,20^FDDD COSMETICOS^FS\n^FO20,55^GB360,2,2^FS\n^CF0,25\n^FO20,70^FD" + descricao + "^FS\n^BY2,2,50\n^FO20,110^BEN,50,Y,N^FD" + ean + "^FS\n^CF0,40\n^FO220,180^FD" + precoStr + "^FS\n^XZ";
-    }
-
-    public void sinalizarDivergenciaGondola(Long id) { Produto p = buscarPorId(id); p.setAlertaGondola(true); produtoRepository.save(p); }
-
-    public List<ProdutoListagemDTO> listarDivergenciasGondola() { return produtoRepository.findAllByAtivoTrue().stream().filter(p -> Boolean.TRUE.equals(p.getAlertaGondola())).map(this::toDTO).collect(Collectors.toList()); }
-
-    public Map<String, String> resolverDivergenciaEImprimir(Long id, BigDecimal novoPrecoVenda) { Produto p = buscarPorId(id); p.setPrecoVenda(novoPrecoVenda); p.setAlertaGondola(false); p.setRevisaoPendente(false); produtoRepository.save(p); return Map.of("zpl", gerarZplProduto(p)); }
-
-    // =========================================================================
-    // 🔥 IMPORTAÇÃO BLINDADA COM DESDUPLICAÇÃO E FUSÃO AUTOMÁTICA
+    // 🔥 IMPORTAÇÃO BLINDADA (PREVINE ERRO 23505 E FUSÃO ACIDENTAL)
     // =========================================================================
     public Map<String, Object> importarProdutos(MultipartFile file) {
         if (file == null || file.isEmpty()) return Map.of("sucesso", false, "mensagem", "Arquivo vazio ou inválido.");
@@ -286,26 +304,34 @@ public class ProdutoService {
         }
     }
 
-    private String gerarEanFallbackLote(AtomicLong counter) {
-        return auditarECorrigirEanGs1(String.format("2%011d", counter.incrementAndGet()) + "0");
-    }
+    private String normalizarTexto(String str) { return str == null ? "" : Normalizer.normalize(str.replace("\uFEFF", "").toUpperCase(), Normalizer.Form.NFD).replaceAll("[\\p{InCombiningDiacriticalMarks}]", "").replaceAll("[^A-Z0-9]", ""); }
 
     private Map<String, Integer> criarMapaColunasInteligente(String[] headers) {
         Map<String, Integer> mapa = new HashMap<>();
         for (int i = 0; i < headers.length; i++) {
             String h = normalizarTexto(headers[i]);
-            if (h.contains("EAN") || h.contains("BARRAS") || h.contains("GTIN") || h.equals("CODIGO")) mapa.put("ean", i);
-            else if (h.contains("CUSTO") || h.contains("COMPRA")) mapa.put("custo", i);
-                // 🔥 ADICIONADO "VALOR" para garantir que lê preços em R$
-            else if (h.contains("VENDA") || h.contains("PRECO") || h.contains("PVP") || h.contains("RETALHO") || h.contains("VALOR")) mapa.put("venda", i);
-            else if (h.contains("MIN") || h.contains("ALERTA")) mapa.put("min", i);
-            else if (h.contains("FISCAL") && !h.contains("NAO")) mapa.put("fiscal", i);
-            else if (h.contains("ESTOQUE") || h.contains("QTD") || h.contains("QUANTIDADE") || h.contains("SALDO")) mapa.put("qtd", i);
-            else if (h.contains("NCM")) mapa.put("ncm", i);
-            else if (h.contains("SUBCATEGORIA")) mapa.put("sub", i);
-            else if (h.contains("CATEGORIA") || h.contains("GRUPO") || h.contains("FAMILIA")) mapa.put("cat", i);
-            else if (h.contains("MARCA") || h.contains("FABRICANTE")) mapa.put("marca", i);
-            else if (!mapa.containsKey("desc") && (h.contains("DESC") || h.contains("NOME") || h.contains("PRODUTO") || h.contains("ITEM")) && !h.contains("CATEGORIA")) { mapa.put("desc", i); }
+
+            if (h.contains("EAN") || h.contains("BARRAS") || h.contains("GTIN") || h.equals("CODIGO")) mapa.putIfAbsent("ean", i);
+
+            if (!h.contains("TIPO") && (h.equals("DESCRICAO") || h.equals("NOME"))) { mapa.put("desc", i); }
+            else if (!mapa.containsKey("desc") && !h.contains("TIPO") && !h.contains("CATEGORIA") && !h.contains("SUB") && (h.contains("DESC") || h.contains("NOME") || h.contains("PRODUTO"))) { mapa.put("desc", i); }
+
+            // 🔥 A CORREÇÃO: Captura primeiro o CUSTO rigorosamente
+            if (h.contains("CUSTO") || h.contains("COMPRA")) {
+                mapa.putIfAbsent("custo", i);
+            }
+            // 🔥 Depois, captura a VENDA, mas IGNORANDO colunas de Custo e Atacado
+            else if (!h.contains("ATACADO") && !h.contains("CUSTO") && !h.contains("COMPRA") &&
+                    (h.contains("VAREJO") || h.contains("VENDA") || h.contains("PRECO") || h.contains("PVP") || h.contains("VALOR"))) {
+                mapa.putIfAbsent("venda", i);
+            }
+
+            if (!h.contains("MOVIMENTA") && !h.contains("MIN") && (h.contains("ESTOQUE") || h.contains("QTD") || h.contains("QUANTIDADE") || h.contains("SALDO"))) { mapa.putIfAbsent("qtd", i); }
+
+            if (h.contains("SUBCATEGORIA")) mapa.putIfAbsent("sub", i);
+            else if (h.contains("CATEGORIA") || h.contains("GRUPO")) mapa.putIfAbsent("cat", i);
+            if (h.contains("NCM")) mapa.putIfAbsent("ncm", i);
+            if (h.contains("MARCA") || h.contains("FABRICANTE")) mapa.putIfAbsent("marca", i);
         }
         return mapa;
     }
@@ -315,66 +341,47 @@ public class ProdutoService {
         return dados[idx].replace("\"", "").trim();
     }
 
-    // 🔥 O SEGREDO DO PREÇO ZERO ESTAVA AQUI: Blindagem matemática total
     private BigDecimal lerDecimal(String val) {
         if (val == null || val.trim().isEmpty()) return BigDecimal.ZERO;
         try {
-            // Remove símbolos monetários, espaços, cifrões e letras. Mantém apenas numerais, ponto e vírgula
-            val = val.replaceAll("[^0-9.,]", "");
+            val = val.replaceAll("[^0-9.,-]", "");
             if (val.isEmpty()) return BigDecimal.ZERO;
-
             int ultimaVirgula = val.lastIndexOf(',');
             int ultimoPonto = val.lastIndexOf('.');
-
             if (ultimaVirgula > -1 && ultimoPonto > -1) {
-                if (ultimaVirgula > ultimoPonto) {
-                    // Formato Português: 1.500,50
-                    val = val.replace(".", "").replace(",", ".");
-                } else {
-                    // Formato Inglês: 1,500.50
-                    val = val.replace(",", "");
-                }
-            } else if (ultimaVirgula > -1) {
-                // Apenas vírgula: 10,50
-                val = val.replace(",", ".");
-            }
-
+                if (ultimaVirgula > ultimoPonto) val = val.replace(".", "").replace(",", ".");
+                else val = val.replace(",", "");
+            } else if (ultimaVirgula > -1) val = val.replace(",", ".");
             return new BigDecimal(val);
-        } catch (Exception e) {
-            return BigDecimal.ZERO;
-        }
+        } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
     private String truncar(String str, int max) { return (str == null || str.length() <= max) ? (str == null ? "" : str) : str.substring(0, max); }
-    private String normalizarTexto(String str) { return str == null ? "" : Normalizer.normalize(str.replace("\uFEFF", "").toUpperCase(), Normalizer.Form.NFD).replaceAll("[\\p{InCombiningDiacriticalMarks}]", "").replaceAll("[^A-Z0-9]", ""); }
 
+    // 🔥 MAPA EM MEMÓRIA ELIMINA O ERRO SQL 23505
     private Map<String, Object> processarExcelBruto(MultipartFile file) {
-        List<Produto> lote = new ArrayList<>();
         List<String> listaAvisos = new ArrayList<>();
 
         try (InputStream is = file.getInputStream(); Workbook workbook = WorkbookFactory.create(is)) {
             Sheet sheet = workbook.getSheetAt(0);
-            if (sheet.getPhysicalNumberOfRows() < 2) return Map.of("sucesso", false, "mensagem", "Arquivo vazio ou sem cabeçalho.");
+            if (sheet.getPhysicalNumberOfRows() < 2) return Map.of("sucesso", false, "mensagem", "Arquivo vazio.");
 
             Row headerRow = sheet.getRow(0);
             int numCols = headerRow.getLastCellNum();
             String[] headers = new String[numCols];
             DataFormatter dataFormatter = new DataFormatter();
-
-            // Força a leitura de fórmulas do Excel (Se Preço de Venda for calculado como =Custo*2)
             FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
 
-            for (int i = 0; i < numCols; i++) {
-                headers[i] = dataFormatter.formatCellValue(headerRow.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK)).trim();
-            }
+            for (int i = 0; i < numCols; i++) headers[i] = dataFormatter.formatCellValue(headerRow.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK)).trim();
 
             Map<String, Integer> mapa = criarMapaColunasInteligente(headers);
-            if (!mapa.containsKey("ean")) return Map.of("sucesso", false, "mensagem", "ERRO FATAL: Coluna de EAN/Código de Barras não encontrada.");
+            if (!mapa.containsKey("ean")) return Map.of("sucesso", false, "mensagem", "ERRO: Coluna de EAN não mapeada.");
 
-            // 🔥 A MÁGICA DA DESDUPLICAÇÃO ESTÁ AQUI (Evita DataIntegrityViolationException)
-            Map<String, Produto> produtosNoLote = new HashMap<>();
+            Map<String, Produto> produtosNestaSessao = new HashMap<>();
             Long maxIdDb = produtoRepository.findMaxId();
             AtomicLong eanCounter = new AtomicLong(maxIdDb == null ? 0L : maxIdDb);
+
+            int linhasProcessadas = 0;
 
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row row = sheet.getRow(i);
@@ -382,151 +389,171 @@ public class ProdutoService {
 
                 String[] dados = new String[numCols];
                 boolean rowIsEmpty = true;
-
                 for (int j = 0; j < numCols; j++) {
                     Cell cell = row.getCell(j, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
                     dados[j] = dataFormatter.formatCellValue(cell, evaluator).trim();
                     if (!dados[j].isEmpty()) rowIsEmpty = false;
                 }
                 if (rowIsEmpty) continue;
+                linhasProcessadas++;
 
                 try {
                     String eanRaw = getVal(dados, mapa.get("ean")).replaceAll("[^0-9]", "");
-                    boolean precisouGerarEan = false;
-                    String eanCorrigido;
+                    String eanCorrigido = auditarECorrigirEanGs1(eanRaw);
+                    boolean gerarNovoEan = false;
 
-                    if (eanRaw.isEmpty() || getVal(dados, mapa.get("ean")).toUpperCase().contains("E+")) {
-                        eanCorrigido = gerarEanFallbackLote(eanCounter);
-                        precisouGerarEan = true;
-                    } else {
-                        eanCorrigido = auditarECorrigirEanGs1(eanRaw);
-                        // Verifica colisão DEPOIS de calcular o dígito GS1
-                        if (produtosNoLote.containsKey(eanCorrigido) && precisouGerarEan) {
-                            eanCorrigido = gerarEanFallbackLote(eanCounter);
+                    if (eanRaw.isEmpty() || eanRaw.length() != 13 || !eanRaw.equals(eanCorrigido)) {
+                        gerarNovoEan = true;
+                    }
+
+                    if (!gerarNovoEan) {
+                        if (produtosNestaSessao.containsKey(eanCorrigido)) {
+                            Produto pAnterior = produtosNestaSessao.get(eanCorrigido);
+                            if (pAnterior.getSku() != null && !pAnterior.getSku().equals(eanRaw)) {
+                                gerarNovoEan = true;
+                            }
+                        } else {
+                            Optional<Produto> dbProd = produtoRepository.findByCodigoBarras(eanCorrigido);
+                            if (dbProd.isPresent() && dbProd.get().getSku() != null && !dbProd.get().getSku().equals(eanRaw)) {
+                                gerarNovoEan = true;
+                            }
                         }
                     }
 
-                    Produto produtoProcessado = criarProdutoDaLinha(dados, mapa, eanCorrigido);
-
-                    // 🌟 FUSÃO DE PRODUTOS SE O EXCEL TIVER 2 LINHAS COM O MESMO EAN VERDADEIRO
-                    if (produtosNoLote.containsKey(eanCorrigido) && !precisouGerarEan) {
-                        Produto produtoExistente = produtosNoLote.get(eanCorrigido);
-                        // Soma os estoques da linha anterior com esta nova linha!
-                        produtoExistente.setQuantidadeEmEstoque(produtoExistente.getQuantidadeEmEstoque() + produtoProcessado.getQuantidadeEmEstoque());
-
-                        // Atualiza o preço caso a nova linha venha com preço maior/mais atualizado
-                        if (produtoProcessado.getPrecoVenda() != null && produtoProcessado.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0) {
-                            produtoExistente.setPrecoVenda(produtoProcessado.getPrecoVenda());
-                        }
-
-                        listaAvisos.add("Linha " + (i+1) + ": EAN " + eanCorrigido + " repetido. Estoques somados.");
-                    } else {
-                        // Linha nova normal, regista para salvar
-                        produtosNoLote.put(eanCorrigido, produtoProcessado);
-                        lote.add(produtoProcessado);
+                    if (gerarNovoEan) {
+                        eanCorrigido = gerarEanUnico(eanCounter, produtosNestaSessao);
                     }
+
+                    Produto p;
+                    if (produtosNestaSessao.containsKey(eanCorrigido)) {
+                        p = produtosNestaSessao.get(eanCorrigido);
+                    } else {
+                        Optional<Produto> dbProd = produtoRepository.findByCodigoBarras(eanCorrigido);
+                        if (dbProd.isPresent()) {
+                            p = dbProd.get();
+                        } else {
+                            p = new Produto();
+                            p.setCodigoBarras(eanCorrigido);
+                            p.setAtivo(true);
+                            p.setOrigem("IMPORTACAO_EXCEL");
+                            p.setSku(eanRaw);
+                            p.setQuantidadeEmEstoque(0);
+                        }
+                    }
+
+                    p = preencherProdutoDaLinha(p, dados, mapa);
+                    produtosNestaSessao.put(p.getCodigoBarras(), p);
 
                 } catch (Exception e) {
-                    listaAvisos.add("Linha " + (i+1) + ": Descartada devido a erro de formatação.");
+                    listaAvisos.add("Linha " + (i+1) + " ignorada: " + e.getMessage());
                 }
             }
-            if (!lote.isEmpty()) { produtoRepository.saveAll(lote); }
-            return Map.of("sucesso", true, "qtdImportados", lote.size(), "qtdErros", listaAvisos.size(), "listaErros", listaAvisos);
-        } catch (Exception e) {
-            return Map.of("sucesso", false, "mensagem", "Falha de Leitura do Excel: " + e.getMessage());
-        }
+            if (!produtosNestaSessao.isEmpty()) {
+                produtoRepository.saveAll(produtosNestaSessao.values());
+            }
+
+            String msgFinal = String.format("Sucesso! Lidas %d linhas. Foram criados/atualizados %d produtos únicos.", linhasProcessadas, produtosNestaSessao.size());
+            return Map.of("sucesso", true, "qtdImportados", produtosNestaSessao.size(), "qtdErros", listaAvisos.size(), "listaErros", listaAvisos, "mensagem", msgFinal);
+        } catch (Exception e) { return Map.of("sucesso", false, "mensagem", "Erro: " + e.getMessage()); }
     }
 
     private Map<String, Object> processarCsvBruto(byte[] bytes) {
-        List<Produto> lote = new ArrayList<>();
-        List<String> listaAvisos = new ArrayList<>();
-
         try {
             String conteudo = new String(bytes, StandardCharsets.UTF_8);
             if (conteudo.startsWith("\uFEFF")) conteudo = conteudo.substring(1);
-
             String[] linhas = conteudo.split("\\r?\\n");
             if (linhas.length < 2) return Map.of("sucesso", false, "mensagem", "Arquivo vazio.");
 
             String delimitador = linhas[0].contains(";") ? ";" : ",";
             String[] headers = linhas[0].split(delimitador);
-
             Map<String, Integer> mapa = criarMapaColunasInteligente(headers);
-            if (!mapa.containsKey("ean")) return Map.of("sucesso", false, "mensagem", "ERRO: Coluna EAN não encontrada.");
 
-            Map<String, Produto> produtosNoLote = new HashMap<>();
+            Map<String, Produto> produtosNestaSessao = new HashMap<>();
             Long maxIdDb = produtoRepository.findMaxId();
             AtomicLong eanCounter = new AtomicLong(maxIdDb == null ? 0L : maxIdDb);
 
             for (int i = 1; i < linhas.length; i++) {
                 String linha = linhas[i].trim();
                 if (linha.isEmpty()) continue;
-
                 String[] dados = linha.split(delimitador, -1);
+
                 try {
                     String eanRaw = getVal(dados, mapa.get("ean")).replaceAll("[^0-9]", "");
-                    boolean precisouGerarEan = false;
-                    String eanCorrigido;
+                    String eanCorrigido = auditarECorrigirEanGs1(eanRaw);
+                    boolean gerarNovoEan = false;
 
-                    if (eanRaw.isEmpty()) {
-                        eanCorrigido = gerarEanFallbackLote(eanCounter);
-                        precisouGerarEan = true;
-                    } else {
-                        eanCorrigido = auditarECorrigirEanGs1(eanRaw);
+                    if (eanRaw.isEmpty() || eanRaw.length() != 13 || !eanRaw.equals(eanCorrigido)) {
+                        gerarNovoEan = true;
                     }
 
-                    Produto produtoProcessado = criarProdutoDaLinha(dados, mapa, eanCorrigido);
-
-                    // FUSÃO DE CSV
-                    if (produtosNoLote.containsKey(eanCorrigido) && !precisouGerarEan) {
-                        Produto produtoExistente = produtosNoLote.get(eanCorrigido);
-                        produtoExistente.setQuantidadeEmEstoque(produtoExistente.getQuantidadeEmEstoque() + produtoProcessado.getQuantidadeEmEstoque());
-
-                        if (produtoProcessado.getPrecoVenda() != null && produtoProcessado.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0) {
-                            produtoExistente.setPrecoVenda(produtoProcessado.getPrecoVenda());
+                    if (!gerarNovoEan) {
+                        if (produtosNestaSessao.containsKey(eanCorrigido)) {
+                            Produto pAnterior = produtosNestaSessao.get(eanCorrigido);
+                            if (pAnterior.getSku() != null && !pAnterior.getSku().equals(eanRaw)) {
+                                gerarNovoEan = true;
+                            }
+                        } else {
+                            Optional<Produto> dbProd = produtoRepository.findByCodigoBarras(eanCorrigido);
+                            if (dbProd.isPresent() && dbProd.get().getSku() != null && !dbProd.get().getSku().equals(eanRaw)) {
+                                gerarNovoEan = true;
+                            }
                         }
-
-                        listaAvisos.add("Linha " + (i+1) + ": EAN repetido. Estoques agrupados.");
-                    } else {
-                        produtosNoLote.put(eanCorrigido, produtoProcessado);
-                        lote.add(produtoProcessado);
                     }
-                } catch (Exception e) {
-                    listaAvisos.add("Linha " + (i+1) + ": Descartada por erro na quebra de colunas.");
-                }
+
+                    if (gerarNovoEan) {
+                        eanCorrigido = gerarEanUnico(eanCounter, produtosNestaSessao);
+                    }
+
+                    Produto p;
+                    if (produtosNestaSessao.containsKey(eanCorrigido)) {
+                        p = produtosNestaSessao.get(eanCorrigido);
+                    } else {
+                        Optional<Produto> dbProd = produtoRepository.findByCodigoBarras(eanCorrigido);
+                        if (dbProd.isPresent()) {
+                            p = dbProd.get();
+                        } else {
+                            p = new Produto();
+                            p.setCodigoBarras(eanCorrigido);
+                            p.setAtivo(true);
+                            p.setOrigem("IMPORTACAO_CSV");
+                            p.setSku(eanRaw);
+                            p.setQuantidadeEmEstoque(0);
+                        }
+                    }
+
+                    p = preencherProdutoDaLinha(p, dados, mapa);
+                    produtosNestaSessao.put(p.getCodigoBarras(), p);
+                } catch (Exception e) {}
             }
-            if (!lote.isEmpty()) { produtoRepository.saveAll(lote); }
-            return Map.of("sucesso", true, "qtdImportados", lote.size(), "qtdErros", listaAvisos.size());
-        } catch (Exception e) {
-            return Map.of("sucesso", false, "mensagem", "Erro crítico ao ler CSV.");
-        }
+            if (!produtosNestaSessao.isEmpty()) { produtoRepository.saveAll(produtosNestaSessao.values()); }
+            return Map.of("sucesso", true, "qtdImportados", produtosNestaSessao.size());
+        } catch (Exception e) { return Map.of("sucesso", false, "mensagem", "Erro crítico no CSV."); }
     }
 
-    private Produto criarProdutoDaLinha(String[] dados, Map<String, Integer> mapa, String eanCorrigido) {
-        Produto p = produtoRepository.findByEanIrrestrito(eanCorrigido).stream().findFirst().orElse(new Produto());
+    private Produto preencherProdutoDaLinha(Produto p, String[] dados, Map<String, Integer> mapa) {
         boolean precisaAuditoria = false;
 
-        if (p.getId() == null) {
-            p.setCodigoBarras(eanCorrigido); p.setAtivo(true); p.setNcm("00000000"); p.setQuantidadeEmEstoque(0);
-            p.setPrecoCusto(BigDecimal.ZERO); p.setPrecoVenda(BigDecimal.ZERO);
-        }
+        if (p.getPrecoCusto() == null) p.setPrecoCusto(BigDecimal.ZERO);
+        if (p.getPrecoVenda() == null) p.setPrecoVenda(BigDecimal.ZERO);
+        if (p.getQuantidadeEmEstoque() == null) p.setQuantidadeEmEstoque(0);
 
         if (mapa.containsKey("desc")) {
             String desc = getVal(dados, mapa.get("desc"));
             if (desc != null && !desc.trim().isEmpty()) { p.setDescricao(truncar(desc.trim().toUpperCase(), 250)); }
         }
-
         if (p.getDescricao() == null || p.getDescricao().trim().isEmpty()) {
-            p.setDescricao("PRODUTO S/ NOME " + eanCorrigido);
+            p.setDescricao("PRODUTO S/ NOME " + p.getCodigoBarras());
             precisaAuditoria = true;
         }
 
-        // 🔥 PROTEÇÃO ANTI-0: Só atualiza os preços do produto se o Excel tiver um preço válido (> 0)
+        if (mapa.containsKey("marca")) p.setMarca(truncar(getVal(dados, mapa.get("marca")).toUpperCase(), 50));
+        if (mapa.containsKey("cat")) p.setCategoria(truncar(getVal(dados, mapa.get("cat")).toUpperCase(), 50));
+        if (mapa.containsKey("sub")) p.setSubcategoria(truncar(getVal(dados, mapa.get("sub")).toUpperCase(), 50));
+
         if (mapa.containsKey("custo")) {
             BigDecimal novoCusto = lerDecimal(getVal(dados, mapa.get("custo")));
             if (novoCusto.compareTo(BigDecimal.ZERO) > 0) p.setPrecoCusto(novoCusto);
         }
-
         if (mapa.containsKey("venda")) {
             BigDecimal novaVenda = lerDecimal(getVal(dados, mapa.get("venda")));
             if (novaVenda.compareTo(BigDecimal.ZERO) > 0) p.setPrecoVenda(novaVenda);
@@ -534,28 +561,54 @@ public class ProdutoService {
 
         if (mapa.containsKey("qtd")) {
             BigDecimal qtd = lerDecimal(getVal(dados, mapa.get("qtd")));
-            p.setQuantidadeEmEstoque(qtd.intValue());
+            p.setQuantidadeEmEstoque(p.getQuantidadeEmEstoque() + qtd.intValue());
         }
 
         BigDecimal precoVendaExcel = p.getPrecoVenda();
-
-        // 🚨 Auditoria caso o Preço esteja prejudicado
         if (p.getPrecoVenda().compareTo(BigDecimal.ZERO) > 0 && p.getPrecoCusto().compareTo(BigDecimal.ZERO) > 0) {
             if (p.getPrecoVenda().compareTo(p.getPrecoCusto()) < 0) precisaAuditoria = true;
         } else if (p.getPrecoVenda().compareTo(BigDecimal.ZERO) == 0 && p.getPrecoCusto().compareTo(BigDecimal.ZERO) == 0) {
             precisaAuditoria = true;
         }
 
-        if (mapa.containsKey("marca")) p.setMarca(truncar(getVal(dados, mapa.get("marca")).toUpperCase(), 50));
-
+        // 🔥 CORREÇÃO INTELIGENTE DE NCM
         String ncmArquivo = mapa.containsKey("ncm") ? truncar(getVal(dados, mapa.get("ncm")).replaceAll("[^0-9]", ""), 8) : "";
-        p.setNcm(ncmArquivo.isEmpty() ? "33049990" : ncmArquivo);
+        String desc = p.getDescricao().toUpperCase();
+        String ncmSugerido = ncmArquivo;
+
+        boolean ncmAnomalia = ncmArquivo.isEmpty() || ncmArquivo.equals("00000000") || (!ncmArquivo.startsWith("33") && !ncmArquivo.startsWith("34"));
+
+        if (desc.contains("HENNA") || desc.contains("MAKE") || desc.contains("BASE ") || desc.contains("PO COMPACTO") || desc.contains("CORRETIVO") || desc.contains("PRIMER") || desc.contains("SERUM")) ncmSugerido = "33049990";
+        else if (desc.contains("SHAMPOO")) ncmSugerido = "33051000";
+        else if (desc.contains("CONDICIONADOR") || desc.contains("MASCARA") || desc.contains("LEAVE-IN")) ncmSugerido = "33059000";
+        else if (desc.contains("BATOM") || desc.contains("GLOSS")) ncmSugerido = "33041000";
+        else if (desc.contains("RIMEL") || desc.contains("DELINEADOR")) ncmSugerido = "33042010";
+        else if (desc.contains("ESMALTE") || desc.contains("ACETONA")) ncmSugerido = "33043000";
+        else if (desc.contains("PERFUME") || desc.contains("COLONIA")) ncmSugerido = "33030010";
+        else if (desc.contains("DESODORANTE") || desc.contains("ANTITRANSPIRANTE")) ncmSugerido = "33072010";
+        else if (desc.contains("SABONETE")) ncmSugerido = "34011190";
+
+        if (!ncmSugerido.equals(ncmArquivo) || ncmAnomalia) {
+            if (ncmSugerido.equals(ncmArquivo) && ncmAnomalia) {
+                try {
+                    String ncmBanco = produtoRepository.findNcmInteligente(desc.split(" ")[0]);
+                    if (ncmBanco != null && !ncmBanco.isEmpty()) ncmSugerido = ncmBanco;
+                } catch (Exception ignored) {}
+            }
+            if (!ncmSugerido.equals(ncmArquivo) && !ncmSugerido.isEmpty()) {
+                p.setNcm(ncmSugerido);
+                boolean ehMonofasico = ncmSugerido.startsWith("3303") || ncmSugerido.startsWith("3304") || ncmSugerido.startsWith("3305") || ncmSugerido.startsWith("3307");
+                p.setIsMonofasico(ehMonofasico);
+                if (ehMonofasico) p.setCst("04");
+            } else {
+                p.setNcm(ncmArquivo.isEmpty() ? "33049990" : ncmArquivo);
+            }
+        } else {
+            p.setNcm(ncmArquivo);
+        }
 
         if (p.getNcm() != null && !p.getNcm().equals("00000000")) {
-            try {
-                calculadoraFiscalService.aplicarRegrasFiscais(p);
-                p.setPrecoVenda(precoVendaExcel);
-            } catch (Exception e) {}
+            try { calculadoraFiscalService.aplicarRegrasFiscais(p); p.setPrecoVenda(precoVendaExcel); } catch (Exception e) {}
         }
 
         p.setRevisaoPendente(precisaAuditoria);
@@ -567,10 +620,18 @@ public class ProdutoService {
     // =========================================================================
     @Transactional(readOnly = true)
     public Map<String, Object> obterRaioXInteligenciaArtificial() {
-        Map<String, Long> contagemDb = produtoRepository.countAnomaliasIA();
+        Map<String, Object> contagemDb = produtoRepository.countAnomaliasIA();
         if (contagemDb == null || contagemDb.isEmpty()) return new HashMap<>();
 
-        long totalAnomalias = contagemDb.values().stream().mapToLong(v -> v != null ? v : 0L).sum();
+        long semCusto = getSafeLong(contagemDb.get("semCusto"));
+        long precoVendaZerado = getSafeLong(contagemDb.get("precoVendaZerado"));
+        long semNcm = getSafeLong(contagemDb.get("semNcm"));
+        long ncmInvalido = getSafeLong(contagemDb.get("ncmInvalido"));
+        long semDescricao = getSafeLong(contagemDb.get("semDescricao"));
+        long semMarca = getSafeLong(contagemDb.get("semMarca"));
+        long divergenciaGondola = getSafeLong(contagemDb.get("divergenciaGondola"));
+
+        long totalAnomalias = semCusto + precoVendaZerado + semNcm + ncmInvalido + semDescricao + semMarca + divergenciaGondola;
 
         long prejuizoCount = produtoRepository.findAllByAtivoTrue().stream()
                 .filter(p -> p.getPrecoVenda() != null && p.getPrecoCusto() != null
@@ -581,14 +642,20 @@ public class ProdutoService {
         Map<String, Object> relatorio = new HashMap<>();
         relatorio.put("totalAnomalias", totalAnomalias + prejuizoCount);
         relatorio.put("vendaAbaixoCusto", (int) prejuizoCount);
-        relatorio.put("semCusto", contagemDb.getOrDefault("semCusto", 0L).intValue());
-        relatorio.put("precoVendaZerado", contagemDb.getOrDefault("precoVendaZerado", 0L).intValue());
-        relatorio.put("semNcm", contagemDb.getOrDefault("semNcm", 0L).intValue());
-        relatorio.put("ncmInvalido", contagemDb.getOrDefault("ncmInvalido", 0L).intValue());
-        relatorio.put("semDescricao", contagemDb.getOrDefault("semDescricao", 0L).intValue());
-        relatorio.put("semMarca", contagemDb.getOrDefault("semMarca", 0L).intValue());
-        relatorio.put("divergenciaGondola", contagemDb.getOrDefault("divergenciaGondola", 0L).intValue());
+        relatorio.put("semCusto", (int) semCusto);
+        relatorio.put("precoVendaZerado", (int) precoVendaZerado);
+        relatorio.put("semNcm", (int) semNcm);
+        relatorio.put("ncmInvalido", (int) ncmInvalido);
+        relatorio.put("semDescricao", (int) semDescricao);
+        relatorio.put("semMarca", (int) semMarca);
+        relatorio.put("divergenciaGondola", (int) divergenciaGondola);
         return relatorio;
+    }
+
+    private long getSafeLong(Object value) {
+        if (value == null) return 0L;
+        if (value instanceof Number) return ((Number) value).longValue();
+        try { return Long.parseLong(value.toString()); } catch (Exception e) { return 0L; }
     }
 
     @Transactional
@@ -641,7 +708,27 @@ public class ProdutoService {
     }
 
     // =========================================================================
-    // 🔥 SANEAMENTO FISCAL EM MASSA
+    // 🔥 ETIQUETAS E GÔNDOLA
+    // =========================================================================
+    @Transactional(readOnly = true)
+    public String imprimirEtiqueta(Long id) { return gerarZplProduto(buscarPorId(id)); }
+
+    private String gerarZplProduto(Produto produto) {
+        String ean = produto.getCodigoBarras() != null ? produto.getCodigoBarras() : "0000000000000";
+        String descricao = produto.getDescricao() != null ? produto.getDescricao() : "PRODUTO SEM NOME";
+        if (descricao.length() > 25) descricao = descricao.substring(0, 25);
+        String precoStr = produto.getPrecoVenda() != null ? String.format(java.util.Locale.of("pt", "BR"), "R$ %.2f", produto.getPrecoVenda().doubleValue()) : "R$ 0,00";
+        return "^XA\n^PW400\n^CF0,30\n^FO20,20^FDDD COSMETICOS^FS\n^FO20,55^GB360,2,2^FS\n^CF0,25\n^FO20,70^FD" + descricao + "^FS\n^BY2,2,50\n^FO20,110^BEN,50,Y,N^FD" + ean + "^FS\n^CF0,40\n^FO220,180^FD" + precoStr + "^FS\n^XZ";
+    }
+
+    public void sinalizarDivergenciaGondola(Long id) { Produto p = buscarPorId(id); p.setAlertaGondola(true); produtoRepository.save(p); }
+
+    public List<ProdutoListagemDTO> listarDivergenciasGondola() { return produtoRepository.findAllByAtivoTrue().stream().filter(p -> Boolean.TRUE.equals(p.getAlertaGondola())).map(this::toDTO).collect(Collectors.toList()); }
+
+    public Map<String, String> resolverDivergenciaEImprimir(Long id, BigDecimal novoPrecoVenda) { Produto p = buscarPorId(id); p.setPrecoVenda(novoPrecoVenda); p.setAlertaGondola(false); p.setRevisaoPendente(false); produtoRepository.save(p); return Map.of("zpl", gerarZplProduto(p)); }
+
+    // =========================================================================
+    // 🔥 SANEAMENTOS EM MASSA
     // =========================================================================
     @Transactional
     @CacheEvict(value = "produtos", allEntries = true)
@@ -751,7 +838,7 @@ public class ProdutoService {
     }
 
     // =========================================================================
-    // 🔥 SUGESTÕES CROSS-SELL DE VENDAS
+    // 🔥 SUGESTÕES CROSS-SELL DE VENDAS E COMPRAS
     // =========================================================================
     public List<Produto> buscarSugestoesCrossSell(Long produtoBaseId, int limite) {
         try {
@@ -797,42 +884,35 @@ public class ProdutoService {
     }
 
     public List<SugestaoCompraDTO> gerarSugestaoCompra() {
-        List<Produto> produtos = produtoRepository.findAllByAtivoTrue(); List<SugestaoCompraDTO> sugestoes = new ArrayList<>();
+        List<Produto> produtos = produtoRepository.findAllByAtivoTrue();
+        List<SugestaoCompraDTO> sugestoes = new ArrayList<>();
+
         for (Produto produto : produtos) {
             if (produto.getQuantidadeEmEstoque() <= produto.getEstoqueMinimo()) {
                 int quantidadeFaltante = produto.getEstoqueMinimo() - produto.getQuantidadeEmEstoque();
                 int sugestaoCompra = Math.max(quantidadeFaltante + 10, 10);
-                BigDecimal custoEstimado = produto.getPrecoCusto() != null ? produto.getPrecoCusto().multiply(new BigDecimal(sugestaoCompra)) : BigDecimal.ZERO;
+
+                BigDecimal custoEstimado = produto.getPrecoCusto() != null
+                        ? produto.getPrecoCusto().multiply(new BigDecimal(sugestaoCompra))
+                        : BigDecimal.ZERO;
+
                 String urgencia = "NORMAL";
-                if (produto.getQuantidadeEmEstoque() == 0) urgencia = "CRÍTICO (ZERADO)"; else if (produto.getQuantidadeEmEstoque() < produto.getEstoqueMinimo() / 2) urgencia = "ALTA";
-                sugestoes.add(new SugestaoCompraDTO(produto.getCodigoBarras(), produto.getDescricao(), produto.getMarca(), produto.getQuantidadeEmEstoque(), produto.getEstoqueMinimo(), sugestaoCompra, urgencia, custoEstimado));
+                if (produto.getQuantidadeEmEstoque() == 0) urgencia = "CRÍTICO (ZERADO)";
+                else if (produto.getQuantidadeEmEstoque() < produto.getEstoqueMinimo() / 2) urgencia = "ALTA";
+
+                sugestoes.add(new SugestaoCompraDTO(
+                        produto.getCodigoBarras(),
+                        produto.getDescricao(),
+                        produto.getMarca(),
+                        produto.getQuantidadeEmEstoque(),
+                        produto.getEstoqueMinimo(),
+                        sugestaoCompra,
+                        urgencia,
+                        custoEstimado
+                ));
             }
         }
-        sugestoes.sort((a, b) -> b.nivelUrgencia().compareTo(a.nivelUrgencia())); return sugestoes;
-    }
-    // =========================================================================
-    // 🔥 CONSULTAS E LISTAGENS DE CATÁLOGO
-    // =========================================================================
-    @Transactional(readOnly = true)
-    public Page<ProdutoListagemDTO> listarResumo(String termo, String marca, String categoria, String statusEstoque, Boolean semImagem, Boolean semNcm, Boolean precoZero, Boolean revisaoPendente, Pageable pageable) {
-        if (pageable == null) pageable = Pageable.unpaged();
-
-        // 🔥 A MÁGICA DE LIMPEZA ESTÁ AQUI: Prepara os dados matemáticos de forma segura
-        String termoBusca = (termo == null || termo.trim().isEmpty()) ? null : "%" + termo.trim().toLowerCase() + "%";
-        String marcaBusca = (marca == null || marca.trim().isEmpty()) ? null : marca.trim().toLowerCase();
-        String catBusca = (categoria == null || categoria.trim().isEmpty()) ? null : categoria.trim().toLowerCase();
-
-        // Nunca envia null para a query do CASE, enviamos sempre um fallback "TODOS"
-        String status = (statusEstoque == null || statusEstoque.trim().isEmpty()) ? "TODOS" : statusEstoque.trim().toUpperCase();
-
-        if (semImagem == null) semImagem = false;
-        if (semNcm == null) semNcm = false;
-        if (precoZero == null) precoZero = false;
-        if (revisaoPendente == null) revisaoPendente = false;
-
-        return produtoRepository.buscarComFiltros(
-                termoBusca, marcaBusca, catBusca, status,
-                semImagem, semNcm, precoZero, revisaoPendente, pageable
-        ).map(this::toDTO);
+        sugestoes.sort((a, b) -> b.nivelUrgencia().compareTo(a.nivelUrgencia()));
+        return sugestoes;
     }
 }

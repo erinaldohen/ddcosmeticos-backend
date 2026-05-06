@@ -13,19 +13,10 @@ import java.util.Optional;
 
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
-    // =======================================================
-    // 🔥 INTEGRAÇÃO COM FORNECEDORES
-    // =======================================================
     Page<Produto> findByFornecedorId(Long fornecedorId, Pageable pageable);
 
-    // =======================================================
-    // 🔥 VISÃO COMPUTACIONAL E UPLOADS
-    // =======================================================
     boolean existsByHashImagem(String hashImagem);
 
-    // =======================================================
-    // 🔥 QUERIES DO CATÁLOGO (FRONTEND WEB)
-    // =======================================================
     List<Produto> findTop50ByAtivoTrueOrderByIdDesc();
 
     @Query("SELECT p FROM Produto p WHERE p.ativo = true AND (" +
@@ -35,9 +26,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "p.codigoBarras LIKE CONCAT('%', :termo, '%'))")
     List<Produto> buscarInteligente(@Param("termo") String termo);
 
-    // =======================================================
-    // 🔥 PESQUISA AVANÇADA (BACKOFFICE) - CORRIGIDA
-    // =======================================================
     @Query("SELECT p FROM Produto p WHERE " +
             "(:termo IS NULL OR LOWER(p.descricao) LIKE :termo OR LOWER(p.codigoBarras) LIKE :termo) AND " +
             "(:marca IS NULL OR LOWER(p.marca) = :marca) AND " +
@@ -64,9 +52,6 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             Pageable pageable
     );
 
-    // =======================================================
-    // 🔥 MÉTODOS DE INTELIGÊNCIA ARTIFICIAL E LIXEIRA
-    // =======================================================
     @Query("SELECT p FROM Produto p WHERE p.ativo = false")
     List<Produto> findAllLixeira();
 
@@ -88,12 +73,13 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT p.ncm FROM Produto p WHERE LOWER(p.descricao) LIKE LOWER(CONCAT('%', :termo, '%')) AND p.ncm IS NOT NULL AND p.ncm <> '00000000' GROUP BY p.ncm ORDER BY COUNT(p.id) DESC LIMIT 1")
     String findNcmInteligente(@Param("termo") String termo);
 
-    @Query("SELECT p FROM Produto p WHERE p.codigoBarras LIKE '200%' AND LENGTH(p.codigoBarras) = 13")
+    @Query("SELECT p FROM Produto p WHERE p.codigoBarras LIKE '2%' AND LENGTH(p.codigoBarras) = 13")
     List<Produto> findProdutosComEanInterno();
 
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.ativo = true AND p.revisaoPendente = true")
     long countProdutosPendentesDeRevisao();
 
+    // 🔥 MAPA CONSOLIDADO DE ANOMALIAS (BLINDADO CONTRA CLASS CAST EXCEPTION)
     @Query("SELECT new map(" +
             "SUM(CASE WHEN (p.precoCusto IS NULL OR p.precoCusto <= 0) THEN 1 ELSE 0 END) as semCusto, " +
             "SUM(CASE WHEN (p.precoVenda IS NULL OR p.precoVenda <= 0) THEN 1 ELSE 0 END) as precoVendaZerado, " +
@@ -103,7 +89,7 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
             "SUM(CASE WHEN (p.marca IS NULL OR p.marca = '') THEN 1 ELSE 0 END) as semMarca, " +
             "SUM(CASE WHEN (p.alertaGondola = true) THEN 1 ELSE 0 END) as divergenciaGondola" +
             ") FROM Produto p WHERE p.ativo = true")
-    Map<String, Long> countAnomaliasIA();
+    Map<String, Object> countAnomaliasIA();
 
     @Query("SELECT p FROM Produto p WHERE (LOWER(p.descricao) IN :complementos) AND p.id <> :produtoBaseId AND p.ativo = true")
     Page<Produto> findComplementares(@Param("complementos") List<String> complementos, @Param("produtoBaseId") Long produtoBaseId, Pageable pageable);
